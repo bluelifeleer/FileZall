@@ -23,6 +23,17 @@ This plan implements M2 from `docs/superpowers/specs/2026-06-24-filezall-design.
 
 This plan does not implement global queues, resumable transfer, directory recursion, FTP/FTPS, Agent, resource monitoring, packaging installers, or multi-server concurrency. Those belong to M3-M7.
 
+## Execution Revision Notes
+
+Read-only review after Task 3 found that the original UI tasks were too static for M2's goal. The remaining execution must include these additions:
+
+- Treat `RemoteFileClient` as an M2-minimal interface and document that stat, mkdir, delete, rename, move, and resume capability are added in later protocol milestones.
+- `RemoteSession.connect_and_list_home()` must use `site.default_remote_path` when it is not `~`; `~` means ask the server for its normalized home directory.
+- Add SFTP adapter tests for `AuthMode.SSH_KEY`, key passphrase, and missing `ssh_key_path`.
+- Add auth mode, password/passphrase, and SSH key path fields to the desktop connection bar.
+- Add a thin `MainWindowController` that wires local directory loading, SFTP connection, remote listing, and one-file upload/download calls through injectable services.
+- Make the live SFTP test skip unless host, username, and password are all present.
+
 ## File Structure
 
 - Modify: `pyproject.toml` - add `paramiko`.

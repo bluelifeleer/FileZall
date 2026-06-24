@@ -65,6 +65,15 @@ class LocalFileEntry:
 
 
 @dataclass(frozen=True)
+class RemoteFileEntry:
+    path: PurePosixPath
+    name: str
+    is_dir: bool
+    size_bytes: int
+    modified_time: datetime | None
+
+
+@dataclass(frozen=True)
 class TransferItem:
     id: str
     task_id: str
