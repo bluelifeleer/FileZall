@@ -6,7 +6,7 @@
 
 **Architecture:** This milestone creates the boundaries agreed in the design spec: `filezall_core` contains UI-independent business logic, while `filezall_desktop` contains PySide6 UI code. Storage is initialized through a small repository layer so later queue, site, and transfer features can reuse the same database.
 
-**Tech Stack:** Python 3.11+, PySide6, pytest, SQLite, dataclasses, stdlib `pathlib`, `sqlite3`, and `enum`.
+**Tech Stack:** Python 3.12 for local execution, PySide6, pytest, SQLite, dataclasses, stdlib `pathlib`, `sqlite3`, and `enum`.
 
 ---
 
@@ -39,6 +39,14 @@ SFTP, FTP, FTPS, Agent, resource monitoring, transfer queues, resume logic, and 
 - Create: `tests/core/test_storage.py` - verifies SQLite schema.
 - Create: `tests/desktop/test_main_window.py` - verifies desktop shell construction.
 - Create: `.gitignore` - excludes Python, build, local DB, and brainstorm artifacts.
+
+## Local Execution Notes
+
+- Use the project virtual environment at `.venv`.
+- Prefer the bundled Python 3.12 runtime when available because the system Python may be newer than PySide6 binary wheels support.
+- Run commands through `.venv\Scripts\python.exe` unless the shell has the virtual environment activated.
+- GUI launch commands block until the FileZall window is closed.
+- If Task 0 has already been completed, verify the existing commit instead of re-running the baseline commit.
 
 ## Task 0: Repository and Tooling Baseline
 
@@ -123,7 +131,35 @@ Expected:
 - Create: `src/filezall_core/__init__.py`
 - Test: `tests/core/test_package.py`
 
-- [ ] **Step 1: Write the failing package import test**
+- [ ] **Step 1: Bootstrap virtual environment**
+
+Run when `.venv` does not exist:
+
+```powershell
+C:\Users\HUAWEI\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m venv .venv
+```
+
+Expected:
+
+```text
+.venv is created using Python 3.12.
+```
+
+- [ ] **Step 2: Install test runner before the RED check**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install pytest
+```
+
+Expected:
+
+```text
+Successfully installed pytest
+```
+
+- [ ] **Step 3: Write the failing package import test**
 
 Create `tests/core/test_package.py`:
 
@@ -135,12 +171,12 @@ def test_core_package_exports_version() -> None:
     assert __version__ == "0.1.0"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 4: Run test to verify it fails**
 
 Run:
 
 ```powershell
-python -m pytest tests/core/test_package.py -v
+.\.venv\Scripts\python.exe -m pytest tests/core/test_package.py -v
 ```
 
 Expected:
@@ -149,7 +185,7 @@ Expected:
 ModuleNotFoundError: No module named 'filezall_core'
 ```
 
-- [ ] **Step 3: Add package metadata and core package**
+- [ ] **Step 5: Add package metadata and core package**
 
 Create `pyproject.toml`:
 
@@ -192,12 +228,12 @@ Create `src/filezall_core/__init__.py`:
 __version__ = "0.1.0"
 ```
 
-- [ ] **Step 4: Install development dependencies**
+- [ ] **Step 6: Install development dependencies**
 
 Run:
 
 ```powershell
-python -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 ```
 
 Expected:
@@ -206,12 +242,12 @@ Expected:
 Successfully installed filezall-0.1.0
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [ ] **Step 7: Run test to verify it passes**
 
 Run:
 
 ```powershell
-python -m pytest tests/core/test_package.py -v
+.\.venv\Scripts\python.exe -m pytest tests/core/test_package.py -v
 ```
 
 Expected:
@@ -220,7 +256,7 @@ Expected:
 tests/core/test_package.py::test_core_package_exports_version PASSED
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 Run:
 
@@ -322,7 +358,7 @@ def test_transfer_item_marks_completion_when_all_bytes_transferred() -> None:
 Run:
 
 ```powershell
-python -m pytest tests/core/test_models.py -v
+.\.venv\Scripts\python.exe -m pytest tests/core/test_models.py -v
 ```
 
 Expected:
@@ -470,7 +506,7 @@ class TransferTask:
 Run:
 
 ```powershell
-python -m pytest tests/core/test_models.py -v
+.\.venv\Scripts\python.exe -m pytest tests/core/test_models.py -v
 ```
 
 Expected:
@@ -545,7 +581,7 @@ def test_app_paths_can_create_directories(tmp_path: Path) -> None:
 Run:
 
 ```powershell
-python -m pytest tests/core/test_app_paths.py -v
+.\.venv\Scripts\python.exe -m pytest tests/core/test_app_paths.py -v
 ```
 
 Expected:
@@ -605,7 +641,7 @@ def _default_root() -> Path:
 Run:
 
 ```powershell
-python -m pytest tests/core/test_app_paths.py -v
+.\.venv\Scripts\python.exe -m pytest tests/core/test_app_paths.py -v
 ```
 
 Expected:
@@ -687,7 +723,7 @@ def test_initialize_database_records_schema_version(tmp_path: Path) -> None:
 Run:
 
 ```powershell
-python -m pytest tests/core/test_storage.py -v
+.\.venv\Scripts\python.exe -m pytest tests/core/test_storage.py -v
 ```
 
 Expected:
@@ -801,7 +837,7 @@ def _record_schema_version(connection: sqlite3.Connection) -> None:
 Run:
 
 ```powershell
-python -m pytest tests/core/test_storage.py -v
+.\.venv\Scripts\python.exe -m pytest tests/core/test_storage.py -v
 ```
 
 Expected:
@@ -854,7 +890,7 @@ def test_main_window_has_filezall_title(qtbot) -> None:
 Run:
 
 ```powershell
-python -m pytest tests/desktop/test_main_window.py -v
+.\.venv\Scripts\python.exe -m pytest tests/desktop/test_main_window.py -v
 ```
 
 Expected:
@@ -977,7 +1013,7 @@ if __name__ == "__main__":
 Run:
 
 ```powershell
-python -m pytest tests/desktop/test_main_window.py -v
+.\.venv\Scripts\python.exe -m pytest tests/desktop/test_main_window.py -v
 ```
 
 Expected:
@@ -991,13 +1027,13 @@ tests/desktop/test_main_window.py::test_main_window_has_filezall_title PASSED
 Run:
 
 ```powershell
-python -m filezall_desktop.app
+.\.venv\Scripts\python.exe -m filezall_desktop.app
 ```
 
 Expected:
 
 ```text
-The FileZall window opens with local and remote file panels and a Transfer Center table.
+The FileZall window opens with local and remote file panels and a Transfer Center table. Close the window to return to the shell.
 ```
 
 - [ ] **Step 6: Commit**
@@ -1025,7 +1061,7 @@ Expected:
 Run:
 
 ```powershell
-python -m pytest -v
+.\.venv\Scripts\python.exe -m pytest -v
 ```
 
 Expected:
@@ -1047,13 +1083,13 @@ tests/desktop/test_main_window.py::test_main_window_has_filezall_title PASSED
 Run:
 
 ```powershell
-filezall
+.\.venv\Scripts\filezall.exe
 ```
 
 Expected:
 
 ```text
-The FileZall desktop window opens.
+The FileZall desktop window opens. Close the window to return to the shell.
 ```
 
 - [ ] **Step 3: Commit verification notes if any docs changed**
@@ -1088,4 +1124,4 @@ Expected:
 - Spec coverage: This plan covers M1 only. M2-M7 remain separate milestone plans.
 - Placeholder scan: This plan contains concrete file paths, code blocks, commands, and expected outputs.
 - Type consistency: `Protocol`, `AuthMode`, `Direction`, `ConflictPolicy`, `TransferStatus`, `SiteProfile`, `TransferTask`, and `TransferItem` are introduced in Task 2 and used consistently by tests.
-- Verification: Full M1 verification requires dependency installation and a working graphical environment for PySide6.
+- Verification: Full M1 verification requires dependency installation and a working graphical environment for PySide6. Local execution uses `.venv` with Python 3.12 to avoid PySide6 wheel issues on newer system Python versions.
