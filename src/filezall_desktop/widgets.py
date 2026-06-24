@@ -53,19 +53,26 @@ class ConnectionBar(QWidget):
 
 
 class FilePanel(QWidget):
-    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        title: str,
+        action_label: str,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
         self.title = QLabel(title, self)
         self.path_edit = QLineEdit(self)
         self.refresh_button = QPushButton("Refresh", self)
+        self.action_button = QPushButton(action_label, self)
         self.table = QTableWidget(0, 4, self)
         self.table.setHorizontalHeaderLabels(["Name", "Size", "Type", "Modified"])
 
         header.addWidget(self.title)
         header.addWidget(self.path_edit)
         header.addWidget(self.refresh_button)
+        header.addWidget(self.action_button)
         layout.addLayout(header)
         layout.addWidget(self.table)
 
@@ -83,6 +90,13 @@ class FilePanel(QWidget):
             self.table.setItem(row, 1, QTableWidgetItem(str(entry.size_bytes)))
             self.table.setItem(row, 2, QTableWidgetItem("Directory" if entry.is_dir else "File"))
             self.table.setItem(row, 3, QTableWidgetItem(_format_time(entry.modified_time)))
+
+    def selected_name(self) -> str | None:
+        selected = self.table.selectionModel().selectedRows()
+        if not selected:
+            return None
+        item = self.table.item(selected[0].row(), 0)
+        return item.text() if item else None
 
 
 def _format_time(value: datetime | None) -> str:

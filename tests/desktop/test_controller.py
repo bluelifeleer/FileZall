@@ -45,6 +45,30 @@ class FakeSession:
         self.downloads.append((remote_path, local_path))
 
 
+class FakeRepository:
+    def __init__(self, sites=None) -> None:
+        self.sites = sites or []
+        self.saved = []
+
+    def list(self):
+        return self.sites
+
+    def save(self, site):
+        self.saved.append(site)
+
+
+class FakeCredentials:
+    def __init__(self) -> None:
+        self.saved = []
+
+    def save_secret(self, site_id: str, purpose: str, secret: str) -> str:
+        self.saved.append((site_id, purpose, secret))
+        return f"{site_id}:{purpose}"
+
+    def get_secret(self, ref):
+        return None
+
+
 def test_controller_loads_local_directory(tmp_path: Path) -> None:
     window = FakeWindow()
     entry = LocalFileEntry(
@@ -64,6 +88,30 @@ def test_controller_loads_local_directory(tmp_path: Path) -> None:
 
     assert window.local_entries == [entry]
     assert window.statuses[-1] == f"Loaded local directory {tmp_path}"
+
+
+def test_controller_loads_saved_sites_into_window() -> None:
+    window = FakeWindow()
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+    window.set_site_profiles = lambda sites: setattr(window, "sites", sites)
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: FakeSession(),
+        site_repository=FakeRepository([site]),
+    )
+
+    controller.load_saved_sites()
+
+    assert window.sites == [site]
 
 
 def test_controller_connects_remote_and_transfers_one_file(tmp_path: Path) -> None:
@@ -94,3 +142,32 @@ def test_controller_connects_remote_and_transfers_one_file(tmp_path: Path) -> No
     assert session.password == "secret"
     assert session.uploads == [(tmp_path / "local.txt", PurePosixPath("/home/deploy/local.txt"))]
     assert session.downloads == [(PurePosixPath("/home/deploy/app.log"), tmp_path / "app.log")]
+
+
+def test_controller_saves_site_and_secret_before_connecting() -> None:
+    window = FakeWindow()
+    session = FakeSession()
+    repository = FakeRepository()
+    credentials = FakeCredentials()
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: session,
+        site_repository=repository,
+        credential_service=credentials,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+
+    assert credentials.saved == [("site-1", "password", "secret")]
+    assert repository.saved[0].credential_ref == "site-1:password"
+    assert session.password == "secret"
