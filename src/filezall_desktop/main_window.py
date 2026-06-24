@@ -1,18 +1,8 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import (
-    QHBoxLayout,
-    QLabel,
-    QMainWindow,
-    QPushButton,
-    QSplitter,
-    QStatusBar,
-    QTableWidget,
-    QTableWidgetItem,
-    QToolBar,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QLabel, QMainWindow, QSplitter, QStatusBar, QTableWidget, QToolBar, QVBoxLayout, QWidget
+
+from filezall_desktop.widgets import ConnectionBar, FilePanel
 
 
 class MainWindow(QMainWindow):
@@ -28,10 +18,8 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Connection")
         toolbar.setMovable(False)
-        toolbar.addWidget(QLabel("Site"))
-        toolbar.addSeparator()
-        toolbar.addAction("Connect")
-        toolbar.addAction("Disconnect")
+        self.connection_bar = ConnectionBar(self)
+        toolbar.addWidget(self.connection_bar)
         self.addToolBar(toolbar)
 
     def _build_central_layout(self) -> None:
@@ -39,35 +27,30 @@ class MainWindow(QMainWindow):
         root_layout = QVBoxLayout(root)
 
         file_splitter = QSplitter(root)
-        file_splitter.addWidget(self._build_file_panel("Local Files"))
-        file_splitter.addWidget(self._build_file_panel("Remote Files"))
+        self.local_panel = FilePanel("Local Files", self)
+        self.remote_panel = FilePanel("Remote Files", self)
+        self.local_panel.set_placeholder_row("No directory loaded")
+        self.remote_panel.set_placeholder_row("Not connected")
+        file_splitter.addWidget(self.local_panel)
+        file_splitter.addWidget(self.remote_panel)
         file_splitter.setSizes([640, 640])
 
-        transfer_table = QTableWidget(0, 5, root)
-        transfer_table.setHorizontalHeaderLabels(
+        self.transfer_table = QTableWidget(0, 5, root)
+        self.transfer_table.setHorizontalHeaderLabels(
             ["Server", "Direction", "File", "Progress", "Status"]
         )
 
         root_layout.addWidget(file_splitter, stretch=4)
         root_layout.addWidget(QLabel("Transfer Center"), stretch=0)
-        root_layout.addWidget(transfer_table, stretch=1)
+        root_layout.addWidget(self.transfer_table, stretch=1)
         self.setCentralWidget(root)
 
-    def _build_file_panel(self, title: str) -> QWidget:
-        panel = QWidget(self)
-        layout = QVBoxLayout(panel)
-        header = QHBoxLayout()
-        header.addWidget(QLabel(title))
-        header.addStretch()
-        header.addWidget(QPushButton("Refresh"))
+    def set_local_entries(self, entries) -> None:
+        self.local_panel.set_entries(entries)
 
-        table = QTableWidget(1, 4, panel)
-        table.setHorizontalHeaderLabels(["Name", "Size", "Type", "Modified"])
-        table.setItem(0, 0, QTableWidgetItem("No directory loaded"))
-        table.setItem(0, 1, QTableWidgetItem(""))
-        table.setItem(0, 2, QTableWidgetItem(""))
-        table.setItem(0, 3, QTableWidgetItem(""))
+    def set_remote_entries(self, entries, path) -> None:
+        self.remote_panel.path_edit.setText(str(path or ""))
+        self.remote_panel.set_entries(entries)
 
-        layout.addLayout(header)
-        layout.addWidget(table)
-        return panel
+    def show_status(self, message: str) -> None:
+        self.statusBar().showMessage(message)
