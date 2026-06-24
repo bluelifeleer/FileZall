@@ -56,6 +56,15 @@ class SiteProfile:
 
 
 @dataclass(frozen=True)
+class LocalFileEntry:
+    path: Path
+    name: str
+    is_dir: bool
+    size_bytes: int
+    modified_time: datetime
+
+
+@dataclass(frozen=True)
 class TransferItem:
     id: str
     task_id: str
