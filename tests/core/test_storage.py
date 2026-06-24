@@ -37,3 +37,21 @@ def test_initialize_database_records_schema_version(tmp_path: Path) -> None:
         ).fetchone()[0]
 
     assert version == 1
+
+
+def test_transfer_tables_include_metadata_columns(tmp_path: Path) -> None:
+    database = tmp_path / "filezall.sqlite3"
+
+    initialize_database(database)
+
+    with sqlite3.connect(database) as connection:
+        task_columns = {
+            row[1] for row in connection.execute("pragma table_info(transfer_tasks)")
+        }
+        item_columns = {
+            row[1] for row in connection.execute("pragma table_info(transfer_items)")
+        }
+
+    assert "created_time" in task_columns
+    assert "modified_time" in item_columns
+    assert "checksum" in item_columns

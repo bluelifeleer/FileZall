@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from filezall_core.models import (
@@ -67,3 +68,29 @@ def test_transfer_item_marks_completion_when_all_bytes_transferred() -> None:
 
     assert completed.status == TransferStatus.COMPLETED
     assert completed.bytes_transferred == 4096
+
+
+def test_transfer_task_and_item_preserve_file_metadata() -> None:
+    modified_time = datetime(2026, 6, 24, 12, 30, tzinfo=UTC)
+    task = TransferTask(
+        id="task-1",
+        server_id="site-1",
+        direction=Direction.DOWNLOAD,
+        source_path=PurePosixPath("/data"),
+        destination_path=Path("D:/Downloads"),
+        protocol=Protocol.SFTP,
+        conflict_policy=ConflictPolicy.OVERWRITE,
+        created_time=modified_time,
+    )
+
+    item = task.create_item(
+        item_id="item-1",
+        relative_path=PurePosixPath("archive.zip"),
+        size_bytes=4096,
+        modified_time=modified_time,
+        checksum="sha256:abc123",
+    )
+
+    assert task.created_time == modified_time
+    assert item.modified_time == modified_time
+    assert item.checksum == "sha256:abc123"

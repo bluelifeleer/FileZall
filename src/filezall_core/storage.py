@@ -51,6 +51,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             protocol text not null,
             conflict_policy text not null,
             status text not null,
+            created_time text not null,
             created_at text not null default current_timestamp,
             updated_at text not null default current_timestamp
         );
@@ -64,6 +65,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             destination_path text not null,
             temporary_path text not null,
             size_bytes integer not null,
+            modified_time text,
+            checksum text,
             bytes_transferred integer not null default 0,
             status text not null,
             retry_count integer not null default 0,

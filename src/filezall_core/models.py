@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 
@@ -65,6 +66,8 @@ class TransferItem:
     temporary_path: Path | PurePosixPath
     size_bytes: int
     protocol: Protocol
+    modified_time: datetime | None = None
+    checksum: str | None = None
     bytes_transferred: int = 0
     status: TransferStatus = TransferStatus.PENDING
     retry_count: int = 0
@@ -92,6 +95,7 @@ class TransferTask:
     destination_path: Path | PurePosixPath
     protocol: Protocol
     conflict_policy: ConflictPolicy
+    created_time: datetime = field(default_factory=lambda: datetime.now(UTC))
     status: TransferStatus = TransferStatus.PENDING
 
     def create_item(
@@ -99,6 +103,8 @@ class TransferTask:
         item_id: str,
         relative_path: PurePosixPath,
         size_bytes: int,
+        modified_time: datetime | None = None,
+        checksum: str | None = None,
     ) -> TransferItem:
         destination = self._join_path(self.destination_path, relative_path)
         return TransferItem(
@@ -111,6 +117,8 @@ class TransferTask:
             temporary_path=self._temporary_path(destination),
             size_bytes=size_bytes,
             protocol=self.protocol,
+            modified_time=modified_time,
+            checksum=checksum,
         )
 
     @staticmethod
