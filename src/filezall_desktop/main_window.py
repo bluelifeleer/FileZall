@@ -86,7 +86,8 @@ class MainWindow(QMainWindow):
         self.remote_panel.action_button.clicked.connect(self._handle_download_clicked)
 
     def _handle_connect_clicked(self) -> None:
-        self.controller.connect(self._site_from_fields(), self._secret_from_fields())
+        site = self._selected_saved_site()
+        self.controller.connect(site or self._site_from_fields(), None if site else self._secret_from_fields())
 
     def _handle_local_refresh_clicked(self) -> None:
         path_text = self.local_panel.path_edit.text().strip()
@@ -134,6 +135,15 @@ class MainWindow(QMainWindow):
             default_local_path=Path(local_path) if local_path else None,
             ssh_key_path=Path(ssh_key_text) if ssh_key_text else None,
         )
+
+    def _selected_saved_site(self) -> SiteProfile | None:
+        index = self.connection_bar.site_selector.currentIndex()
+        if index <= 0:
+            return None
+        site_index = index - 1
+        if site_index >= len(self.site_profiles):
+            return None
+        return self.site_profiles[site_index]
 
     def _secret_from_fields(self) -> str | None:
         secret = self.connection_bar.secret_edit.text()

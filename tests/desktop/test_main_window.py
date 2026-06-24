@@ -1,6 +1,8 @@
 from filezall_desktop.main_window import MainWindow
 from PySide6.QtCore import Qt
 
+from filezall_core.models import AuthMode, Protocol, SiteProfile
+
 
 class FakeController:
     def __init__(self) -> None:
@@ -71,6 +73,30 @@ def test_main_window_loads_sites_and_connects_button_to_controller(qtbot) -> Non
     assert site.username == "deploy"
     assert str(site.default_remote_path) == "/var/www"
     assert password == "secret"
+
+
+def test_main_window_connects_selected_saved_site_with_stored_credential_ref(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    saved_site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+        credential_ref="site-1:password",
+    )
+    window.set_site_profiles([saved_site])
+    window.connection_bar.site_selector.setCurrentIndex(1)
+
+    qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
+
+    site, password = controller.connect_calls[0]
+    assert site == saved_site
+    assert password is None
 
 
 def test_main_window_refresh_upload_and_download_buttons_call_controller(qtbot, tmp_path) -> None:
