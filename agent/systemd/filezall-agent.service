@@ -1,0 +1,20 @@
+[Unit]
+Description=FileZall Agent
+Documentation=https://github.com/bluelifeleer/FileZall
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/filezall-agent/agent.env
+WorkingDirectory=/opt/filezall-agent
+ExecStart=/usr/bin/env python3 -m filezall_agent.server
+Restart=on-failure
+RestartSec=3
+
+# systemd hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
