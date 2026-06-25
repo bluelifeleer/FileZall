@@ -69,6 +69,26 @@ class FakeCredentials:
         return None
 
 
+class FakeQueue:
+    def __init__(self) -> None:
+        self.paused = []
+        self.resumed = []
+        self.canceled = []
+        self.retried = []
+
+    def pause_task(self, task_id: str) -> None:
+        self.paused.append(task_id)
+
+    def resume_task(self, task_id: str) -> None:
+        self.resumed.append(task_id)
+
+    def cancel_task(self, task_id: str) -> None:
+        self.canceled.append(task_id)
+
+    def retry_failed(self, task_id: str) -> None:
+        self.retried.append(task_id)
+
+
 def test_controller_loads_local_directory(tmp_path: Path) -> None:
     window = FakeWindow()
     entry = LocalFileEntry(
@@ -171,3 +191,24 @@ def test_controller_saves_site_and_secret_before_connecting() -> None:
     assert credentials.saved == [("site-1", "password", "secret")]
     assert repository.saved[0].credential_ref == "site-1:password"
     assert session.password == "secret"
+
+
+def test_controller_delegates_transfer_queue_actions() -> None:
+    window = FakeWindow()
+    queue = FakeQueue()
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: FakeSession(),
+        queue_service=queue,
+    )
+
+    controller.pause_transfer("task-1")
+    controller.resume_transfer("task-1")
+    controller.cancel_transfer("task-1")
+    controller.retry_transfer("task-1")
+
+    assert queue.paused == ["task-1"]
+    assert queue.resumed == ["task-1"]
+    assert queue.canceled == ["task-1"]
+    assert queue.retried == ["task-1"]

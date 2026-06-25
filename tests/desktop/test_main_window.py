@@ -1,7 +1,9 @@
+from pathlib import Path, PurePosixPath
+
 from filezall_desktop.main_window import MainWindow
 from PySide6.QtCore import Qt
 
-from filezall_core.models import AuthMode, Protocol, SiteProfile
+from filezall_core.models import AuthMode, Direction, Protocol, SiteProfile, TransferItem, TransferStatus
 
 
 class FakeController:
@@ -12,6 +14,10 @@ class FakeController:
         self.remote_refreshes = []
         self.uploads = []
         self.downloads = []
+        self.paused = []
+        self.resumed = []
+        self.canceled = []
+        self.retried = []
 
     def load_saved_sites(self) -> None:
         self.loaded_sites = True
@@ -30,6 +36,18 @@ class FakeController:
 
     def download_file(self, remote_path, local_path) -> None:
         self.downloads.append((remote_path, local_path))
+
+    def pause_transfer(self, task_id) -> None:
+        self.paused.append(task_id)
+
+    def resume_transfer(self, task_id) -> None:
+        self.resumed.append(task_id)
+
+    def cancel_transfer(self, task_id) -> None:
+        self.canceled.append(task_id)
+
+    def retry_transfer(self, task_id) -> None:
+        self.retried.append(task_id)
 
 
 def test_main_window_has_filezall_title(qtbot) -> None:
@@ -122,3 +140,38 @@ def test_main_window_refresh_upload_and_download_buttons_call_controller(qtbot, 
     assert str(controller.remote_refreshes[0]) == "/home/deploy"
     assert controller.uploads == [(local_root / "app.txt", controller.remote_refreshes[0] / "app.txt")]
     assert controller.downloads == [(controller.remote_refreshes[0] / "remote.txt", local_root / "remote.txt")]
+
+
+def test_main_window_renders_transfer_rows_and_queue_action_buttons(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    item = TransferItem(
+        id="item-1",
+        task_id="task-1",
+        server_id="site-1",
+        direction=Direction.UPLOAD,
+        source_path=tmp_path / "app.zip",
+        destination_path=PurePosixPath("/home/deploy/app.zip"),
+        temporary_path=PurePosixPath("/home/deploy/.filezall.app.zip.part"),
+        size_bytes=100,
+        protocol=Protocol.SFTP,
+        bytes_transferred=25,
+        status=TransferStatus.RUNNING,
+    )
+
+    window.set_transfer_items([item])
+    window.transfer_table.selectRow(0)
+    qtbot.mouseClick(window.pause_transfer_button, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window.resume_transfer_button, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window.cancel_transfer_button, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window.retry_transfer_button, Qt.MouseButton.LeftButton)
+
+    assert window.transfer_table.rowCount() == 1
+    assert window.transfer_table.item(0, 0).text() == "site-1"
+    assert window.transfer_table.item(0, 2).text() == "app.zip"
+    assert window.transfer_table.item(0, 3).text() == "25%"
+    assert controller.paused == ["task-1"]
+    assert controller.resumed == ["task-1"]
+    assert controller.canceled == ["task-1"]
+    assert controller.retried == ["task-1"]

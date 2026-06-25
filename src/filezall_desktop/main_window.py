@@ -2,9 +2,22 @@ from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
 
-from PySide6.QtWidgets import QLabel, QMainWindow, QSplitter, QStatusBar, QTableWidget, QToolBar, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QSplitter,
+    QStatusBar,
+    QTableWidget,
+    QTableWidgetItem,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
+)
 
-from filezall_core.models import AuthMode, Protocol, SiteProfile
+from filezall_core.models import AuthMode, Protocol, SiteProfile, TransferItem
 from filezall_desktop.controller import MainWindowController
 from filezall_desktop.widgets import ConnectionBar, FilePanel
 
@@ -15,6 +28,7 @@ class MainWindow(QMainWindow):
         controller=None,
         site_repository=None,
         credential_service=None,
+        queue_service=None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("FileZall")
@@ -27,6 +41,7 @@ class MainWindow(QMainWindow):
             self,
             site_repository=site_repository,
             credential_service=credential_service,
+            queue_service=queue_service,
         )
         self._connect_signals()
         self.controller.load_saved_sites()
@@ -55,9 +70,20 @@ class MainWindow(QMainWindow):
         self.transfer_table.setHorizontalHeaderLabels(
             ["Server", "Direction", "File", "Progress", "Status"]
         )
+        transfer_actions = QHBoxLayout()
+        self.pause_transfer_button = QPushButton("Pause", root)
+        self.resume_transfer_button = QPushButton("Resume", root)
+        self.cancel_transfer_button = QPushButton("Cancel", root)
+        self.retry_transfer_button = QPushButton("Retry", root)
+        transfer_actions.addWidget(QLabel("Transfer Center", root))
+        transfer_actions.addStretch(1)
+        transfer_actions.addWidget(self.pause_transfer_button)
+        transfer_actions.addWidget(self.resume_transfer_button)
+        transfer_actions.addWidget(self.cancel_transfer_button)
+        transfer_actions.addWidget(self.retry_transfer_button)
 
         root_layout.addWidget(file_splitter, stretch=4)
-        root_layout.addWidget(QLabel("Transfer Center"), stretch=0)
+        root_layout.addLayout(transfer_actions, stretch=0)
         root_layout.addWidget(self.transfer_table, stretch=1)
         self.setCentralWidget(root)
 
@@ -70,6 +96,17 @@ class MainWindow(QMainWindow):
 
     def show_status(self, message: str) -> None:
         self.statusBar().showMessage(message)
+
+    def set_transfer_items(self, items: list[TransferItem]) -> None:
+        self.transfer_table.setRowCount(len(items))
+        for row, item in enumerate(items):
+            server_cell = QTableWidgetItem(item.server_id)
+            server_cell.setData(Qt.ItemDataRole.UserRole, item.task_id)
+            self.transfer_table.setItem(row, 0, server_cell)
+            self.transfer_table.setItem(row, 1, QTableWidgetItem(item.direction.value))
+            self.transfer_table.setItem(row, 2, QTableWidgetItem(_path_name(item.destination_path)))
+            self.transfer_table.setItem(row, 3, QTableWidgetItem(_progress_text(item)))
+            self.transfer_table.setItem(row, 4, QTableWidgetItem(item.status.value))
 
     def set_site_profiles(self, sites) -> None:
         self.site_profiles = list(sites)
@@ -84,6 +121,10 @@ class MainWindow(QMainWindow):
         self.remote_panel.refresh_button.clicked.connect(self._handle_remote_refresh_clicked)
         self.local_panel.action_button.clicked.connect(self._handle_upload_clicked)
         self.remote_panel.action_button.clicked.connect(self._handle_download_clicked)
+        self.pause_transfer_button.clicked.connect(self._handle_pause_transfer_clicked)
+        self.resume_transfer_button.clicked.connect(self._handle_resume_transfer_clicked)
+        self.cancel_transfer_button.clicked.connect(self._handle_cancel_transfer_clicked)
+        self.retry_transfer_button.clicked.connect(self._handle_retry_transfer_clicked)
 
     def _handle_connect_clicked(self) -> None:
         site = self._selected_saved_site()
@@ -111,6 +152,22 @@ class MainWindow(QMainWindow):
             return
         local_root = Path(self.local_panel.path_edit.text().strip() or Path.home())
         self.controller.download_file(self._remote_path_from_field() / remote_name, local_root / remote_name)
+
+    def _handle_pause_transfer_clicked(self) -> None:
+        if task_id := self._selected_transfer_task_id():
+            self.controller.pause_transfer(task_id)
+
+    def _handle_resume_transfer_clicked(self) -> None:
+        if task_id := self._selected_transfer_task_id():
+            self.controller.resume_transfer(task_id)
+
+    def _handle_cancel_transfer_clicked(self) -> None:
+        if task_id := self._selected_transfer_task_id():
+            self.controller.cancel_transfer(task_id)
+
+    def _handle_retry_transfer_clicked(self) -> None:
+        if task_id := self._selected_transfer_task_id():
+            self.controller.retry_transfer(task_id)
 
     def _site_from_fields(self) -> SiteProfile:
         host = self.connection_bar.host_edit.text().strip()
@@ -151,3 +208,20 @@ class MainWindow(QMainWindow):
 
     def _remote_path_from_field(self) -> PurePosixPath:
         return PurePosixPath(self.remote_panel.path_edit.text().strip() or "~")
+
+    def _selected_transfer_task_id(self) -> str | None:
+        selected = self.transfer_table.selectionModel().selectedRows()
+        if not selected:
+            return None
+        item = self.transfer_table.item(selected[0].row(), 0)
+        return str(item.data(Qt.ItemDataRole.UserRole)) if item else None
+
+
+def _path_name(path: Path | PurePosixPath) -> str:
+    return path.name
+
+
+def _progress_text(item: TransferItem) -> str:
+    if item.size_bytes <= 0:
+        return "0%"
+    return f"{int(item.bytes_transferred * 100 / item.size_bytes)}%"

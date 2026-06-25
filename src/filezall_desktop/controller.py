@@ -18,6 +18,7 @@ class MainWindowController:
         session_factory: Callable[[SiteProfile], RemoteSession] | None = None,
         site_repository=None,
         credential_service=None,
+        queue_service=None,
     ) -> None:
         self._window = window
         self._local_lister = local_lister
@@ -26,6 +27,7 @@ class MainWindowController:
         )
         self._site_repository = site_repository
         self._credential_service = credential_service
+        self._queue_service = queue_service
         self._session: RemoteSession | None = None
 
     def load_saved_sites(self) -> None:
@@ -60,10 +62,31 @@ class MainWindowController:
         self._require_session().download_file(remote_path, local_path)
         self._window.show_status(f"Downloaded {remote_path.name}")
 
+    def pause_transfer(self, task_id: str) -> None:
+        self._require_queue().pause_task(task_id)
+        self._window.show_status(f"Paused transfer task {task_id}")
+
+    def resume_transfer(self, task_id: str) -> None:
+        self._require_queue().resume_task(task_id)
+        self._window.show_status(f"Resumed transfer task {task_id}")
+
+    def cancel_transfer(self, task_id: str) -> None:
+        self._require_queue().cancel_task(task_id)
+        self._window.show_status(f"Canceled transfer task {task_id}")
+
+    def retry_transfer(self, task_id: str) -> None:
+        self._require_queue().retry_failed(task_id)
+        self._window.show_status(f"Retried transfer task {task_id}")
+
     def _require_session(self) -> RemoteSession:
         if self._session is None:
             raise RuntimeError("Remote session is not connected")
         return self._session
+
+    def _require_queue(self):
+        if self._queue_service is None:
+            raise RuntimeError("Transfer queue is not configured")
+        return self._queue_service
 
     def _save_site_if_configured(
         self,
