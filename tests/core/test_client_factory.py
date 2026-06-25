@@ -14,5 +14,17 @@ def test_client_factory_creates_protocol_adapters() -> None:
 
 
 def test_client_factory_rejects_agent_http_until_m6() -> None:
-    with pytest.raises(RemoteConnectionError, match="Agent HTTP is not available until M6"):
+    with pytest.raises(RemoteConnectionError, match="Agent HTTP requires an Agent client factory"):
         create_remote_client(Protocol.AGENT_HTTP)
+
+
+def test_client_factory_uses_injected_agent_http_factory() -> None:
+    agent_client = object()
+
+    assert (
+        create_remote_client(
+            Protocol.AGENT_HTTP,
+            agent_client_factory=lambda: agent_client,
+        )
+        is agent_client
+    )

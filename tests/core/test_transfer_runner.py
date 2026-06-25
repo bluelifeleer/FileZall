@@ -96,6 +96,31 @@ def test_transfer_runner_records_failed_status_when_client_raises(tmp_path: Path
     assert failed.last_error == "network down"
 
 
+def test_transfer_runner_uses_agent_http_remote_client_for_upload(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    task = TransferTask(
+        id="task-1",
+        server_id="site-1",
+        direction=Direction.UPLOAD,
+        source_path=tmp_path,
+        destination_path=PurePosixPath("/home/deploy"),
+        protocol=Protocol.AGENT_HTTP,
+        conflict_policy=ConflictPolicy.OVERWRITE,
+    )
+    item = task.create_item("item-1", PurePosixPath("app.zip"), size_bytes=6)
+    local_file = tmp_path / "app.zip"
+    local_file.write_bytes(b"abcdef")
+    repository.save_task(task, [item])
+    client = FakeRemoteClient(entries={}, home=PurePosixPath("/home/deploy"))
+
+    result = TransferRunner(repository).run_item(item, client)
+
+    assert result.status.value == "completed"
+    assert client.range_uploads == [
+        (local_file, PurePosixPath("/home/deploy/.filezall.app.zip.part"), 0)
+    ]
+
+
 class FailingRemoteClient(FakeRemoteClient):
     def __init__(self) -> None:
         super().__init__(entries={}, home=PurePosixPath("/home/deploy"))
