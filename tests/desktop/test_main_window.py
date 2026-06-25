@@ -1127,6 +1127,32 @@ def test_main_window_connects_selected_saved_site_with_stored_credential_ref(qtb
     assert password is None
 
 
+def test_main_window_connects_saved_site_with_manual_secret_without_remembering(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    saved_site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+        credential_ref="site-1:password",
+    )
+    window.set_site_profiles([saved_site])
+    window.connection_bar.site_selector.setCurrentIndex(1)
+    window.connection_bar.secret_edit.setText("manual-secret")
+
+    qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
+
+    site, password, remember_secret = controller.connect_calls[0]
+    assert site == saved_site
+    assert password == "manual-secret"
+    assert remember_secret is False
+
+
 def test_saved_site_autofills_quick_connect_fields_without_reading_secret(qtbot, tmp_path) -> None:
     class SavedController(FakeController):
         def __init__(self) -> None:

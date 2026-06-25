@@ -1,6 +1,8 @@
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
 
+import pytest
+
 from filezall_core.models import (
     AuthMode,
     LocalFileEntry,
@@ -127,6 +129,11 @@ class FakeCredentials:
 
     def get_secret(self, ref):
         return self.secrets.get(ref)
+
+
+class FailingCredentials(FakeCredentials):
+    def get_secret(self, ref):
+        raise RuntimeError("keychain denied")
 
 
 class FakeQueue:
@@ -374,6 +381,29 @@ def test_controller_loads_saved_sites_with_secret_lookup() -> None:
     controller.load_saved_sites()
 
     assert captured == {"sites": [site], "secret": "remembered-secret"}
+
+
+def test_controller_reports_keychain_lookup_failure_for_saved_site() -> None:
+    window = FakeWindow()
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+        credential_ref="site-1:password",
+    )
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: FakeSession(),
+        credential_service=FailingCredentials(),
+    )
+
+    with pytest.raises(RuntimeError, match="Enter the server password manually"):
+        controller.connect(site)
 
 
 def test_controller_connects_remote_and_transfers_one_file(tmp_path: Path) -> None:

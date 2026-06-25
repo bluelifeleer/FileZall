@@ -438,7 +438,13 @@ class MainWindowController:
     def _secret_for_site(self, site: SiteProfile) -> str | None:
         if self._credential_service is None:
             return None
-        return self._credential_service.get_secret(site.credential_ref)
+        try:
+            return self._credential_service.get_secret(site.credential_ref)
+        except Exception as exc:
+            raise RuntimeError(
+                "Could not read the saved password from macOS Keychain. "
+                "Enter the server password manually in the password field and connect again."
+            ) from exc
 
     def _log(self, message: str) -> None:
         if hasattr(self._window, "append_log"):

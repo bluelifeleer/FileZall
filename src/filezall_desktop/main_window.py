@@ -578,8 +578,10 @@ class MainWindow(QMainWindow):
 
     def _handle_connect_clicked(self) -> None:
         site = self._selected_saved_site()
-        secret = None if site else self._secret_from_fields()
+        secret = self._secret_from_fields()
         remember_secret = True
+        if site and secret:
+            remember_secret = False
         if not site and secret:
             if self._remember_secret_confirmer is not None:
                 remember_secret = self._remember_secret_confirmer(self)
