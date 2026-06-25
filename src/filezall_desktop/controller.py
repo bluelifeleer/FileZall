@@ -49,8 +49,13 @@ class MainWindowController:
         self._window.set_local_entries(entries)
         self._window.show_status(f"Loaded local directory {path}")
 
-    def connect(self, site: SiteProfile, password: str | None = None) -> None:
-        site = self._save_site_if_configured(site, password)
+    def connect(
+        self,
+        site: SiteProfile,
+        password: str | None = None,
+        remember_secret: bool = True,
+    ) -> None:
+        site = self._save_site_if_configured(site, password, remember_secret)
         password = password or self._secret_for_site(site)
         self._session = self._session_factory(site)
         self._connected_site = site
@@ -167,8 +172,9 @@ class MainWindowController:
         self,
         site: SiteProfile,
         password: str | None,
+        remember_secret: bool,
     ) -> SiteProfile:
-        if self._site_repository is None:
+        if self._site_repository is None or not remember_secret:
             return site
 
         if password and self._credential_service is not None:

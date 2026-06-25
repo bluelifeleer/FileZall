@@ -47,8 +47,8 @@ class FakeController:
     def load_saved_sites(self) -> None:
         self.loaded_sites = True
 
-    def connect(self, site, password=None) -> None:
-        self.connect_calls.append((site, password))
+    def connect(self, site, password=None, remember_secret: bool = True) -> None:
+        self.connect_calls.append((site, password, remember_secret))
 
     def load_local_directory(self, path) -> None:
         self.local_refreshes.append(path)
@@ -97,8 +97,8 @@ class FakeController:
 
 
 class FailingConnectController(FakeController):
-    def connect(self, site, password=None) -> None:
-        super().connect(site, password)
+    def connect(self, site, password=None, remember_secret: bool = True) -> None:
+        super().connect(site, password, remember_secret)
         raise RuntimeError("connect failed")
 
 
@@ -313,12 +313,13 @@ def test_main_window_loads_sites_and_connects_button_to_controller(qtbot) -> Non
 
     qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
 
-    site, password = controller.connect_calls[0]
+    site, password, remember_secret = controller.connect_calls[0]
     assert controller.loaded_sites is True
     assert site.host == "example.com"
     assert site.username == "deploy"
     assert str(site.default_remote_path) == "/var/www"
     assert password == "secret"
+    assert remember_secret is True
     assert window.connection_state_label.text() == "Connected"
     assert "green" in window.connection_state_label.styleSheet()
 
@@ -337,6 +338,23 @@ def test_main_window_connection_failure_shows_red_status(qtbot) -> None:
     assert window.connection_bar.connect_button.isEnabled()
 
 
+def test_main_window_can_connect_without_remembering_password(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(
+        controller=controller,
+        remember_secret_confirmer=lambda _parent: False,
+    )
+    qtbot.addWidget(window)
+    window.connection_bar.host_edit.setText("example.com")
+    window.connection_bar.username_edit.setText("deploy")
+    window.connection_bar.secret_edit.setText("secret")
+
+    qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
+
+    _site, _password, remember_secret = controller.connect_calls[0]
+    assert remember_secret is False
+
+
 def test_main_window_uses_selected_ftp_protocol_when_connecting(qtbot) -> None:
     controller = FakeController()
     window = MainWindow(controller=controller)
@@ -349,7 +367,7 @@ def test_main_window_uses_selected_ftp_protocol_when_connecting(qtbot) -> None:
 
     qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
 
-    site, _password = controller.connect_calls[0]
+    site, _password, _remember_secret = controller.connect_calls[0]
     assert site.protocol == Protocol.FTP
 
 
@@ -381,7 +399,7 @@ def test_main_window_connects_selected_saved_site_with_stored_credential_ref(qtb
 
     qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
 
-    site, password = controller.connect_calls[0]
+    site, password, _remember_secret = controller.connect_calls[0]
     assert site == saved_site
     assert password is None
 

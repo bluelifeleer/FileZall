@@ -261,6 +261,35 @@ def test_controller_saves_site_and_secret_before_connecting() -> None:
     assert session.password == "secret"
 
 
+def test_controller_skips_site_and_secret_save_when_not_remembering() -> None:
+    window = FakeWindow()
+    session = FakeSession()
+    repository = FakeRepository()
+    credentials = FakeCredentials()
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: session,
+        site_repository=repository,
+        credential_service=credentials,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret", remember_secret=False)
+
+    assert credentials.saved == []
+    assert repository.saved == []
+    assert session.password == "secret"
+
+
 def test_controller_reports_monitoring_degradation_for_ftp() -> None:
     window = FakeWindow()
     controller = MainWindowController(

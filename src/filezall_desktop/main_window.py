@@ -37,10 +37,13 @@ class MainWindow(QMainWindow):
         queue_service=None,
         local_directory_chooser=None,
         agent_install_confirmer=None,
+        remember_secret_confirmer=None,
     ) -> None:
         super().__init__()
         self._local_directory_chooser = local_directory_chooser or _choose_local_directory
         self._agent_install_confirmer = agent_install_confirmer or _confirm_agent_install
+        self._remember_secret_confirmer = remember_secret_confirmer
+        self._should_confirm_remember_secret = controller is None
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
@@ -265,10 +268,21 @@ class MainWindow(QMainWindow):
 
     def _handle_connect_clicked(self) -> None:
         site = self._selected_saved_site()
+        secret = None if site else self._secret_from_fields()
+        remember_secret = True
+        if not site and secret:
+            if self._remember_secret_confirmer is not None:
+                remember_secret = self._remember_secret_confirmer(self)
+            elif self._should_confirm_remember_secret:
+                remember_secret = _confirm_remember_secret(self)
         self._set_connection_state("Connecting", "goldenrod")
         self.connection_bar.connect_button.setEnabled(False)
         try:
-            self.controller.connect(site or self._site_from_fields(), None if site else self._secret_from_fields())
+            self.controller.connect(
+                site or self._site_from_fields(),
+                secret,
+                remember_secret=remember_secret,
+            )
         except Exception as exc:
             self._set_connection_state("Failed", "red")
             self.connection_bar.connect_button.setEnabled(True)
@@ -492,6 +506,17 @@ def _confirm_agent_install(parent) -> bool:
             parent,
             "Install FileZall Agent",
             "Install and start FileZall Agent on the connected server?",
+        )
+        == QMessageBox.StandardButton.Yes
+    )
+
+
+def _confirm_remember_secret(parent) -> bool:
+    return (
+        QMessageBox.question(
+            parent,
+            "Remember Password",
+            "Remember this server password for future logins?",
         )
         == QMessageBox.StandardButton.Yes
     )
