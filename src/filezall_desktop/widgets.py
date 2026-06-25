@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QColor
+from PySide6.QtCore import QRect, Qt
+from PySide6.QtGui import QAction, QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -67,8 +67,13 @@ class HoverRowTableWidget(QTableWidget):
     def __init__(self, rows: int, columns: int, parent: QWidget | None = None) -> None:
         super().__init__(rows, columns, parent)
         self.hovered_row = -1
+        self.full_row_hover_color = "#243244"
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
+
+    def set_full_row_hover_color(self, color: str) -> None:
+        self.full_row_hover_color = color
+        self.viewport().update()
 
     def set_hovered_row(self, row: int) -> None:
         if row == self.hovered_row:
@@ -85,6 +90,38 @@ class HoverRowTableWidget(QTableWidget):
         self.set_hovered_row(-1)
         super().leaveEvent(event)
 
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self._should_paint_hover_row():
+            first_rect = self.visualRect(self.model().index(self.hovered_row, 0))
+            last_rect = self.visualRect(
+                self.model().index(self.hovered_row, self.columnCount() - 1)
+            )
+            if first_rect.isValid() and last_rect.isValid():
+                left = last_rect.right() + 1
+                if left >= self.viewport().width():
+                    return
+                painter = QPainter(self.viewport())
+                trailing_rect = QRect(
+                    left,
+                    first_rect.top(),
+                    self.viewport().width() - left,
+                    first_rect.height(),
+                )
+                painter.fillRect(
+                    trailing_rect,
+                    QColor(self.full_row_hover_color),
+                )
+                painter.end()
+
+    def _should_paint_hover_row(self) -> bool:
+        if self.hovered_row < 0:
+            return False
+        selection_model = self.selectionModel()
+        if not selection_model:
+            return True
+        return not selection_model.isRowSelected(self.hovered_row, self.rootIndex())
+
 
 class HoverRowDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index) -> None:
@@ -95,7 +132,7 @@ class HoverRowDelegate(QStyledItemDelegate):
             and not (option.state & QStyle.StateFlag.State_Selected)
         ):
             option = QStyleOptionViewItem(option)
-            option.backgroundBrush = QColor("#eaf4ff")
+            option.backgroundBrush = QColor(table.full_row_hover_color)
         super().paint(painter, option, index)
 
 

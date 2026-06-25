@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path, PurePosixPath
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -27,6 +28,14 @@ from filezall_core.models import AuthMode, Direction, Protocol, SiteProfile, Tra
 from filezall_core.resource_models import ProcessDetail, ResourceSnapshot
 from filezall_desktop.assets import app_icon
 from filezall_desktop.controller import MainWindowController
+from filezall_desktop.theme import (
+    DARK_THEME,
+    LIGHT_THEME,
+    SYSTEM_THEME,
+    THEME_LABELS,
+    hover_color_for_theme,
+    stylesheet_for_theme,
+)
 from filezall_desktop.widgets import ConnectionBar, FilePanel
 
 
@@ -56,9 +65,11 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
         self._build_help_menu()
+        self._build_theme_menu()
         self._build_logs_menu()
         self._build_toolbar()
         self._build_central_layout()
+        self._apply_theme(SYSTEM_THEME)
         self.setStatusBar(QStatusBar(self))
         self.connection_state_label = QLabel("", self)
         self.connection_state_label.setFixedSize(12, 12)
@@ -107,6 +118,36 @@ class MainWindow(QMainWindow):
             "Supported Protocols",
             "SFTP, FTP, FTPS, and FileZall Agent HTTP transfers are supported.",
         )
+
+    def _build_theme_menu(self) -> None:
+        self.theme_menu = QMenu("Theme", self)
+        self.menuBar().addMenu(self.theme_menu)
+        self.theme_action_group = QActionGroup(self)
+        self.theme_action_group.setExclusive(True)
+        self.system_theme_action = self._add_theme_action(SYSTEM_THEME)
+        self.light_theme_action = self._add_theme_action(LIGHT_THEME)
+        self.dark_theme_action = self._add_theme_action(DARK_THEME)
+        self.theme_action_group.triggered.connect(self._handle_theme_action)
+
+    def _add_theme_action(self, theme_name: str):
+        action = self.theme_menu.addAction(THEME_LABELS[theme_name])
+        action.setCheckable(True)
+        action.setData(theme_name)
+        self.theme_action_group.addAction(action)
+        return action
+
+    def _handle_theme_action(self, action) -> None:
+        self._apply_theme(action.data())
+
+    def _apply_theme(self, theme_name: str) -> None:
+        self.current_theme = theme_name
+        for action in self.theme_action_group.actions():
+            action.setChecked(action.data() == theme_name)
+        self.setStyleSheet(stylesheet_for_theme(theme_name))
+        hover_color = hover_color_for_theme(theme_name)
+        for panel in (getattr(self, "local_panel", None), getattr(self, "remote_panel", None)):
+            if panel is not None:
+                panel.table.set_full_row_hover_color(hover_color)
 
     def _build_logs_menu(self) -> None:
         self.logs_menu = QMenu("Logs", self)
