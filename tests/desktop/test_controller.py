@@ -46,6 +46,8 @@ class FakeSession:
         self.current_remote_path = PurePosixPath("/home/deploy")
         self.uploads = []
         self.downloads = []
+        self.list_calls = []
+        self.fail_list = False
 
     def connect_and_list_default(self, password=None):
         self.password = password
@@ -64,6 +66,12 @@ class FakeSession:
 
     def download_file(self, remote_path: PurePosixPath, local_path: Path) -> None:
         self.downloads.append((remote_path, local_path))
+
+    def list_directory(self, path: PurePosixPath):
+        self.list_calls.append(path)
+        if self.fail_list:
+            raise RuntimeError("connection lost")
+        return []
 
 
 class FakeRepository:
@@ -260,6 +268,31 @@ def test_controller_connects_remote_and_transfers_one_file(tmp_path: Path) -> No
     assert session.password == "secret"
     assert session.uploads == [(tmp_path / "local.txt", PurePosixPath("/home/deploy/local.txt"))]
     assert session.downloads == [(PurePosixPath("/home/deploy/app.log"), tmp_path / "app.log")]
+
+
+def test_controller_heartbeat_checks_current_remote_directory() -> None:
+    window = FakeWindow()
+    session = FakeSession()
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: session,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+    assert controller.heartbeat() is True
+    session.fail_list = True
+    assert controller.heartbeat() is False
+    assert session.list_calls == [PurePosixPath("/home/deploy"), PurePosixPath("/home/deploy")]
 
 
 def test_controller_saves_site_and_secret_before_connecting() -> None:

@@ -79,6 +79,14 @@ class MainWindowController:
         self._window.show_status(f"Loaded remote directory {path}")
         self._log(f"Loaded remote directory {path}")
 
+    def heartbeat(self) -> bool:
+        try:
+            session = self._require_session()
+            session.list_directory(session.current_remote_path)
+        except Exception:
+            return False
+        return True
+
     def upload_file(self, local_path: Path, remote_path: PurePosixPath) -> None:
         self._require_session().upload_file(local_path, remote_path)
         self._window.show_status(f"Uploaded {local_path.name}")

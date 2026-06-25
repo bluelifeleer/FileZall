@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -63,6 +63,9 @@ class MainWindow(QMainWindow):
         self.connection_state_label.setFixedSize(12, 12)
         self.statusBar().addPermanentWidget(self.connection_state_label)
         self._set_connection_state("Idle", "grey")
+        self.heartbeat_timer = QTimer(self)
+        self.heartbeat_timer.setInterval(10_000)
+        self.heartbeat_timer.timeout.connect(self._handle_heartbeat_tick)
         self.statusBar().showMessage("Ready")
         self.controller = controller or MainWindowController(
             self,
@@ -299,6 +302,8 @@ class MainWindow(QMainWindow):
         self.remote_panel.path_edit.returnPressed.connect(self._handle_remote_refresh_clicked)
         self.local_panel.table.cellDoubleClicked.connect(self._handle_local_double_clicked)
         self.remote_panel.table.cellDoubleClicked.connect(self._handle_remote_double_clicked)
+        self.local_panel.table.cellClicked.connect(self._handle_local_clicked)
+        self.remote_panel.table.cellClicked.connect(self._handle_remote_clicked)
         self.local_panel.refresh_action.triggered.connect(self._handle_local_refresh_clicked)
         self.remote_panel.refresh_action.triggered.connect(self._handle_remote_refresh_clicked)
         self.local_panel.delete_action.triggered.connect(self._handle_local_delete_action)
@@ -340,10 +345,12 @@ class MainWindow(QMainWindow):
             )
         except Exception as exc:
             self._set_connection_state("Failed", "red")
+            self.heartbeat_timer.stop()
             self.connection_bar.connect_button.setEnabled(True)
             self.show_status(str(exc))
             return
         self._set_connection_state("Connected", "green")
+        self.heartbeat_timer.start()
         self.connection_bar.connect_button.setEnabled(True)
 
     def _handle_install_agent_clicked(self) -> None:
@@ -379,6 +386,9 @@ class MainWindow(QMainWindow):
         self.controller.list_remote_directory(self._remote_path_from_field() / remote_name)
 
     def _handle_local_double_clicked(self, row: int, _column: int) -> None:
+        if self.local_panel.is_parent_at(row):
+            self.controller.load_local_directory(self._local_parent())
+            return
         if not self.local_panel.is_dir_at(row):
             return
         name = self.local_panel.name_at(row)
@@ -386,29 +396,39 @@ class MainWindow(QMainWindow):
             self.controller.load_local_directory(self._local_root() / name)
 
     def _handle_remote_double_clicked(self, row: int, _column: int) -> None:
+        if self.remote_panel.is_parent_at(row):
+            self.controller.list_remote_directory(self._remote_parent())
+            return
         if not self.remote_panel.is_dir_at(row):
             return
         name = self.remote_panel.name_at(row)
         if name:
             self.controller.list_remote_directory(self._remote_path_from_field() / name)
 
+    def _handle_local_clicked(self, row: int, _column: int) -> None:
+        if self.local_panel.is_parent_at(row):
+            self.controller.load_local_directory(self._local_parent())
+
+    def _handle_remote_clicked(self, row: int, _column: int) -> None:
+        if self.remote_panel.is_parent_at(row):
+            self.controller.list_remote_directory(self._remote_parent())
+
     def _handle_upload_clicked(self) -> None:
-        local_name = self.local_panel.selected_name()
-        if not local_name:
-            return
         local_root = Path(self.local_panel.path_edit.text().strip() or Path.home())
-        local_path = local_root / local_name
-        self.controller.upload_file(local_path, self._remote_path_from_field() / local_name)
+        for local_name in self.local_panel.selected_names():
+            local_path = local_root / local_name
+            self.controller.upload_file(local_path, self._remote_path_from_field() / local_name)
 
     def _handle_download_clicked(self) -> None:
-        remote_name = self.remote_panel.selected_name()
-        if not remote_name:
-            return
         local_root = Path(self.local_panel.path_edit.text().strip() or Path.home())
-        self.controller.download_file(self._remote_path_from_field() / remote_name, local_root / remote_name)
+        for remote_name in self.remote_panel.selected_names():
+            self.controller.download_file(
+                self._remote_path_from_field() / remote_name,
+                local_root / remote_name,
+            )
 
     def _handle_local_queue_action(self) -> None:
-        if local_name := self.local_panel.selected_name():
+        for local_name in self.local_panel.selected_names():
             self.controller.add_to_queue(
                 self._local_root() / local_name,
                 self._remote_path_from_field() / local_name,
@@ -416,7 +436,7 @@ class MainWindow(QMainWindow):
             )
 
     def _handle_remote_queue_action(self) -> None:
-        if remote_name := self.remote_panel.selected_name():
+        for remote_name in self.remote_panel.selected_names():
             self.controller.add_to_queue(
                 self._remote_path_from_field() / remote_name,
                 self._local_root() / remote_name,
@@ -424,11 +444,11 @@ class MainWindow(QMainWindow):
             )
 
     def _handle_local_delete_action(self) -> None:
-        if local_name := self.local_panel.selected_name():
+        for local_name in self.local_panel.selected_names():
             self.controller.delete_path(self._local_root() / local_name, remote=False)
 
     def _handle_remote_delete_action(self) -> None:
-        if remote_name := self.remote_panel.selected_name():
+        for remote_name in self.remote_panel.selected_names():
             self.controller.delete_path(self._remote_path_from_field() / remote_name, remote=True)
 
     def _handle_local_create_dir_action(self) -> None:
@@ -462,6 +482,18 @@ class MainWindow(QMainWindow):
     def _handle_process_detail_clicked(self) -> None:
         if pid := self._selected_process_id():
             self.controller.show_process_detail(pid)
+
+    def _handle_heartbeat_tick(self) -> None:
+        self._set_connection_state("Checking", "goldenrod")
+        try:
+            ok = self.controller.heartbeat()
+        except Exception as exc:
+            self._set_connection_state(f"Disconnected: {exc}", "red")
+            return
+        if ok:
+            self._set_connection_state("Connected", "green")
+        else:
+            self._set_connection_state("Disconnected", "red")
 
     def _set_connection_state(self, text: str, color: str) -> None:
         self.connection_state_label.setText("")
@@ -535,6 +567,16 @@ class MainWindow(QMainWindow):
 
     def _local_root(self) -> Path:
         return Path(self.local_panel.path_edit.text().strip() or Path.home())
+
+    def _local_parent(self) -> Path:
+        current = self._local_root()
+        return current.parent if current.parent != current else current
+
+    def _remote_parent(self) -> PurePosixPath:
+        current = self._remote_path_from_field()
+        if str(current) in {"", ".", "~", "/"}:
+            return current
+        return current.parent
 
     def _selected_transfer_task_id(self) -> str | None:
         selected = self.transfer_table.selectionModel().selectedRows()
