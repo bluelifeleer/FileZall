@@ -13,6 +13,7 @@ def test_packaging_files_exist() -> None:
         "packaging/macos/build.sh",
         "packaging/README.md",
         "docs/agent-deployment.md",
+        "scripts/validate-linux-agent.ps1",
     ]:
         assert (ROOT / relative_path).exists()
 
@@ -52,5 +53,23 @@ def test_agent_deployment_docs_cover_install_tunnel_and_health_check() -> None:
     assert "FILEZALL_AGENT_TOKEN" in guide
     assert "filezall-agent" in guide
     assert "systemctl" in guide
+    assert "scripts/validate-linux-agent.ps1" in guide
     assert "ssh -L" in guide
     assert "health" in guide
+
+
+def test_linux_agent_validation_script_covers_real_server_flow() -> None:
+    script = (ROOT / "scripts/validate-linux-agent.ps1").read_text(encoding="utf-8")
+
+    for required in [
+        "FILEZALL_LINUX_HOST",
+        "FILEZALL_LINUX_USER",
+        "FILEZALL_LINUX_TOKEN",
+        "agent\\build-package.ps1",
+        "scp",
+        "ssh -L",
+        "systemctl",
+        "/health",
+        "/resources",
+    ]:
+        assert required in script

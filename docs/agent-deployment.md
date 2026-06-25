@@ -88,3 +88,18 @@ sudo systemctl restart filezall-agent
 ```
 
 If health checks fail, confirm the token matches the desktop site profile, the SSH tunnel is still active, and the service is listening on `127.0.0.1:8765`.
+
+## End-To-End Validation Script
+
+From Windows PowerShell, configure a real Linux target and run `scripts/validate-linux-agent.ps1`:
+
+```powershell
+$env:FILEZALL_LINUX_HOST = "example.com"
+$env:FILEZALL_LINUX_USER = "deploy"
+$env:FILEZALL_LINUX_PORT = "22"
+$env:FILEZALL_LINUX_TOKEN = "replace-with-random-token"
+$env:FILEZALL_LINUX_SSH_KEY = "C:\Users\you\.ssh\id_ed25519"
+scripts\validate-linux-agent.ps1
+```
+
+The script builds the Agent package, uploads it, installs the `filezall-agent` systemd service, opens an `ssh -L` tunnel, checks `/health`, and checks `/resources`.
