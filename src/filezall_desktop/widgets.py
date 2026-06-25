@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import PurePath
 
 from PySide6.QtCore import QRect, Qt
-from PySide6.QtGui import QAction, QColor, QPainter
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
     QHBoxLayout,
     QHeaderView,
@@ -181,8 +183,10 @@ class FilePanel(QWidget):
         self.title = QLabel(title, self)
         self.path_edit = QLineEdit(self)
         self.path_button = QToolButton(self)
+        self.path_button.setObjectName("pathButton")
         self.path_button.setText(path_button_text)
-        self.path_button.setMaximumWidth(28)
+        self.path_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.path_button.setFixedWidth(32)
         self.path_button.setToolTip("Choose or enter directory")
         self.refresh_button = QPushButton("Refresh", self)
         self.action_button = QPushButton(action_label, self)
@@ -351,6 +355,75 @@ _ROW_KIND_ROLE = Qt.ItemDataRole.UserRole + 1
 
 def _entry_item(text: str, is_dir: bool, row_kind: str = "entry") -> QTableWidgetItem:
     item = QTableWidgetItem(text)
+    if text:
+        icon = _entry_icon(text, is_dir, row_kind)
+        if not icon.isNull():
+            item.setIcon(icon)
     item.setData(Qt.ItemDataRole.UserRole, is_dir)
     item.setData(_ROW_KIND_ROLE, row_kind)
     return item
+
+
+_ICON_CACHE: dict[str, QIcon] = {}
+
+
+def _entry_icon(text: str, is_dir: bool, row_kind: str) -> QIcon:
+    if is_dir:
+        key = "parent-dir" if row_kind == "parent" else "dir"
+        if key not in _ICON_CACHE:
+            style = QApplication.style()
+            standard_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+            _ICON_CACHE[key] = standard_icon if not standard_icon.isNull() else _paint_icon("DIR")
+        return _ICON_CACHE[key]
+    suffix = PurePath(text).suffix.lower().lstrip(".")
+    label = _suffix_label(suffix)
+    key = f"file-{label}"
+    if key not in _ICON_CACHE:
+        _ICON_CACHE[key] = _paint_icon(label, _suffix_color(suffix))
+    return _ICON_CACHE[key]
+
+
+def _suffix_label(suffix: str) -> str:
+    if suffix in {"py", "js", "ts", "css", "go", "rs", "sh"}:
+        return suffix.upper()
+    if suffix in {"png", "jpg", "jpeg", "gif", "webp", "svg"}:
+        return "IMG"
+    if suffix in {"zip", "rar", "7z", "tar", "gz"}:
+        return "ZIP"
+    if suffix in {"json", "yaml", "yml", "toml", "xml"}:
+        return "CFG"
+    if suffix in {"md", "txt", "log"}:
+        return "TXT"
+    return "FILE"
+
+
+def _suffix_color(suffix: str) -> str:
+    if suffix in {"py", "go", "rs", "sh"}:
+        return "#2563eb"
+    if suffix in {"js", "ts", "css"}:
+        return "#ca8a04"
+    if suffix in {"png", "jpg", "jpeg", "gif", "webp", "svg"}:
+        return "#16a34a"
+    if suffix in {"zip", "rar", "7z", "tar", "gz"}:
+        return "#9333ea"
+    if suffix in {"json", "yaml", "yml", "toml", "xml"}:
+        return "#0891b2"
+    return "#64748b"
+
+
+def _paint_icon(label: str, color: str = "#2563eb") -> QIcon:
+    pixmap = QPixmap(18, 18)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(QColor(color), 1))
+    painter.setBrush(QColor(color))
+    painter.drawRoundedRect(2, 2, 14, 14, 3, 3)
+    painter.setPen(QColor("#ffffff"))
+    font = painter.font()
+    font.setPointSize(5 if len(label) > 2 else 6)
+    font.setBold(True)
+    painter.setFont(font)
+    painter.drawText(QRect(2, 3, 14, 12), Qt.AlignmentFlag.AlignCenter, label[:3])
+    painter.end()
+    return QIcon(pixmap)

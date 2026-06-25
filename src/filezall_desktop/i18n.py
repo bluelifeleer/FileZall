@@ -30,9 +30,11 @@ def t(language_name: str, key: str) -> str:
 _TRANSLATIONS = {
     EN_LANGUAGE: {
         "menu.help": "Help",
+        "menu.session": "Session",
         "menu.theme": "Theme",
         "menu.language": "Language",
         "menu.logs": "Logs",
+        "session.new": "New Session",
         "help.about": "About FileZall",
         "help.version": "Version",
         "help.protocols": "Protocols",
@@ -91,9 +93,11 @@ _TRANSLATIONS = {
     },
     ZH_CN_LANGUAGE: {
         "menu.help": "帮助",
+        "menu.session": "会话",
         "menu.theme": "主题",
         "menu.language": "语言",
         "menu.logs": "日志",
+        "session.new": "新建会话",
         "help.about": "关于 FileZall",
         "help.version": "版本",
         "help.protocols": "协议",
