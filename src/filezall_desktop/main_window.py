@@ -162,8 +162,13 @@ class MainWindow(QMainWindow):
         resource_actions = QHBoxLayout()
         self.resource_refresh_button = QPushButton("Refresh Resources", root)
         self.process_detail_button = QPushButton("Process Detail", root)
+        self.agent_status_label = QLabel("", resource_widget)
+        self.resource_install_agent_button = QPushButton("Install Agent", resource_widget)
+        self.resource_install_agent_button.hide()
         resource_actions.addWidget(QLabel("Resource Monitor", root))
+        resource_actions.addWidget(self.agent_status_label)
         resource_actions.addStretch(1)
+        resource_actions.addWidget(self.resource_install_agent_button)
         resource_actions.addWidget(self.resource_refresh_button)
         resource_actions.addWidget(self.process_detail_button)
 
@@ -220,6 +225,12 @@ class MainWindow(QMainWindow):
 
     def set_monitoring_status(self, message: str) -> None:
         self.monitoring_status_label.setText(message)
+        if "Agent" in message:
+            self.agent_status_label.setText("Agent not installed")
+            self.resource_install_agent_button.show()
+        else:
+            self.agent_status_label.setText("")
+            self.resource_install_agent_button.hide()
 
     def set_transfer_items(self, items: list[TransferItem]) -> None:
         self.transfer_table.setRowCount(len(items))
@@ -294,6 +305,7 @@ class MainWindow(QMainWindow):
         self.cancel_transfer_button.clicked.connect(self._handle_cancel_transfer_clicked)
         self.retry_transfer_button.clicked.connect(self._handle_retry_transfer_clicked)
         self.resource_refresh_button.clicked.connect(self.controller.refresh_resources)
+        self.resource_install_agent_button.clicked.connect(self._handle_install_agent_clicked)
         self.process_detail_button.clicked.connect(self._handle_process_detail_clicked)
 
     def _handle_connect_clicked(self) -> None:

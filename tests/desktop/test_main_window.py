@@ -393,6 +393,22 @@ def test_main_window_displays_monitoring_status(qtbot) -> None:
     window.set_monitoring_status("Resource monitoring requires SSH or FileZall Agent.")
 
     assert window.monitoring_status_label.text() == "Resource monitoring requires SSH or FileZall Agent."
+    assert window.agent_status_label.text() == "Agent not installed"
+    assert not window.resource_install_agent_button.isHidden()
+
+
+def test_resource_agent_install_button_uses_confirmed_install_flow(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(
+        controller=controller,
+        agent_install_confirmer=lambda _parent: True,
+    )
+    qtbot.addWidget(window)
+    window.set_monitoring_status("Resource monitoring requires SSH or FileZall Agent.")
+
+    qtbot.mouseClick(window.resource_install_agent_button, Qt.MouseButton.LeftButton)
+
+    assert controller.agent_installs == 1
 
 
 def test_main_window_connects_selected_saved_site_with_stored_credential_ref(qtbot) -> None:
