@@ -72,6 +72,7 @@ def test_main_window_has_filezall_title(qtbot) -> None:
     qtbot.addWidget(window)
 
     assert window.windowTitle() == "FileZall"
+    assert not window.windowIcon().isNull()
 
 
 def test_main_window_exposes_connection_and_file_panels(qtbot) -> None:
