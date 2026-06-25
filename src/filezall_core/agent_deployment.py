@@ -53,3 +53,15 @@ class AgentInstaller:
             commands_run=len(commands),
             verified=verified,
         )
+
+    def uninstall(self) -> AgentInstallResult:
+        commands = [
+            "sudo systemctl stop filezall-agent || true",
+            "sudo systemctl disable filezall-agent || true",
+            "sudo rm -f /etc/systemd/system/filezall-agent.service",
+            "sudo systemctl daemon-reload",
+            "sudo rm -rf /opt/filezall-agent",
+        ]
+        for command in commands:
+            self._runner.run(command)
+        return AgentInstallResult(success=True, commands_run=len(commands))
