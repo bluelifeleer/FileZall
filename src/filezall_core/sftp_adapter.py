@@ -75,6 +75,44 @@ class SftpAdapter:
         local_path.parent.mkdir(parents=True, exist_ok=True)
         self._require_sftp().get(str(remote_path), str(local_path))
 
+    def remote_size(self, path: PurePosixPath) -> int | None:
+        try:
+            return int(self._require_sftp().stat(str(path)).st_size)
+        except FileNotFoundError:
+            return None
+
+    def upload_file_range(
+        self,
+        local_path: Path,
+        remote_path: PurePosixPath,
+        offset: int,
+    ) -> None:
+        with local_path.open("rb") as local_file:
+            local_file.seek(offset)
+            with self._require_sftp().open(str(remote_path), "ab") as remote_file:
+                while chunk := local_file.read(1024 * 1024):
+                    remote_file.write(chunk)
+
+    def download_file_range(
+        self,
+        remote_path: PurePosixPath,
+        local_path: Path,
+        offset: int,
+    ) -> None:
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._require_sftp().open(str(remote_path), "rb") as remote_file:
+            remote_file.seek(offset)
+            with local_path.open("ab") as local_file:
+                while chunk := remote_file.read(1024 * 1024):
+                    local_file.write(chunk)
+
+    def rename(
+        self,
+        source_path: PurePosixPath,
+        destination_path: PurePosixPath,
+    ) -> None:
+        self._require_sftp().rename(str(source_path), str(destination_path))
+
     def _require_sftp(self):
         if self._sftp is None:
             raise RemoteConnectionError("SFTP client is not connected")

@@ -1,3 +1,4 @@
+import io
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -15,11 +16,20 @@ class FakeSftpAttributes:
         self.st_mtime = st_mtime
 
 
+class NonClosingBytesIO(io.BytesIO):
+    def close(self) -> None:
+        pass
+
+
 class FakeSftpClient:
     def __init__(self) -> None:
         self.listdir_path = None
         self.put_calls = []
         self.get_calls = []
+        self.stat_sizes = {}
+        self.open_calls = []
+        self.renames = []
+        self.remote_files = {}
         self.closed = False
 
     def normalize(self, path: str) -> str:
@@ -34,6 +44,22 @@ class FakeSftpClient:
 
     def get(self, remote_path: str, local_path: str) -> None:
         self.get_calls.append((remote_path, local_path))
+
+    def stat(self, path: str):
+        if path not in self.stat_sizes:
+            raise FileNotFoundError(path)
+        return type("StatResult", (), {"st_size": self.stat_sizes[path]})()
+
+    def open(self, path: str, mode: str):
+        self.open_calls.append((path, mode))
+        if "r" in mode:
+            return NonClosingBytesIO(self.remote_files[path])
+        handle = NonClosingBytesIO()
+        self.remote_files[path] = handle
+        return handle
+
+    def rename(self, source_path: str, destination_path: str) -> None:
+        self.renames.append((source_path, destination_path))
 
     def close(self) -> None:
         self.closed = True
@@ -150,4 +176,67 @@ def test_sftp_adapter_lists_uploads_and_downloads(tmp_path: Path) -> None:
     ]
     assert fake_paramiko.client.sftp.get_calls == [
         ("/home/deploy/app.log", str(tmp_path / "app.log"))
+    ]
+
+
+def test_sftp_adapter_reports_remote_size_or_none() -> None:
+    fake_paramiko = FakeParamiko()
+    adapter = SftpAdapter(paramiko_module=fake_paramiko)
+    adapter._sftp = fake_paramiko.client.sftp
+    fake_paramiko.client.sftp.stat_sizes["/home/deploy/.filezall.app.zip.part"] = 3
+
+    assert adapter.remote_size(PurePosixPath("/home/deploy/.filezall.app.zip.part")) == 3
+    assert adapter.remote_size(PurePosixPath("/home/deploy/missing.part")) is None
+
+
+def test_sftp_adapter_upload_file_range_appends_from_offset(tmp_path: Path) -> None:
+    fake_paramiko = FakeParamiko()
+    adapter = SftpAdapter(paramiko_module=fake_paramiko)
+    adapter._sftp = fake_paramiko.client.sftp
+    local_file = tmp_path / "app.zip"
+    local_file.write_bytes(b"abcdef")
+
+    adapter.upload_file_range(
+        local_file,
+        PurePosixPath("/home/deploy/.filezall.app.zip.part"),
+        offset=3,
+    )
+
+    handle = fake_paramiko.client.sftp.remote_files["/home/deploy/.filezall.app.zip.part"]
+    assert fake_paramiko.client.sftp.open_calls == [
+        ("/home/deploy/.filezall.app.zip.part", "ab")
+    ]
+    assert handle.getvalue() == b"def"
+
+
+def test_sftp_adapter_download_file_range_appends_from_offset(tmp_path: Path) -> None:
+    fake_paramiko = FakeParamiko()
+    adapter = SftpAdapter(paramiko_module=fake_paramiko)
+    adapter._sftp = fake_paramiko.client.sftp
+    fake_paramiko.client.sftp.remote_files["/home/deploy/app.zip"] = b"abcdef"
+    local_part = tmp_path / ".filezall.app.zip.part"
+    local_part.write_bytes(b"ab")
+
+    adapter.download_file_range(
+        PurePosixPath("/home/deploy/app.zip"),
+        local_part,
+        offset=2,
+    )
+
+    assert fake_paramiko.client.sftp.open_calls == [("/home/deploy/app.zip", "rb")]
+    assert local_part.read_bytes() == b"abcdef"
+
+
+def test_sftp_adapter_renames_remote_path() -> None:
+    fake_paramiko = FakeParamiko()
+    adapter = SftpAdapter(paramiko_module=fake_paramiko)
+    adapter._sftp = fake_paramiko.client.sftp
+
+    adapter.rename(
+        PurePosixPath("/home/deploy/.filezall.app.zip.part"),
+        PurePosixPath("/home/deploy/app.zip"),
+    )
+
+    assert fake_paramiko.client.sftp.renames == [
+        ("/home/deploy/.filezall.app.zip.part", "/home/deploy/app.zip")
     ]
