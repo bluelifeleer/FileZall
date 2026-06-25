@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Callable
 from typing import Protocol
 
 
@@ -17,11 +18,17 @@ class AgentDeployRunner(Protocol):
 class AgentInstallResult:
     success: bool
     commands_run: int
+    verified: bool = False
 
 
 class AgentInstaller:
-    def __init__(self, runner: AgentDeployRunner) -> None:
+    def __init__(
+        self,
+        runner: AgentDeployRunner,
+        health_check: Callable[[], bool] | None = None,
+    ) -> None:
         self._runner = runner
+        self._health_check = health_check
 
     def install_or_update(self, package_path: Path, token: str) -> AgentInstallResult:
         remote_package = "/tmp/filezall-agent.tar.gz"
@@ -38,4 +45,11 @@ class AgentInstaller:
         ]
         for command in commands:
             self._runner.run(command)
-        return AgentInstallResult(success=True, commands_run=len(commands))
+        if self._health_check is None:
+            return AgentInstallResult(success=True, commands_run=len(commands))
+        verified = self._health_check()
+        return AgentInstallResult(
+            success=verified,
+            commands_run=len(commands),
+            verified=verified,
+        )
