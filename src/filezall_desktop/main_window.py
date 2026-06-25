@@ -4,6 +4,7 @@ from pathlib import Path, PurePosixPath
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -31,8 +32,10 @@ class MainWindow(QMainWindow):
         site_repository=None,
         credential_service=None,
         queue_service=None,
+        local_directory_chooser=None,
     ) -> None:
         super().__init__()
+        self._local_directory_chooser = local_directory_chooser or _choose_local_directory
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
@@ -61,8 +64,8 @@ class MainWindow(QMainWindow):
         root_layout = QVBoxLayout(root)
 
         file_splitter = QSplitter(root)
-        self.local_panel = FilePanel("Local Files", "Upload", self)
-        self.remote_panel = FilePanel("Remote Files", "Download", self)
+        self.local_panel = FilePanel("Local Files", "Upload", "...", self)
+        self.remote_panel = FilePanel("Remote Files", "Download", ">", self)
         self.local_panel.set_placeholder_row("No directory loaded")
         self.remote_panel.set_placeholder_row("Not connected")
         file_splitter.addWidget(self.local_panel)
@@ -179,6 +182,8 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         self.connection_bar.connect_button.clicked.connect(self._handle_connect_clicked)
+        self.local_panel.path_button.clicked.connect(self._handle_local_path_button_clicked)
+        self.remote_panel.path_button.clicked.connect(self._handle_remote_path_button_clicked)
         self.local_panel.refresh_button.clicked.connect(self._handle_local_refresh_clicked)
         self.remote_panel.refresh_button.clicked.connect(self._handle_remote_refresh_clicked)
         self.local_panel.action_button.clicked.connect(self._handle_upload_clicked)
@@ -195,12 +200,32 @@ class MainWindow(QMainWindow):
         self.controller.connect(site or self._site_from_fields(), None if site else self._secret_from_fields())
 
     def _handle_local_refresh_clicked(self) -> None:
+        self.local_panel.clear_selection()
         path_text = self.local_panel.path_edit.text().strip()
         self.controller.load_local_directory(Path(path_text) if path_text else Path.home())
 
     def _handle_remote_refresh_clicked(self) -> None:
+        self.remote_panel.clear_selection()
         remote_path = self._remote_path_from_field()
         self.controller.list_remote_directory(remote_path)
+
+    def _handle_local_path_button_clicked(self) -> None:
+        current = self.local_panel.path_edit.text().strip() or str(Path.home())
+        selected = self._local_directory_chooser(self, current)
+        if not selected:
+            return
+        path = Path(selected)
+        self.local_panel.path_edit.setText(str(path))
+        self.local_panel.clear_selection()
+        self.controller.load_local_directory(path)
+
+    def _handle_remote_path_button_clicked(self) -> None:
+        remote_name = self.remote_panel.selected_name()
+        if not remote_name or not self.remote_panel.selected_is_dir():
+            self.show_status("Select a remote directory to open")
+            return
+        self.remote_panel.clear_selection()
+        self.controller.list_remote_directory(self._remote_path_from_field() / remote_name)
 
     def _handle_upload_clicked(self) -> None:
         local_name = self.local_panel.selected_name()
@@ -316,3 +341,7 @@ def _protocol_from_label(label: str) -> Protocol:
         "FTPS": Protocol.FTPS,
     }
     return mapping.get(label, Protocol.SFTP)
+
+
+def _choose_local_directory(parent, current: str) -> str:
+    return QFileDialog.getExistingDirectory(parent, "Choose Local Directory", current)
