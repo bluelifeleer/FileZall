@@ -65,6 +65,10 @@ def test_main_window_exposes_connection_and_file_panels(qtbot) -> None:
     assert window.connection_bar.port_edit.text() == "22"
     assert window.connection_bar.auth_mode_selector.itemText(0) == "Password"
     assert window.connection_bar.auth_mode_selector.itemText(1) == "SSH Key"
+    assert [
+        window.connection_bar.protocol_selector.itemText(i)
+        for i in range(window.connection_bar.protocol_selector.count())
+    ] == ["SFTP", "FTP", "FTPS"]
     assert window.connection_bar.secret_edit.placeholderText() == "Password / passphrase"
     assert window.connection_bar.ssh_key_path_edit.placeholderText() == "SSH key path"
     assert window.local_panel.title.text() == "Local Files"
@@ -91,6 +95,31 @@ def test_main_window_loads_sites_and_connects_button_to_controller(qtbot) -> Non
     assert site.username == "deploy"
     assert str(site.default_remote_path) == "/var/www"
     assert password == "secret"
+
+
+def test_main_window_uses_selected_ftp_protocol_when_connecting(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.connection_bar.host_edit.setText("ftp.example.com")
+    window.connection_bar.port_edit.setText("21")
+    window.connection_bar.username_edit.setText("deploy")
+    window.connection_bar.secret_edit.setText("secret")
+    window.connection_bar.protocol_selector.setCurrentText("FTP")
+
+    qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
+
+    site, _password = controller.connect_calls[0]
+    assert site.protocol == Protocol.FTP
+
+
+def test_main_window_displays_monitoring_status(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    window.set_monitoring_status("Resource monitoring requires SSH or FileZall Agent.")
+
+    assert window.monitoring_status_label.text() == "Resource monitoring requires SSH or FileZall Agent."
 
 
 def test_main_window_connects_selected_saved_site_with_stored_credential_ref(qtbot) -> None:

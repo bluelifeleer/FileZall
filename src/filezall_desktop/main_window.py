@@ -81,9 +81,11 @@ class MainWindow(QMainWindow):
         transfer_actions.addWidget(self.resume_transfer_button)
         transfer_actions.addWidget(self.cancel_transfer_button)
         transfer_actions.addWidget(self.retry_transfer_button)
+        self.monitoring_status_label = QLabel("", root)
 
         root_layout.addWidget(file_splitter, stretch=4)
         root_layout.addLayout(transfer_actions, stretch=0)
+        root_layout.addWidget(self.monitoring_status_label, stretch=0)
         root_layout.addWidget(self.transfer_table, stretch=1)
         self.setCentralWidget(root)
 
@@ -96,6 +98,9 @@ class MainWindow(QMainWindow):
 
     def show_status(self, message: str) -> None:
         self.statusBar().showMessage(message)
+
+    def set_monitoring_status(self, message: str) -> None:
+        self.monitoring_status_label.setText(message)
 
     def set_transfer_items(self, items: list[TransferItem]) -> None:
         self.transfer_table.setRowCount(len(items))
@@ -185,7 +190,7 @@ class MainWindow(QMainWindow):
             name=host or "Quick Connect",
             host=host,
             port=int(self.connection_bar.port_edit.text().strip() or "22"),
-            protocol=Protocol.SFTP,
+            protocol=_protocol_from_label(self.connection_bar.protocol_selector.currentText()),
             username=username,
             auth_mode=auth_mode,
             default_remote_path=PurePosixPath(remote_path),
@@ -225,3 +230,12 @@ def _progress_text(item: TransferItem) -> str:
     if item.size_bytes <= 0:
         return "0%"
     return f"{int(item.bytes_transferred * 100 / item.size_bytes)}%"
+
+
+def _protocol_from_label(label: str) -> Protocol:
+    mapping = {
+        "SFTP": Protocol.SFTP,
+        "FTP": Protocol.FTP,
+        "FTPS": Protocol.FTPS,
+    }
+    return mapping.get(label, Protocol.SFTP)

@@ -35,7 +35,7 @@ class ConnectionBar(QWidget):
         self.ssh_key_path_edit = QLineEdit(self)
         self.ssh_key_path_edit.setPlaceholderText("SSH key path")
         self.protocol_selector = QComboBox(self)
-        self.protocol_selector.addItems(["SFTP"])
+        self.protocol_selector.addItems(["SFTP", "FTP", "FTPS"])
         self.connect_button = QPushButton("Connect", self)
         self.disconnect_button = QPushButton("Disconnect", self)
 

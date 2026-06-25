@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
 
+from filezall_core.capabilities import resource_monitoring_message
 from filezall_core.client_factory import create_remote_client
 from filezall_core.local_files import list_local_directory
 from filezall_core.models import AuthMode, SiteProfile
@@ -47,6 +48,8 @@ class MainWindowController:
         self._session = self._session_factory(site)
         entries = self._session.connect_and_list_default(password=password)
         self._window.set_remote_entries(entries, self._session.current_remote_path)
+        if hasattr(self._window, "set_monitoring_status"):
+            self._window.set_monitoring_status(resource_monitoring_message(site.protocol))
         self._window.show_status(f"Connected to {site.name}")
 
     def list_remote_directory(self, path: PurePosixPath) -> None:
