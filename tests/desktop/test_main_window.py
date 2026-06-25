@@ -738,6 +738,35 @@ def test_main_window_refresh_buttons_clear_current_selection(qtbot, tmp_path) ->
     qtbot.mouseClick(window.local_panel.refresh_button, Qt.MouseButton.LeftButton)
 
     assert window.local_panel.table.selectionModel().selectedRows() == []
+    assert window.local_panel.table.currentRow() == -1
+
+
+def test_file_panel_set_entries_clears_current_and_hover_rows(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    window.local_panel.set_entries(
+        [
+            type("Entry", (), {"name": "one", "is_dir": True, "size_bytes": 0, "modified_time": None})(),
+            type("Entry", (), {"name": "two", "is_dir": True, "size_bytes": 0, "modified_time": None})(),
+            type("Entry", (), {"name": "three", "is_dir": True, "size_bytes": 0, "modified_time": None})(),
+        ]
+    )
+    window.local_panel.table.selectRow(3)
+    window.local_panel.table.setCurrentCell(3, 0)
+    window.local_panel.table.set_hovered_row(3)
+
+    window.local_panel.set_entries(
+        [
+            type("Entry", (), {"name": "nine", "is_dir": True, "size_bytes": 0, "modified_time": None})(),
+            type("Entry", (), {"name": "six", "is_dir": True, "size_bytes": 0, "modified_time": None})(),
+            type("Entry", (), {"name": "seven", "is_dir": True, "size_bytes": 0, "modified_time": None})(),
+            type("Entry", (), {"name": "five", "is_dir": True, "size_bytes": 0, "modified_time": None})(),
+        ]
+    )
+
+    assert window.local_panel.table.selectionModel().selectedRows() == []
+    assert window.local_panel.table.currentRow() == -1
+    assert window.local_panel.table.hovered_row == -1
 
 
 def test_main_window_loads_sites_and_connects_button_to_controller(qtbot) -> None:

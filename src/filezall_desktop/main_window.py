@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
         remember_secret_confirmer=None,
         log_file_chooser=None,
         new_session_factory=None,
+        agent_install_service=None,
     ) -> None:
         super().__init__()
         self.log_service = TransferLogService()
@@ -100,6 +101,7 @@ class MainWindow(QMainWindow):
             credential_service=credential_service,
             queue_service=queue_service,
             log_service=self.log_service,
+            agent_install_service=agent_install_service,
         )
         self._connect_signals()
         self.controller.load_saved_sites()

@@ -5,6 +5,7 @@ from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 icon_dir = "../src/filezall_desktop/assets/icons"
+agent_dir = "../agent"
 
 # Entry module: filezall_desktop.app
 
@@ -12,7 +13,12 @@ a = Analysis(
     ["../src/filezall_desktop/app.py"],
     pathex=["..", "../src"],
     binaries=[],
-    datas=[(icon_dir, "filezall_desktop/assets/icons")],
+    datas=[
+        (icon_dir, "filezall_desktop/assets/icons"),
+        (f"{agent_dir}/filezall_agent", "agent/filezall_agent"),
+        (f"{agent_dir}/systemd", "agent/systemd"),
+        (f"{agent_dir}/env", "agent/env"),
+    ],
     hiddenimports=collect_submodules("filezall_core") + collect_submodules("filezall_desktop"),
     hookspath=[],
     hooksconfig={},

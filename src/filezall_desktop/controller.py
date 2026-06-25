@@ -180,9 +180,11 @@ class MainWindowController:
             self._connected_secret,
         )
         if result.success and result.verified:
+            self._mark_connected_site_agent_enabled(result)
             self._window.show_status("Agent installed and verified")
             self._log("Agent installed and verified")
         elif result.success:
+            self._mark_connected_site_agent_enabled(result)
             self._window.show_status("Agent installed")
             self._log("Agent installed")
         else:
@@ -201,11 +203,27 @@ class MainWindowController:
             self._connected_secret,
         )
         if result.success:
+            if self._connected_site is not None:
+                self._connected_site = replace(
+                    self._connected_site,
+                    agent_enabled=False,
+                    agent_token_ref=None,
+                )
             self._window.show_status("Agent uninstalled")
             self._log("Agent uninstalled")
         else:
             self._window.show_status("Agent uninstallation failed")
             self._log("Agent uninstallation failed")
+
+    def _mark_connected_site_agent_enabled(self, result) -> None:
+        if self._connected_site is None:
+            return
+        self._connected_site = replace(
+            self._connected_site,
+            agent_enabled=True,
+            agent_token_ref=getattr(result, "agent_token_ref", None)
+            or self._connected_site.agent_token_ref,
+        )
 
     def _require_session(self) -> RemoteSession:
         if self._session is None:

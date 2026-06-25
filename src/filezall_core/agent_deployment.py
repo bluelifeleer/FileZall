@@ -3,7 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Callable
+import secrets
+import shlex
+import tarfile
+import tempfile
 from typing import Protocol
+
+import paramiko
+
+from filezall_core.models import AuthMode, SiteProfile
 
 
 class AgentDeployRunner(Protocol):
@@ -13,12 +21,16 @@ class AgentDeployRunner(Protocol):
     def run(self, command: str) -> None:
         ...
 
+    def close(self) -> None:
+        ...
+
 
 @dataclass(frozen=True)
 class AgentInstallResult:
     success: bool
     commands_run: int
     verified: bool = False
+    agent_token_ref: str | None = None
 
 
 class AgentInstaller:
@@ -33,11 +45,12 @@ class AgentInstaller:
     def install_or_update(self, package_path: Path, token: str) -> AgentInstallResult:
         remote_package = "/tmp/filezall-agent.tar.gz"
         self._runner.upload(package_path, remote_package)
+        env_command = _agent_env_command(token)
         commands = [
             "sudo mkdir -p /opt/filezall-agent",
-            f"sudo tar -xzf {remote_package} -C /opt/filezall-agent",
-            f"printf '%s' 'FILEZALL_AGENT_TOKEN={token}' | sudo tee /opt/filezall-agent/agent.env >/dev/null",
-            "sudo cp /opt/filezall-agent/filezall-agent.service /etc/systemd/system/filezall-agent.service",
+            f"sudo tar -xzf {remote_package} -C /opt/filezall-agent --strip-components=1",
+            env_command,
+            "sudo cp /opt/filezall-agent/systemd/filezall-agent.service /etc/systemd/system/filezall-agent.service",
             "sudo systemctl daemon-reload",
             "sudo systemctl enable filezall-agent",
             "sudo systemctl restart filezall-agent",
@@ -65,3 +78,168 @@ class AgentInstaller:
         for command in commands:
             self._runner.run(command)
         return AgentInstallResult(success=True, commands_run=len(commands))
+
+
+class ParamikoAgentDeployRunner:
+    def __init__(self, site: SiteProfile, password: str | None = None, paramiko_module=paramiko) -> None:
+        self._site = site
+        self._password = password
+        self._paramiko = paramiko_module
+        self._ssh = None
+        self._sftp = None
+
+    def upload(self, local_path: Path, remote_path: str) -> None:
+        self._connect()
+        self._sftp.put(str(local_path), remote_path)
+
+    def run(self, command: str) -> None:
+        self._connect()
+        _stdin, stdout, stderr = self._ssh.exec_command(command)
+        exit_status = stdout.channel.recv_exit_status()
+        if exit_status != 0:
+            error = stderr.read().decode("utf-8", errors="replace").strip()
+            raise RuntimeError(error or f"Remote command failed with exit status {exit_status}: {command}")
+
+    def close(self) -> None:
+        if self._sftp is not None:
+            self._sftp.close()
+            self._sftp = None
+        if self._ssh is not None:
+            self._ssh.close()
+            self._ssh = None
+
+    def _connect(self) -> None:
+        if self._ssh is not None and self._sftp is not None:
+            return
+        client = self._paramiko.SSHClient()
+        client.set_missing_host_key_policy(self._paramiko.AutoAddPolicy())
+        kwargs = {
+            "hostname": self._site.host,
+            "port": self._site.port,
+            "username": self._site.username,
+            "timeout": 15,
+        }
+        if self._site.auth_mode == AuthMode.PASSWORD:
+            kwargs["password"] = self._password
+        elif self._site.auth_mode == AuthMode.SSH_KEY:
+            if self._site.ssh_key_path is None:
+                raise RuntimeError("SSH key path is required for Agent installation")
+            kwargs["key_filename"] = str(self._site.ssh_key_path)
+            if self._password:
+                kwargs["passphrase"] = self._password
+        client.connect(**kwargs)
+        self._ssh = client
+        self._sftp = client.open_sftp()
+
+
+class AgentDeploymentService:
+    def __init__(
+        self,
+        *,
+        package_builder: Callable[[], Path],
+        runner_factory: Callable[[SiteProfile, str | None], AgentDeployRunner],
+        credential_service,
+        site_repository,
+        token_factory: Callable[[], str] | None = None,
+    ) -> None:
+        self._package_builder = package_builder
+        self._runner_factory = runner_factory
+        self._credential_service = credential_service
+        self._site_repository = site_repository
+        self._token_factory = token_factory or (lambda: secrets.token_urlsafe(32))
+
+    def install(self, site: SiteProfile, password: str | None = None) -> AgentInstallResult:
+        token = self._token_factory()
+        runner = self._runner_factory(site, password)
+        try:
+            installer = AgentInstaller(
+                runner,
+                health_check=lambda: _remote_health_check(runner, token),
+            )
+            result = installer.install_or_update(self._package_builder(), token)
+        finally:
+            runner.close()
+        if not result.success:
+            return result
+        token_ref = self._credential_service.save_secret(site.id, "agent-token", token)
+        self._site_repository.save(
+            _replace_agent_state(site, enabled=True, token_ref=token_ref),
+        )
+        return AgentInstallResult(
+            success=True,
+            commands_run=result.commands_run,
+            verified=result.verified,
+            agent_token_ref=token_ref,
+        )
+
+    def uninstall(self, site: SiteProfile, password: str | None = None) -> AgentInstallResult:
+        runner = self._runner_factory(site, password)
+        try:
+            result = AgentInstaller(runner).uninstall()
+        finally:
+            runner.close()
+        if result.success:
+            self._credential_service.delete_secret(site.agent_token_ref)
+            self._site_repository.save(
+                _replace_agent_state(site, enabled=False, token_ref=None),
+            )
+        return result
+
+
+def build_agent_package(agent_root: Path, output_dir: Path | None = None) -> Path:
+    output_dir = output_dir or Path(tempfile.gettempdir())
+    output_dir.mkdir(parents=True, exist_ok=True)
+    package_path = output_dir / "filezall-agent.tar.gz"
+    with tarfile.open(package_path, "w:gz") as archive:
+        for child_name in ("filezall_agent", "systemd", "env"):
+            source = agent_root / child_name
+            if source.exists():
+                _add_tree(archive, source, Path("filezall-agent") / child_name)
+    return package_path
+
+
+def _add_tree(archive: tarfile.TarFile, source: Path, arc_root: Path) -> None:
+    for path in source.rglob("*"):
+        if "__pycache__" in path.parts or path.suffix == ".pyc":
+            continue
+        archive.add(path, arcname=str(arc_root / path.relative_to(source)))
+
+
+def _agent_env_command(token: str) -> str:
+    lines = [
+        f"FILEZALL_AGENT_TOKEN={token}",
+        "FILEZALL_AGENT_HOST=127.0.0.1",
+        "FILEZALL_AGENT_PORT=8765",
+    ]
+    quoted_lines = " ".join(_single_quote(line) for line in lines)
+    return (
+        "printf '%s\\n' "
+        f"{quoted_lines} | sudo tee /opt/filezall-agent/agent.env >/dev/null"
+    )
+
+
+def _remote_health_check(runner: AgentDeployRunner, token: str) -> bool:
+    code = (
+        "import json,urllib.request;"
+        "req=urllib.request.Request("
+        "'http://127.0.0.1:8765/health',"
+        f"headers={{'Authorization': {'Bearer ' + token!r}}}"
+        ");"
+        "data=json.load(urllib.request.urlopen(req,timeout=10));"
+        "raise SystemExit(0 if data.get('ok') else 1)"
+    )
+    try:
+        runner.run(f"python3 -c {shlex.quote(code)}")
+    except Exception:
+        return False
+    return True
+
+
+def _single_quote(value: str) -> str:
+    return "'" + value.replace("'", "'\\''") + "'"
+
+
+def _replace_agent_state(site: SiteProfile, *, enabled: bool, token_ref: str | None) -> SiteProfile:
+    from dataclasses import replace
+
+    return replace(site, agent_enabled=enabled, agent_token_ref=token_ref)

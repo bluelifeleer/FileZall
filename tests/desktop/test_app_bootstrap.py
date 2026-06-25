@@ -21,3 +21,4 @@ def test_create_main_window_initializes_database(monkeypatch, qtbot, tmp_path) -
 
     assert "site_profiles" in tables
     assert window.connection_bar.site_selector.itemText(0) == t(SYSTEM_LANGUAGE, "site.quick")
+    assert window.controller._agent_install_service is not None

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import PurePath
 
-from PySide6.QtCore import QRect, Qt
+from PySide6.QtCore import QModelIndex, QRect, Qt
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -328,6 +328,8 @@ class FilePanel(QWidget):
 
     def clear_selection(self) -> None:
         self.table.clearSelection()
+        self.table.setCurrentIndex(QModelIndex())
+        self.table.set_hovered_row(-1)
 
     def _set_row(
         self,

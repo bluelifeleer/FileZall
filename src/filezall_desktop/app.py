@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import sys
+import tempfile
+from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
+from filezall_core.agent_deployment import (
+    AgentDeploymentService,
+    ParamikoAgentDeployRunner,
+    build_agent_package,
+)
 from filezall_core.app_paths import resolve_app_paths
 from filezall_core.credentials import CredentialService
 from filezall_core.queue import TransferQueue
@@ -20,13 +27,25 @@ def create_main_window() -> MainWindow:
     paths.ensure_directories()
     initialize_database(paths.database)
     transfer_repository = TransferRepository(paths.database)
+    credential_service = CredentialService()
+    site_repository = SiteRepository(paths.database)
+    agent_root = _agent_root()
     return MainWindow(
-        site_repository=SiteRepository(paths.database),
-        credential_service=CredentialService(),
+        site_repository=site_repository,
+        credential_service=credential_service,
         queue_service=TransferQueue(
             repository=transfer_repository,
             runner=TransferRunner(transfer_repository),
             client_factory=lambda _server_id: SftpAdapter(),
+        ),
+        agent_install_service=AgentDeploymentService(
+            package_builder=lambda: build_agent_package(
+                agent_root,
+                Path(tempfile.gettempdir()) / "filezall-agent-package",
+            ),
+            runner_factory=lambda site, password: ParamikoAgentDeployRunner(site, password),
+            credential_service=credential_service,
+            site_repository=site_repository,
         ),
     )
 
@@ -36,6 +55,18 @@ def main() -> int:
     window = create_main_window()
     window.show()
     return app.exec()
+
+
+def _agent_root() -> Path:
+    candidates = [
+        Path(getattr(sys, "_MEIPASS", "")) / "agent",
+        Path(sys.executable).resolve().parent / "_internal" / "agent",
+        Path(__file__).resolve().parents[2] / "agent",
+    ]
+    for candidate in candidates:
+        if (candidate / "filezall_agent").exists():
+            return candidate
+    return candidates[-1]
 
 
 if __name__ == "__main__":

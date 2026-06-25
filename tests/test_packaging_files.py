@@ -32,6 +32,9 @@ def test_packaging_files_contain_platform_build_commands() -> None:
     assert "filezall.ico" in spec
     assert "filezall.icns" in spec
     assert "filezall_desktop/assets/icons" in spec
+    assert "agent/filezall_agent" in spec
+    assert "agent/systemd" in spec
+    assert "agent/env" in spec
     assert "pyinstaller" in windows_build
     assert ".venv" in windows_build
     assert "-m PyInstaller" in windows_build
