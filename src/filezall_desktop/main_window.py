@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QStatusBar,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from filezall_core import __version__
+from filezall_core.log_service import TransferLogService
 from filezall_core.models import AuthMode, Direction, Protocol, SiteProfile, TransferItem
 from filezall_core.resource_models import ProcessDetail, ResourceSnapshot
 from filezall_desktop.assets import app_icon
@@ -38,16 +40,20 @@ class MainWindow(QMainWindow):
         local_directory_chooser=None,
         agent_install_confirmer=None,
         remember_secret_confirmer=None,
+        log_file_chooser=None,
     ) -> None:
         super().__init__()
+        self.log_service = TransferLogService()
         self._local_directory_chooser = local_directory_chooser or _choose_local_directory
         self._agent_install_confirmer = agent_install_confirmer or _confirm_agent_install
         self._remember_secret_confirmer = remember_secret_confirmer
+        self._log_file_chooser = log_file_chooser or _choose_log_file
         self._should_confirm_remember_secret = controller is None
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
         self._build_help_menu()
+        self._build_logs_menu()
         self._build_toolbar()
         self._build_central_layout()
         self.setStatusBar(QStatusBar(self))
@@ -60,6 +66,7 @@ class MainWindow(QMainWindow):
             site_repository=site_repository,
             credential_service=credential_service,
             queue_service=queue_service,
+            log_service=self.log_service,
         )
         self._connect_signals()
         self.controller.load_saved_sites()
@@ -94,6 +101,13 @@ class MainWindow(QMainWindow):
             "SFTP, FTP, FTPS, and FileZall Agent HTTP transfers are supported.",
         )
 
+    def _build_logs_menu(self) -> None:
+        self.logs_menu = QMenu("Logs", self)
+        self.menuBar().addMenu(self.logs_menu)
+        self.export_logs_action = self.logs_menu.addAction("Export Logs")
+        self.export_logs_action.setStatusTip("Export FileZall transfer and connection logs")
+        self.export_logs_action.triggered.connect(self._export_logs)
+
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Connection")
         toolbar.setMovable(False)
@@ -121,6 +135,9 @@ class MainWindow(QMainWindow):
         self.transfer_table.setHorizontalHeaderLabels(
             ["Server", "Direction", "File", "Progress", "Status"]
         )
+        self.log_view = QPlainTextEdit(transfer_widget)
+        self.log_view.setReadOnly(True)
+        self.log_view.setMaximumBlockCount(1000)
         transfer_actions = QHBoxLayout()
         self.pause_transfer_button = QPushButton("Pause", root)
         self.resume_transfer_button = QPushButton("Resume", root)
@@ -137,6 +154,8 @@ class MainWindow(QMainWindow):
         transfer_layout.addLayout(transfer_actions, stretch=0)
         transfer_layout.addWidget(self.monitoring_status_label, stretch=0)
         transfer_layout.addWidget(self.transfer_table, stretch=1)
+        transfer_layout.addWidget(QLabel("Transfer Logs", transfer_widget), stretch=0)
+        transfer_layout.addWidget(self.log_view, stretch=1)
 
         resource_widget = QWidget(self.main_splitter)
         resource_layout = QVBoxLayout(resource_widget)
@@ -187,6 +206,17 @@ class MainWindow(QMainWindow):
 
     def show_status(self, message: str) -> None:
         self.statusBar().showMessage(message)
+
+    def append_log(self, message: str) -> None:
+        entry = self.log_service.append(message)
+        self.log_view.appendPlainText(entry.format())
+
+    def _export_logs(self) -> None:
+        selected = self._log_file_chooser(self)
+        if not selected:
+            return
+        self.log_service.export(Path(selected))
+        self.show_status(f"Exported logs to {selected}")
 
     def set_monitoring_status(self, message: str) -> None:
         self.monitoring_status_label.setText(message)
@@ -498,6 +528,16 @@ def _protocol_from_label(label: str) -> Protocol:
 
 def _choose_local_directory(parent, current: str) -> str:
     return QFileDialog.getExistingDirectory(parent, "Choose Local Directory", current)
+
+
+def _choose_log_file(parent) -> str:
+    path, _selected_filter = QFileDialog.getSaveFileName(
+        parent,
+        "Export FileZall Logs",
+        "filezall.log",
+        "Log Files (*.log);;Text Files (*.txt);;All Files (*)",
+    )
+    return path
 
 
 def _confirm_agent_install(parent) -> bool:

@@ -169,6 +169,21 @@ def test_main_window_has_help_menu_actions(qtbot) -> None:
     assert help_actions["Protocols"].statusTip()
 
 
+def test_main_window_displays_and_exports_logs(qtbot, tmp_path) -> None:
+    export_path = tmp_path / "filezall.log"
+    window = MainWindow(
+        controller=FakeController(),
+        log_file_chooser=lambda _parent: str(export_path),
+    )
+    qtbot.addWidget(window)
+
+    window.append_log("Uploaded app.txt")
+    window.export_logs_action.trigger()
+
+    assert "Uploaded app.txt" in window.log_view.toPlainText()
+    assert "Uploaded app.txt" in export_path.read_text(encoding="utf-8")
+
+
 def test_main_window_local_path_button_chooses_and_loads_directory(qtbot, tmp_path) -> None:
     controller = FakeController()
     window = MainWindow(
