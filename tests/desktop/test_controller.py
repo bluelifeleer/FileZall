@@ -169,6 +169,26 @@ class FakeAgentInstallService:
         self.result = result
         self.calls = []
         self.uninstall_calls = []
+        self.resource_calls = []
+        self.detail_calls = []
+        self.expected_snapshot = ResourceSnapshot(
+            cpu=CpuStats(percent=33.3),
+            memory=MemoryStats(total_bytes=2000, used_bytes=1000, available_bytes=1000),
+            disks=[],
+            network=NetworkStats(rx_bytes_per_sec=3, tx_bytes_per_sec=4),
+            processes=[],
+        )
+        self.detail = ProcessDetail(
+            pid=456,
+            user="deploy",
+            name="agent",
+            cpu_percent=1.0,
+            memory_percent=2.0,
+            command_line="filezall-agent",
+            start_time="",
+            thread_count=1,
+            status="running",
+        )
 
     def install(self, site, password):
         self.calls.append((site, password))
@@ -177,6 +197,14 @@ class FakeAgentInstallService:
     def uninstall(self, site, password):
         self.uninstall_calls.append((site, password))
         return self.result
+
+    def resource_snapshot(self, site, password):
+        self.resource_calls.append((site, password))
+        return self.expected_snapshot
+
+    def process_detail(self, site, pid, password):
+        self.detail_calls.append((site, pid, password))
+        return self.detail
 
 
 def test_controller_loads_local_directory(tmp_path: Path) -> None:
@@ -528,6 +556,43 @@ def test_controller_installs_agent_for_connected_site() -> None:
 
     assert service.calls == [(site, "secret")]
     assert window.statuses[-1] == "Agent installed and verified"
+
+
+def test_controller_refreshes_resources_through_installed_agent_when_no_monitor_service() -> None:
+    window = FakeWindow()
+    service = FakeAgentInstallService(
+        AgentInstallResult(
+            success=True,
+            commands_run=8,
+            verified=True,
+            agent_token_ref="site-1:agent-token",
+        )
+    )
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: FakeSession(),
+        agent_install_service=service,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+    controller.install_agent()
+    controller.refresh_resources()
+    controller.show_process_detail(456)
+
+    assert service.resource_calls == [(controller._connected_site, "secret")]
+    assert window.resource_snapshot == service.expected_snapshot
+    assert service.detail_calls == [(controller._connected_site, 456, "secret")]
+    assert window.process_detail == service.detail
 
 
 def test_controller_uninstalls_agent_for_connected_site() -> None:

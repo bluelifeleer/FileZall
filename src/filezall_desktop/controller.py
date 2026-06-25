@@ -154,6 +154,14 @@ class MainWindowController:
         self._window.show_status(f"Retried transfer task {task_id}")
 
     def refresh_resources(self) -> None:
+        if self._resource_monitor_service is None and self._can_read_agent_resources():
+            snapshot = self._agent_install_service.resource_snapshot(
+                self._require_connected_site(),
+                self._connected_secret,
+            )
+            self._window.set_resource_snapshot(snapshot)
+            self._window.show_status("Agent resource snapshot refreshed")
+            return
         try:
             snapshot = self._require_resource_monitor().snapshot(self._require_connected_site())
         except ResourceMonitoringUnavailable as exc:
@@ -163,6 +171,15 @@ class MainWindowController:
         self._window.show_status("Resource snapshot refreshed")
 
     def show_process_detail(self, pid: int) -> None:
+        if self._resource_monitor_service is None and self._can_read_agent_resources():
+            detail = self._agent_install_service.process_detail(
+                self._require_connected_site(),
+                pid,
+                self._connected_secret,
+            )
+            self._window.set_process_detail(detail)
+            self._window.show_status(f"Loaded Agent process detail {pid}")
+            return
         detail = self._require_resource_monitor().process_detail(
             self._require_connected_site(),
             pid,
@@ -229,6 +246,14 @@ class MainWindowController:
         if self._session is None:
             raise RuntimeError("Remote session is not connected")
         return self._session
+
+    def _can_read_agent_resources(self) -> bool:
+        return (
+            self._agent_install_service is not None
+            and self._connected_site is not None
+            and self._connected_site.agent_enabled
+            and hasattr(self._agent_install_service, "resource_snapshot")
+        )
 
     def _require_queue(self):
         if self._queue_service is None:

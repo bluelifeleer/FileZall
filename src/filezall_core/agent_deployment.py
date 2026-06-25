@@ -7,11 +7,14 @@ import secrets
 import shlex
 import tarfile
 import tempfile
+import json
 from typing import Protocol
 
 import paramiko
 
+from filezall_core.agent_client import _process_detail_from_json, _snapshot_from_json
 from filezall_core.models import AuthMode, SiteProfile
+from filezall_core.resource_models import ProcessDetail, ResourceSnapshot
 
 
 class AgentDeployRunner(Protocol):
@@ -19,6 +22,9 @@ class AgentDeployRunner(Protocol):
         ...
 
     def run(self, command: str) -> None:
+        ...
+
+    def capture(self, command: str) -> str:
         ...
 
     def close(self) -> None:
@@ -94,11 +100,20 @@ class ParamikoAgentDeployRunner:
 
     def run(self, command: str) -> None:
         self._connect()
+        self._exec(command)
+
+    def capture(self, command: str) -> str:
+        self._connect()
+        stdout, _stderr = self._exec(command)
+        return stdout.read().decode("utf-8", errors="replace")
+
+    def _exec(self, command: str):
         _stdin, stdout, stderr = self._ssh.exec_command(command)
         exit_status = stdout.channel.recv_exit_status()
         if exit_status != 0:
             error = stderr.read().decode("utf-8", errors="replace").strip()
             raise RuntimeError(error or f"Remote command failed with exit status {exit_status}: {command}")
+        return stdout, stderr
 
     def close(self) -> None:
         if self._sftp is not None:
@@ -185,6 +200,32 @@ class AgentDeploymentService:
             )
         return result
 
+    def resource_snapshot(self, site: SiteProfile, password: str | None = None) -> ResourceSnapshot:
+        return _snapshot_from_json(self._agent_get_json(site, password, "/resources"))
+
+    def process_detail(
+        self,
+        site: SiteProfile,
+        pid: int,
+        password: str | None = None,
+    ) -> ProcessDetail:
+        return _process_detail_from_json(self._agent_get_json(site, password, f"/processes/{pid}"))
+
+    def _agent_get_json(self, site: SiteProfile, password: str | None, path: str) -> dict:
+        token = self._credential_service.get_secret(site.agent_token_ref)
+        if not token:
+            raise RuntimeError("Agent token is not available for this site")
+        runner = self._runner_factory(site, password)
+        try:
+            return json.loads(runner.capture(self.agent_get_command(token, path)))
+        finally:
+            runner.close()
+
+    @staticmethod
+    def agent_get_command(token: str, path: str) -> str:
+        code = _agent_get_code(token, path)
+        return f"python3 -c {shlex.quote(code)}"
+
 
 def build_agent_package(agent_root: Path, output_dir: Path | None = None) -> Path:
     output_dir = output_dir or Path(tempfile.gettempdir())
@@ -219,20 +260,22 @@ def _agent_env_command(token: str) -> str:
 
 
 def _remote_health_check(runner: AgentDeployRunner, token: str) -> bool:
-    code = (
-        "import json,urllib.request;"
-        "req=urllib.request.Request("
-        "'http://127.0.0.1:8765/health',"
-        f"headers={{'Authorization': {'Bearer ' + token!r}}}"
-        ");"
-        "data=json.load(urllib.request.urlopen(req,timeout=10));"
-        "raise SystemExit(0 if data.get('ok') else 1)"
-    )
     try:
-        runner.run(f"python3 -c {shlex.quote(code)}")
+        runner.run(AgentDeploymentService.agent_get_command(token, "/health"))
     except Exception:
         return False
     return True
+
+
+def _agent_get_code(token: str, path: str) -> str:
+    return (
+        "import json,urllib.request;"
+        "req=urllib.request.Request("
+        f"{'http://127.0.0.1:8765' + path!r},"
+        f"headers={{'Authorization': {'Bearer ' + token!r}}}"
+        ");"
+        "print(urllib.request.urlopen(req,timeout=10).read().decode('utf-8'))"
+    )
 
 
 def _single_quote(value: str) -> str:
