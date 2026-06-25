@@ -3,15 +3,19 @@ from __future__ import annotations
 from datetime import datetime
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMenu,
     QPushButton,
+    QStyledItemDelegate,
+    QStyle,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -59,6 +63,42 @@ class ConnectionBar(QWidget):
         layout.addWidget(self.install_agent_button)
 
 
+class HoverRowTableWidget(QTableWidget):
+    def __init__(self, rows: int, columns: int, parent: QWidget | None = None) -> None:
+        super().__init__(rows, columns, parent)
+        self.hovered_row = -1
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
+
+    def set_hovered_row(self, row: int) -> None:
+        if row == self.hovered_row:
+            return
+        self.hovered_row = row
+        self.viewport().update()
+
+    def mouseMoveEvent(self, event) -> None:
+        index = self.indexAt(event.position().toPoint())
+        self.set_hovered_row(index.row() if index.isValid() else -1)
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self.set_hovered_row(-1)
+        super().leaveEvent(event)
+
+
+class HoverRowDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index) -> None:
+        table = self.parent()
+        if (
+            isinstance(table, HoverRowTableWidget)
+            and index.row() == table.hovered_row
+            and not (option.state & QStyle.StateFlag.State_Selected)
+        ):
+            option = QStyleOptionViewItem(option)
+            option.backgroundBrush = QColor("#eaf4ff")
+        super().paint(painter, option, index)
+
+
 class FilePanel(QWidget):
     def __init__(
         self,
@@ -68,6 +108,7 @@ class FilePanel(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self._transfer_action_label = action_label
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
         self.title = QLabel(title, self)
@@ -78,8 +119,13 @@ class FilePanel(QWidget):
         self.path_button.setToolTip("Choose or enter directory")
         self.refresh_button = QPushButton("Refresh", self)
         self.action_button = QPushButton(action_label, self)
-        self.table = QTableWidget(0, 4, self)
+        self.table = HoverRowTableWidget(0, 4, self)
+        self.table.setItemDelegate(HoverRowDelegate(self.table))
         self.table.setHorizontalHeaderLabels(["Name", "Size", "Type", "Modified"])
+        self.table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -100,7 +146,7 @@ class FilePanel(QWidget):
         self.refresh_action = QAction("Refresh", self)
         self.delete_action = QAction("Delete", self)
         self.queue_action = QAction("Add to Queue", self)
-        self.transfer_action = QAction("Transfer", self)
+        self.transfer_action = QAction(self._transfer_action_label, self)
         self.create_dir_action = QAction("Create Directory", self)
         self.create_file_action = QAction("Create File", self)
         for action in [

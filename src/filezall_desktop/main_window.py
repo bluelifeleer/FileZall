@@ -51,6 +51,7 @@ class MainWindow(QMainWindow):
         self._remember_secret_confirmer = remember_secret_confirmer
         self._log_file_chooser = log_file_chooser or _choose_log_file
         self._should_confirm_remember_secret = controller is None
+        self._heartbeat_failed_logged = False
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
@@ -335,20 +336,26 @@ class MainWindow(QMainWindow):
                 remember_secret = self._remember_secret_confirmer(self)
             elif self._should_confirm_remember_secret:
                 remember_secret = _confirm_remember_secret(self)
+        connect_site = site or self._site_from_fields()
+        self.append_log(
+            f"Connecting to {connect_site.host}:{connect_site.port} as {connect_site.username}"
+        )
         self._set_connection_state("Connecting", "goldenrod")
         self.connection_bar.connect_button.setEnabled(False)
         try:
             self.controller.connect(
-                site or self._site_from_fields(),
+                connect_site,
                 secret,
                 remember_secret=remember_secret,
             )
         except Exception as exc:
+            self.append_log(f"Connection failed: {exc}")
             self._set_connection_state("Failed", "red")
             self.heartbeat_timer.stop()
             self.connection_bar.connect_button.setEnabled(True)
             self.show_status(str(exc))
             return
+        self._heartbeat_failed_logged = False
         self._set_connection_state("Connected", "green")
         self.heartbeat_timer.start()
         self.connection_bar.connect_button.setEnabled(True)
@@ -488,12 +495,21 @@ class MainWindow(QMainWindow):
         try:
             ok = self.controller.heartbeat()
         except Exception as exc:
+            self._log_heartbeat_failure(f"Heartbeat failed: {exc}")
             self._set_connection_state(f"Disconnected: {exc}", "red")
             return
         if ok:
+            self._heartbeat_failed_logged = False
             self._set_connection_state("Connected", "green")
         else:
+            self._log_heartbeat_failure("Heartbeat failed: disconnected")
             self._set_connection_state("Disconnected", "red")
+
+    def _log_heartbeat_failure(self, message: str) -> None:
+        if self._heartbeat_failed_logged:
+            return
+        self.append_log(message)
+        self._heartbeat_failed_logged = True
 
     def _set_connection_state(self, text: str, color: str) -> None:
         self.connection_state_label.setText("")

@@ -137,6 +137,8 @@ def test_main_window_exposes_connection_and_file_panels(qtbot) -> None:
     assert window.remote_panel.title.text() == "Remote Files"
     assert window.local_panel.action_button.text() == "Upload"
     assert window.remote_panel.action_button.text() == "Download"
+    assert window.local_panel.transfer_action.text() == "Upload"
+    assert window.remote_panel.transfer_action.text() == "Download"
     assert window.local_panel.path_button.maximumWidth() <= 32
     assert window.remote_panel.path_button.maximumWidth() <= 32
     assert window.transfer_table.columnCount() == 5
@@ -184,6 +186,9 @@ def test_file_panels_use_full_row_selection_for_actions(qtbot) -> None:
     assert window.local_panel.table.selectionBehavior() == QAbstractItemView.SelectionBehavior.SelectRows
     assert window.local_panel.table.selectionMode() == QAbstractItemView.SelectionMode.ExtendedSelection
     assert window.local_panel.table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
+    assert window.local_panel.table.hasMouseTracking()
+    window.local_panel.table.set_hovered_row(1)
+    assert window.local_panel.table.hovered_row == 1
 
     window.local_panel.table.setCurrentCell(1, 2)
 
@@ -228,6 +233,46 @@ def test_file_panel_ctrl_a_and_drag_style_multiselect_batch_actions(qtbot, tmp_p
     assert controller.queued == [
         (local_root / "a.txt", PurePosixPath("/home/deploy/a.txt"), Direction.UPLOAD),
         (local_root / "b.txt", PurePosixPath("/home/deploy/b.txt"), Direction.UPLOAD),
+    ]
+
+
+def test_context_transfer_actions_upload_and_download_selected_rows(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    window.local_panel.path_edit.setText(str(local_root))
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.local_panel.set_entries(
+        [
+            type(
+                "Entry",
+                (),
+                {"name": "upload.txt", "is_dir": False, "size_bytes": 1, "modified_time": None},
+            )(),
+        ]
+    )
+    window.remote_panel.set_entries(
+        [
+            type(
+                "Entry",
+                (),
+                {"name": "download.txt", "is_dir": False, "size_bytes": 1, "modified_time": None},
+            )(),
+        ]
+    )
+
+    window.local_panel.table.selectRow(1)
+    window.local_panel.transfer_action.trigger()
+    window.remote_panel.table.selectRow(1)
+    window.remote_panel.transfer_action.trigger()
+
+    assert controller.uploads == [
+        (local_root / "upload.txt", PurePosixPath("/home/deploy/upload.txt"))
+    ]
+    assert controller.downloads == [
+        (PurePosixPath("/home/deploy/download.txt"), local_root / "download.txt")
     ]
 
 
@@ -508,6 +553,22 @@ def test_main_window_connection_failure_shows_red_status(qtbot) -> None:
     assert window.connection_bar.connect_button.isEnabled()
 
 
+def test_main_window_logs_connection_attempt_and_failure(qtbot) -> None:
+    controller = FailingConnectController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.connection_bar.host_edit.setText("example.com")
+    window.connection_bar.port_edit.setText("2222")
+    window.connection_bar.username_edit.setText("deploy")
+    window.connection_bar.secret_edit.setText("secret")
+
+    qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
+
+    logs = window.log_view.toPlainText()
+    assert "Connecting to example.com:2222 as deploy" in logs
+    assert "Connection failed: connect failed" in logs
+
+
 def test_connection_status_light_uses_tooltip_for_state_text(qtbot) -> None:
     window = MainWindow(controller=FakeController())
     qtbot.addWidget(window)
@@ -532,6 +593,21 @@ def test_heartbeat_updates_status_light_after_connection(qtbot) -> None:
     window._handle_heartbeat_tick()
     assert window.connection_state_label.toolTip() == "Disconnected"
     assert "red" in window.connection_state_label.styleSheet()
+
+
+def test_heartbeat_failure_logs_once_until_recovered(qtbot) -> None:
+    controller = FakeController()
+    controller.heartbeat_results = [False, False, True, False]
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+
+    window._handle_heartbeat_tick()
+    window._handle_heartbeat_tick()
+    assert window.log_view.toPlainText().count("Heartbeat failed: disconnected") == 1
+
+    window._handle_heartbeat_tick()
+    window._handle_heartbeat_tick()
+    assert window.log_view.toPlainText().count("Heartbeat failed: disconnected") == 2
 
 
 def test_main_window_can_connect_without_remembering_password(qtbot) -> None:
