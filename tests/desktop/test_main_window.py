@@ -979,12 +979,14 @@ def test_disconnect_button_calls_controller_logs_and_stops_heartbeat(qtbot) -> N
     window = MainWindow(controller=controller)
     qtbot.addWidget(window)
     window.heartbeat_timer.start()
+    window.resource_refresh_timer.start()
     window._set_connection_state("Connected", "green")
 
     qtbot.mouseClick(window.connection_bar.disconnect_button, Qt.MouseButton.LeftButton)
 
     assert controller.disconnect_calls == 1
     assert not window.heartbeat_timer.isActive()
+    assert not window.resource_refresh_timer.isActive()
     assert window.connection_state_label.toolTip() == "Disconnected"
     assert "grey" in window.connection_state_label.styleSheet()
     logs = window.log_view.toPlainText()
@@ -1005,6 +1007,30 @@ def test_heartbeat_failure_logs_once_until_recovered(qtbot) -> None:
     window._handle_heartbeat_tick()
     window._handle_heartbeat_tick()
     assert window.log_view.toPlainText().count("Heartbeat failed: disconnected") == 2
+
+
+def test_resource_refresh_timer_starts_after_successful_connect(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.connection_bar.host_edit.setText("example.com")
+    window.connection_bar.username_edit.setText("deploy")
+    window.connection_bar.secret_edit.setText("secret")
+
+    qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
+
+    assert window.resource_refresh_timer.isActive()
+
+
+def test_resource_refresh_tick_runs_controller_refresh_in_background(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+
+    window._handle_resource_refresh_tick()
+
+    qtbot.waitUntil(lambda: controller.resource_refreshes == 1, timeout=3000)
+    assert window._resource_refresh_running is False
 
 
 def test_main_window_can_connect_without_remembering_password(qtbot) -> None:
@@ -1242,6 +1268,7 @@ def test_main_window_renders_resource_snapshot_and_process_detail(qtbot) -> None
     window.set_resource_snapshot(snapshot)
     window.process_table.selectRow(0)
     qtbot.mouseClick(window.resource_refresh_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: controller.resource_refreshes == 1, timeout=3000)
     qtbot.mouseClick(window.process_detail_button, Qt.MouseButton.LeftButton)
     window.set_process_detail(detail)
 

@@ -25,3 +25,10 @@ def test_agent_packaging_files_contain_required_release_commands() -> None:
     assert "FILEZALL_AGENT_TOKEN" in env
     assert "tar" in powershell
     assert "tar" in shell
+
+
+def test_agent_server_module_has_python_m_entrypoint() -> None:
+    server = (ROOT / "agent/filezall_agent/server.py").read_text(encoding="utf-8")
+
+    assert 'if __name__ == "__main__"' in server
+    assert "raise SystemExit(main())" in server

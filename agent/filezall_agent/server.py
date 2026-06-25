@@ -154,3 +154,7 @@ def _write_bytes(handler: BaseHTTPRequestHandler, data: bytes, status: int = 200
     handler.send_header("Content-Length", str(len(data)))
     handler.end_headers()
     handler.wfile.write(data)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

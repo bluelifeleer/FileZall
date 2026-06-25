@@ -66,6 +66,22 @@ class AgentActionWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class ResourceRefreshWorker(QObject):
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, action: Callable[[], object]) -> None:
+        super().__init__()
+        self._action = action
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            self.succeeded.emit(self._action())
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class MainWindow(QMainWindow):
     def __init__(
         self,
@@ -93,6 +109,8 @@ class MainWindow(QMainWindow):
         self._should_confirm_remember_secret = controller is None
         self._heartbeat_failed_logged = False
         self._agent_workers = []
+        self._resource_refresh_workers = []
+        self._resource_refresh_running = False
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
@@ -113,6 +131,9 @@ class MainWindow(QMainWindow):
         self.heartbeat_timer = QTimer(self)
         self.heartbeat_timer.setInterval(10_000)
         self.heartbeat_timer.timeout.connect(self._handle_heartbeat_tick)
+        self.resource_refresh_timer = QTimer(self)
+        self.resource_refresh_timer.setInterval(5_000)
+        self.resource_refresh_timer.timeout.connect(self._handle_resource_refresh_tick)
         self.statusBar().showMessage(t(self.current_language, "status.ready"))
         self.controller = controller or MainWindowController(
             self,
@@ -557,7 +578,7 @@ class MainWindow(QMainWindow):
         self.resume_transfer_button.clicked.connect(self._handle_resume_transfer_clicked)
         self.cancel_transfer_button.clicked.connect(self._handle_cancel_transfer_clicked)
         self.retry_transfer_button.clicked.connect(self._handle_retry_transfer_clicked)
-        self.resource_refresh_button.clicked.connect(self.controller.refresh_resources)
+        self.resource_refresh_button.clicked.connect(self._handle_resource_refresh_tick)
         self.resource_install_agent_button.clicked.connect(self._handle_install_agent_clicked)
         self.resource_uninstall_agent_button.clicked.connect(self._handle_uninstall_agent_clicked)
         self.process_detail_button.clicked.connect(self._handle_process_detail_clicked)
@@ -593,6 +614,7 @@ class MainWindow(QMainWindow):
         self._heartbeat_failed_logged = False
         self._set_connection_state("Connected", "green")
         self.heartbeat_timer.start()
+        self.resource_refresh_timer.start()
         self.connection_bar.connect_button.setEnabled(True)
 
     def _handle_disconnect_clicked(self) -> None:
@@ -610,6 +632,7 @@ class MainWindow(QMainWindow):
         finally:
             self.connection_bar.disconnect_button.setEnabled(True)
         self.heartbeat_timer.stop()
+        self.resource_refresh_timer.stop()
         self._heartbeat_failed_logged = False
         self._set_connection_state("Disconnected", "grey")
         if "Disconnected" not in self.log_view.toPlainText()[len(log_checkpoint) :]:
@@ -893,6 +916,60 @@ class MainWindow(QMainWindow):
     def _handle_process_detail_clicked(self) -> None:
         if pid := self._selected_process_id():
             self.controller.show_process_detail(pid)
+
+    def _handle_resource_refresh_tick(self) -> None:
+        if self._resource_refresh_running:
+            return
+        self._resource_refresh_running = True
+        thread = QThread(self)
+        worker = ResourceRefreshWorker(self._resource_refresh_action)
+        worker.moveToThread(thread)
+        self._resource_refresh_workers.append((thread, worker))
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(
+            lambda result, thread=thread, worker=worker: self._finish_resource_refresh(
+                result,
+                thread,
+                worker,
+            )
+        )
+        worker.failed.connect(
+            lambda error, thread=thread, worker=worker: self._fail_resource_refresh(
+                error,
+                thread,
+                worker,
+            )
+        )
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _resource_refresh_action(self):
+        if hasattr(self.controller, "load_resource_snapshot"):
+            return self.controller.load_resource_snapshot()
+        self.controller.refresh_resources()
+        return None
+
+    def _finish_resource_refresh(self, result, thread: QThread, worker) -> None:
+        if isinstance(result, tuple) and len(result) == 2:
+            snapshot, status = result
+            if snapshot is not None:
+                self.set_resource_snapshot(snapshot)
+            if status:
+                self.show_status(status)
+        self._cleanup_resource_refresh(thread, worker)
+
+    def _fail_resource_refresh(self, error: str, thread: QThread, worker) -> None:
+        self.show_status(f"Resource refresh failed: {error}")
+        self._cleanup_resource_refresh(thread, worker)
+
+    def _cleanup_resource_refresh(self, thread: QThread, worker) -> None:
+        self._resource_refresh_running = False
+        try:
+            self._resource_refresh_workers.remove((thread, worker))
+        except ValueError:
+            pass
+        thread.quit()
 
     def _handle_heartbeat_tick(self) -> None:
         self._blink_connection_state("goldenrod")

@@ -206,21 +206,26 @@ class MainWindowController:
         self._window.show_status(f"Retried transfer task {task_id}")
 
     def refresh_resources(self) -> None:
+        try:
+            snapshot, status = self.load_resource_snapshot()
+        except RuntimeError as exc:
+            self._window.show_status(str(exc))
+            return
+        self._window.set_resource_snapshot(snapshot)
+        self._window.show_status(status)
+
+    def load_resource_snapshot(self):
         if self._resource_monitor_service is None and self._can_read_agent_resources():
             snapshot = self._agent_install_service.resource_snapshot(
                 self._require_connected_site(),
                 self._connected_secret,
             )
-            self._window.set_resource_snapshot(snapshot)
-            self._window.show_status("Agent resource snapshot refreshed")
-            return
+            return snapshot, "Agent resource snapshot refreshed"
         try:
             snapshot = self._require_resource_monitor().snapshot(self._require_connected_site())
         except ResourceMonitoringUnavailable as exc:
-            self._window.show_status(str(exc))
-            return
-        self._window.set_resource_snapshot(snapshot)
-        self._window.show_status("Resource snapshot refreshed")
+            raise RuntimeError(str(exc)) from exc
+        return snapshot, "Resource snapshot refreshed"
 
     def show_process_detail(self, pid: int) -> None:
         if self._resource_monitor_service is None and self._can_read_agent_resources():
