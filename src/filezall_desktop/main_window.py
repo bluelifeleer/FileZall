@@ -63,16 +63,19 @@ class MainWindow(QMainWindow):
         root = QWidget(self)
         root_layout = QVBoxLayout(root)
 
-        file_splitter = QSplitter(root)
+        self.main_splitter = QSplitter(Qt.Orientation.Vertical, root)
+        self.file_splitter = QSplitter(Qt.Orientation.Horizontal, self.main_splitter)
         self.local_panel = FilePanel("Local Files", "Upload", "...", self)
         self.remote_panel = FilePanel("Remote Files", "Download", ">", self)
         self.local_panel.set_placeholder_row("No directory loaded")
         self.remote_panel.set_placeholder_row("Not connected")
-        file_splitter.addWidget(self.local_panel)
-        file_splitter.addWidget(self.remote_panel)
-        file_splitter.setSizes([640, 640])
+        self.file_splitter.addWidget(self.local_panel)
+        self.file_splitter.addWidget(self.remote_panel)
+        self.file_splitter.setSizes([640, 640])
 
-        self.transfer_table = QTableWidget(0, 5, root)
+        transfer_widget = QWidget(self.main_splitter)
+        transfer_layout = QVBoxLayout(transfer_widget)
+        self.transfer_table = QTableWidget(0, 5, transfer_widget)
         self.transfer_table.setHorizontalHeaderLabels(
             ["Server", "Direction", "File", "Progress", "Status"]
         )
@@ -87,7 +90,14 @@ class MainWindow(QMainWindow):
         transfer_actions.addWidget(self.resume_transfer_button)
         transfer_actions.addWidget(self.cancel_transfer_button)
         transfer_actions.addWidget(self.retry_transfer_button)
-        self.monitoring_status_label = QLabel("", root)
+        self.monitoring_status_label = QLabel("", transfer_widget)
+
+        transfer_layout.addLayout(transfer_actions, stretch=0)
+        transfer_layout.addWidget(self.monitoring_status_label, stretch=0)
+        transfer_layout.addWidget(self.transfer_table, stretch=1)
+
+        resource_widget = QWidget(self.main_splitter)
+        resource_layout = QVBoxLayout(resource_widget)
         resource_actions = QHBoxLayout()
         self.resource_refresh_button = QPushButton("Refresh Resources", root)
         self.process_detail_button = QPushButton("Process Detail", root)
@@ -114,14 +124,16 @@ class MainWindow(QMainWindow):
         self.process_table.setHorizontalHeaderLabels(["PID", "User", "Name", "CPU", "Memory"])
         self.process_detail_label = QLabel("", root)
 
-        root_layout.addWidget(file_splitter, stretch=4)
-        root_layout.addLayout(transfer_actions, stretch=0)
-        root_layout.addWidget(self.monitoring_status_label, stretch=0)
-        root_layout.addWidget(self.transfer_table, stretch=1)
-        root_layout.addLayout(resource_actions, stretch=0)
-        root_layout.addLayout(resource_values, stretch=0)
-        root_layout.addWidget(self.process_table, stretch=1)
-        root_layout.addWidget(self.process_detail_label, stretch=0)
+        resource_layout.addLayout(resource_actions, stretch=0)
+        resource_layout.addLayout(resource_values, stretch=0)
+        resource_layout.addWidget(self.process_table, stretch=1)
+        resource_layout.addWidget(self.process_detail_label, stretch=0)
+
+        self.main_splitter.addWidget(self.file_splitter)
+        self.main_splitter.addWidget(transfer_widget)
+        self.main_splitter.addWidget(resource_widget)
+        self.main_splitter.setSizes([420, 190, 190])
+        root_layout.addWidget(self.main_splitter)
         self.setCentralWidget(root)
 
     def set_local_entries(self, entries) -> None:

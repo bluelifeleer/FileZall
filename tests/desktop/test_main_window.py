@@ -107,6 +107,14 @@ def test_main_window_exposes_connection_and_file_panels(qtbot) -> None:
     assert window.transfer_table.columnCount() == 5
 
 
+def test_main_window_uses_draggable_splitters_for_major_regions(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window.main_splitter.count() == 3
+    assert window.file_splitter.count() == 2
+
+
 def test_main_window_local_path_button_chooses_and_loads_directory(qtbot, tmp_path) -> None:
     controller = FakeController()
     window = MainWindow(
