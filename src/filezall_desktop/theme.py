@@ -133,6 +133,10 @@ def hover_color_for_theme(theme_name: str) -> str:
     return _palette(resolved_theme(theme_name))["hover"]
 
 
+def selected_color_for_theme(theme_name: str) -> str:
+    return _palette(resolved_theme(theme_name))["selected"]
+
+
 def _palette(theme_name: str) -> dict[str, str]:
     if theme_name == DARK_THEME:
         return {
@@ -145,6 +149,7 @@ def _palette(theme_name: str) -> dict[str, str]:
             "button_bg": "#172033",
             "button_hover": "#1f2a44",
             "hover": "#243244",
+            "selected": "#1d4ed8",
             "accent": "#2563eb",
             "text": "#e5e7eb",
             "muted": "#9ca3af",
@@ -161,6 +166,7 @@ def _palette(theme_name: str) -> dict[str, str]:
         "button_bg": "#ffffff",
         "button_hover": "#eef4ff",
         "hover": "#dbeafe",
+        "selected": "#bfdbfe",
         "accent": "#2563eb",
         "text": "#1f2937",
         "muted": "#64748b",

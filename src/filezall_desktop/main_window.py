@@ -5,6 +5,7 @@ from pathlib import Path, PurePosixPath
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -28,12 +29,20 @@ from filezall_core.models import AuthMode, Direction, Protocol, SiteProfile, Tra
 from filezall_core.resource_models import ProcessDetail, ResourceSnapshot
 from filezall_desktop.assets import app_icon
 from filezall_desktop.controller import MainWindowController
+from filezall_desktop.i18n import (
+    EN_LANGUAGE,
+    LANGUAGE_LABELS,
+    SYSTEM_LANGUAGE,
+    ZH_CN_LANGUAGE,
+    t,
+)
 from filezall_desktop.theme import (
     DARK_THEME,
     LIGHT_THEME,
     SYSTEM_THEME,
     THEME_LABELS,
     hover_color_for_theme,
+    selected_color_for_theme,
     stylesheet_for_theme,
 )
 from filezall_desktop.widgets import ConnectionBar, FilePanel
@@ -66,10 +75,12 @@ class MainWindow(QMainWindow):
         self.resize(1280, 800)
         self._build_help_menu()
         self._build_theme_menu()
+        self._build_language_menu()
         self._build_logs_menu()
         self._build_toolbar()
         self._build_central_layout()
         self._apply_theme(SYSTEM_THEME)
+        self._apply_language(SYSTEM_LANGUAGE)
         self.setStatusBar(QStatusBar(self))
         self.connection_state_label = QLabel("", self)
         self.connection_state_label.setFixedSize(12, 12)
@@ -78,7 +89,7 @@ class MainWindow(QMainWindow):
         self.heartbeat_timer = QTimer(self)
         self.heartbeat_timer.setInterval(10_000)
         self.heartbeat_timer.timeout.connect(self._handle_heartbeat_tick)
-        self.statusBar().showMessage("Ready")
+        self.statusBar().showMessage(t(self.current_language, "status.ready"))
         self.controller = controller or MainWindowController(
             self,
             site_repository=site_repository,
@@ -145,9 +156,133 @@ class MainWindow(QMainWindow):
             action.setChecked(action.data() == theme_name)
         self.setStyleSheet(stylesheet_for_theme(theme_name))
         hover_color = hover_color_for_theme(theme_name)
+        selected_color = selected_color_for_theme(theme_name)
         for panel in (getattr(self, "local_panel", None), getattr(self, "remote_panel", None)):
             if panel is not None:
                 panel.table.set_full_row_hover_color(hover_color)
+                panel.table.set_full_row_selected_color(selected_color)
+
+    def _build_language_menu(self) -> None:
+        self.language_menu = QMenu("Language", self)
+        self.menuBar().addMenu(self.language_menu)
+        self.language_action_group = QActionGroup(self)
+        self.language_action_group.setExclusive(True)
+        self.system_language_action = self._add_language_action(SYSTEM_LANGUAGE)
+        self.english_language_action = self._add_language_action(EN_LANGUAGE)
+        self.chinese_language_action = self._add_language_action(ZH_CN_LANGUAGE)
+        self.language_action_group.triggered.connect(self._handle_language_action)
+
+    def _add_language_action(self, language_name: str):
+        action = self.language_menu.addAction(LANGUAGE_LABELS[language_name])
+        action.setCheckable(True)
+        action.setData(language_name)
+        self.language_action_group.addAction(action)
+        return action
+
+    def _handle_language_action(self, action) -> None:
+        self._apply_language(action.data())
+
+    def _apply_language(self, language_name: str) -> None:
+        self.current_language = language_name
+        for action in self.language_action_group.actions():
+            action.setChecked(action.data() == language_name)
+        self._refresh_texts()
+
+    def _text(self, key: str, **values) -> str:
+        text = t(self.current_language, key)
+        return text.format(**values) if values else text
+
+    def _refresh_texts(self) -> None:
+        self.help_menu.setTitle(self._text("menu.help"))
+        self.theme_menu.setTitle(self._text("menu.theme"))
+        self.language_menu.setTitle(self._text("menu.language"))
+        if hasattr(self, "logs_menu"):
+            self.logs_menu.setTitle(self._text("menu.logs"))
+            self.export_logs_action.setText(self._text("logs.export"))
+
+        self.about_action.setText(self._text("help.about"))
+        self.version_action.setText(self._text("help.version"))
+        self.protocols_action.setText(self._text("help.protocols"))
+
+        self.connection_bar.site_label.setText(self._text("connection.site"))
+        self.connection_bar.host_edit.setPlaceholderText(self._text("connection.host"))
+        self.connection_bar.username_edit.setPlaceholderText(self._text("connection.username"))
+        self.connection_bar.secret_edit.setPlaceholderText(self._text("connection.password"))
+        self.connection_bar.ssh_key_path_edit.setPlaceholderText(self._text("connection.ssh_key"))
+        self.connection_bar.auth_mode_selector.setItemText(
+            0,
+            self._text("connection.password_mode"),
+        )
+        self.connection_bar.auth_mode_selector.setItemText(
+            1,
+            self._text("connection.ssh_key_mode"),
+        )
+        self.connection_bar.connect_button.setText(self._text("connection.connect"))
+        self.connection_bar.disconnect_button.setText(self._text("connection.disconnect"))
+        self.connection_bar.install_agent_button.setText(self._text("connection.install_agent"))
+
+        if self.connection_bar.site_selector.count():
+            self.connection_bar.site_selector.setItemText(0, self._text("site.quick"))
+
+        if hasattr(self, "local_panel"):
+            headers = [
+                self._text("table.name"),
+                self._text("table.size"),
+                self._text("table.type"),
+                self._text("table.modified"),
+            ]
+            common = {
+                "refresh_label": self._text("files.refresh"),
+                "choose_directory_tooltip": self._text("files.path_tooltip"),
+                "headers": headers,
+                "parent_label": self._text("table.parent"),
+                "directory_label": self._text("table.directory"),
+                "file_label": self._text("table.file"),
+                "delete_label": self._text("context.delete"),
+                "queue_label": self._text("context.queue"),
+                "create_dir_label": self._text("context.create_dir"),
+                "create_file_label": self._text("context.create_file"),
+            }
+            self.local_panel.set_texts(
+                title=self._text("files.local"),
+                action_label=self._text("files.upload"),
+                transfer_label=self._text("files.upload"),
+                **common,
+            )
+            self.remote_panel.set_texts(
+                title=self._text("files.remote"),
+                action_label=self._text("files.download"),
+                transfer_label=self._text("files.download"),
+                **common,
+            )
+
+        if hasattr(self, "transfer_table"):
+            self.transfer_table.setHorizontalHeaderLabels(
+                ["Server", "Direction", "File", "Progress", "Status"]
+            )
+            self.transfer_center_label.setText(self._text("transfer.center"))
+            self.transfer_logs_label.setText(self._text("transfer.logs"))
+            self.pause_transfer_button.setText(self._text("transfer.pause"))
+            self.resume_transfer_button.setText(self._text("transfer.resume"))
+            self.cancel_transfer_button.setText(self._text("transfer.cancel"))
+            self.retry_transfer_button.setText(self._text("transfer.retry"))
+            self.resource_refresh_button.setText(self._text("resource.refresh"))
+            self.process_detail_button.setText(self._text("resource.show_process"))
+            self.resource_install_agent_button.setText(self._text("resource.install_agent"))
+            self.resource_monitor_label.setText(self._text("resource.monitor"))
+            self.cpu_label.setText(self._text("resource.cpu"))
+            self.memory_label.setText(self._text("resource.memory"))
+            self.disk_label.setText(self._text("resource.disk"))
+            self.network_label.setText(self._text("resource.network"))
+            self.process_table.setHorizontalHeaderLabels(
+                [
+                    self._text("process.pid"),
+                    self._text("process.user"),
+                    self._text("process.name"),
+                    self._text("process.cpu"),
+                    self._text("process.memory"),
+                ]
+            )
 
     def _build_logs_menu(self) -> None:
         self.logs_menu = QMenu("Logs", self)
@@ -195,7 +330,8 @@ class MainWindow(QMainWindow):
         self.resume_transfer_button = QPushButton("Resume", root)
         self.cancel_transfer_button = QPushButton("Cancel", root)
         self.retry_transfer_button = QPushButton("Retry", root)
-        transfer_actions.addWidget(QLabel("Transfer Center", root))
+        self.transfer_center_label = QLabel("Transfer Center", root)
+        transfer_actions.addWidget(self.transfer_center_label)
         transfer_actions.addStretch(1)
         transfer_actions.addWidget(self.pause_transfer_button)
         transfer_actions.addWidget(self.resume_transfer_button)
@@ -205,7 +341,8 @@ class MainWindow(QMainWindow):
 
         transfer_layout.addLayout(transfer_actions, stretch=0)
         transfer_layout.addWidget(self.monitoring_status_label, stretch=0)
-        transfer_layout.addWidget(QLabel("Transfer Logs", transfer_widget), stretch=0)
+        self.transfer_logs_label = QLabel("Transfer Logs", transfer_widget)
+        transfer_layout.addWidget(self.transfer_logs_label, stretch=0)
         transfer_layout.addWidget(self.transfer_splitter, stretch=1)
 
         resource_widget = QWidget(self.main_splitter)
@@ -216,7 +353,8 @@ class MainWindow(QMainWindow):
         self.agent_status_label = QLabel("", resource_widget)
         self.resource_install_agent_button = QPushButton("Install Agent", resource_widget)
         self.resource_install_agent_button.hide()
-        resource_actions.addWidget(QLabel("Resource Monitor", root))
+        self.resource_monitor_label = QLabel("Resource Monitor", root)
+        resource_actions.addWidget(self.resource_monitor_label)
         resource_actions.addWidget(self.agent_status_label)
         resource_actions.addStretch(1)
         resource_actions.addWidget(self.resource_install_agent_button)
@@ -228,13 +366,17 @@ class MainWindow(QMainWindow):
         self.memory_value_label = QLabel("0 / 0 bytes", root)
         self.disk_value_label = QLabel("", root)
         self.network_value_label = QLabel("RX 0 B/s, TX 0 B/s", root)
-        resource_values.addWidget(QLabel("CPU", root))
+        self.cpu_label = QLabel("CPU", root)
+        self.memory_label = QLabel("Memory", root)
+        self.disk_label = QLabel("Disk", root)
+        self.network_label = QLabel("Network", root)
+        resource_values.addWidget(self.cpu_label)
         resource_values.addWidget(self.cpu_value_label)
-        resource_values.addWidget(QLabel("Memory", root))
+        resource_values.addWidget(self.memory_label)
         resource_values.addWidget(self.memory_value_label)
-        resource_values.addWidget(QLabel("Disk", root))
+        resource_values.addWidget(self.disk_label)
         resource_values.addWidget(self.disk_value_label)
-        resource_values.addWidget(QLabel("Network", root))
+        resource_values.addWidget(self.network_label)
         resource_values.addWidget(self.network_value_label)
 
         self.process_table = QTableWidget(0, 5, root)
@@ -255,6 +397,9 @@ class MainWindow(QMainWindow):
 
     def set_local_entries(self, entries) -> None:
         self.local_panel.set_entries(entries)
+
+    def set_local_directory_path(self, path) -> None:
+        self.local_panel.path_edit.setText(str(path))
 
     def set_remote_entries(self, entries, path) -> None:
         self.remote_panel.path_edit.setText(str(path or ""))
@@ -323,7 +468,7 @@ class MainWindow(QMainWindow):
         self.site_profiles = list(sites)
         self._site_secret_lookup = secret_lookup or getattr(self.controller, "secret_for_site", None)
         self.connection_bar.site_selector.clear()
-        self.connection_bar.site_selector.addItem("Quick Connect")
+        self.connection_bar.site_selector.addItem(self._text("site.quick"))
         for site in self.site_profiles:
             self.connection_bar.site_selector.addItem(site.name, site.id)
         if self.site_profiles:
@@ -413,7 +558,7 @@ class MainWindow(QMainWindow):
     def _handle_remote_refresh_clicked(self) -> None:
         self.remote_panel.clear_selection()
         remote_path = self._remote_path_from_field()
-        self.controller.list_remote_directory(remote_path)
+        self._load_remote_directory(remote_path)
 
     def _handle_local_path_button_clicked(self) -> None:
         current = self.local_panel.path_edit.text().strip() or str(Path.home())
@@ -431,7 +576,7 @@ class MainWindow(QMainWindow):
             self.show_status("Select a remote directory to open")
             return
         self.remote_panel.clear_selection()
-        self.controller.list_remote_directory(self._remote_path_from_field() / remote_name)
+        self._load_remote_directory(self._remote_path_from_field() / remote_name)
 
     def _handle_local_double_clicked(self, row: int, _column: int) -> None:
         if self.local_panel.is_parent_at(row):
@@ -445,13 +590,13 @@ class MainWindow(QMainWindow):
 
     def _handle_remote_double_clicked(self, row: int, _column: int) -> None:
         if self.remote_panel.is_parent_at(row):
-            self.controller.list_remote_directory(self._remote_parent())
+            self._load_remote_directory(self._remote_parent())
             return
         if not self.remote_panel.is_dir_at(row):
             return
         name = self.remote_panel.name_at(row)
         if name:
-            self.controller.list_remote_directory(self._remote_path_from_field() / name)
+            self._load_remote_directory(self._remote_path_from_field() / name)
 
     def _handle_local_clicked(self, row: int, _column: int) -> None:
         if self.local_panel.is_parent_at(row):
@@ -459,7 +604,24 @@ class MainWindow(QMainWindow):
 
     def _handle_remote_clicked(self, row: int, _column: int) -> None:
         if self.remote_panel.is_parent_at(row):
-            self.controller.list_remote_directory(self._remote_parent())
+            self._load_remote_directory(self._remote_parent())
+
+    def _load_remote_directory(self, path: PurePosixPath) -> None:
+        self._set_remote_loading(True, path)
+        QApplication.processEvents()
+        try:
+            self.controller.list_remote_directory(path)
+        finally:
+            self._set_remote_loading(False, path)
+
+    def _set_remote_loading(self, loading: bool, path: PurePosixPath) -> None:
+        enabled = not loading
+        self.remote_panel.table.setEnabled(enabled)
+        self.remote_panel.refresh_button.setEnabled(enabled)
+        self.remote_panel.path_button.setEnabled(enabled)
+        self.remote_panel.action_button.setEnabled(enabled)
+        if loading:
+            self.show_status(self._text("status.loading_remote", path=path))
 
     def _handle_upload_clicked(self) -> None:
         local_root = Path(self.local_panel.path_edit.text().strip() or Path.home())
@@ -573,8 +735,9 @@ class MainWindow(QMainWindow):
         self.connection_bar.port_edit.setText(str(site.port))
         self.connection_bar.username_edit.setText(site.username)
         self.connection_bar.protocol_selector.setCurrentText(site.protocol.name)
-        self.connection_bar.auth_mode_selector.setCurrentText(
-            "SSH Key" if site.auth_mode == AuthMode.SSH_KEY else "Password"
+        auth_data = "ssh_key" if site.auth_mode == AuthMode.SSH_KEY else "password"
+        self.connection_bar.auth_mode_selector.setCurrentIndex(
+            max(self.connection_bar.auth_mode_selector.findData(auth_data), 0)
         )
         self.connection_bar.ssh_key_path_edit.setText(str(site.ssh_key_path or ""))
         self.local_panel.path_edit.setText(str(site.default_local_path or ""))
@@ -587,7 +750,7 @@ class MainWindow(QMainWindow):
         username = self.connection_bar.username_edit.text().strip()
         auth_mode = (
             AuthMode.SSH_KEY
-            if self.connection_bar.auth_mode_selector.currentText() == "SSH Key"
+            if self.connection_bar.auth_mode_selector.currentData() == "ssh_key"
             else AuthMode.PASSWORD
         )
         ssh_key_text = self.connection_bar.ssh_key_path_edit.text().strip()

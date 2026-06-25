@@ -16,6 +16,7 @@ from filezall_desktop.controller import MainWindowController
 class FakeWindow:
     def __init__(self) -> None:
         self.local_entries = None
+        self.local_path = None
         self.remote_entries = None
         self.monitoring_status = None
         self.resource_snapshot = None
@@ -24,6 +25,9 @@ class FakeWindow:
 
     def set_local_entries(self, entries):
         self.local_entries = entries
+
+    def set_local_directory_path(self, path):
+        self.local_path = path
 
     def set_remote_entries(self, entries, path):
         self.remote_entries = (entries, path)
@@ -185,6 +189,21 @@ def test_controller_loads_local_directory(tmp_path: Path) -> None:
 
     assert window.local_entries == [entry]
     assert window.statuses[-1] == f"Loaded local directory {tmp_path}"
+
+
+def test_controller_updates_local_directory_path_after_load(tmp_path: Path) -> None:
+    window = FakeWindow()
+    nested = tmp_path / "one" / "two" / "three"
+    nested.mkdir(parents=True)
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: FakeSession(),
+    )
+
+    controller.load_local_directory(nested)
+
+    assert window.local_path == nested
 
 
 def test_controller_loads_saved_sites_into_window() -> None:
