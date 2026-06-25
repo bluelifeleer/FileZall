@@ -22,8 +22,15 @@ class TransferQueue:
     def add_task(self, task: TransferTask, items: list[TransferItem]) -> None:
         self.repository.save_task(task, items)
 
-    def list_items(self, status: TransferStatus | None = None) -> list[TransferItem]:
-        return self.repository.list_all_items(status=status)
+    def list_items(
+        self,
+        status: TransferStatus | None = None,
+        server_id: str | None = None,
+    ) -> list[TransferItem]:
+        items = self.repository.list_all_items(status=status)
+        if server_id is not None:
+            return [item for item in items if item.server_id == server_id]
+        return items
 
     def pause_task(self, task_id: str) -> None:
         for item in self.repository.list_items(task_id):

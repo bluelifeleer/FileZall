@@ -84,6 +84,26 @@ def test_transfer_queue_recovers_unfinished_items_after_restart(tmp_path: Path) 
     assert restarted.recover_pending() == [item]
 
 
+def test_transfer_queue_lists_items_for_one_server(tmp_path: Path) -> None:
+    queue, _client = _queue(tmp_path)
+    task_1 = _upload_task(tmp_path)
+    task_2 = TransferTask(
+        id="task-2",
+        server_id="site-2",
+        direction=Direction.UPLOAD,
+        source_path=tmp_path,
+        destination_path=PurePosixPath("/home/deploy"),
+        protocol=Protocol.SFTP,
+        conflict_policy=ConflictPolicy.OVERWRITE,
+    )
+    item_1 = task_1.create_item("item-1", PurePosixPath("app.zip"), size_bytes=6)
+    item_2 = task_2.create_item("item-2", PurePosixPath("other.zip"), size_bytes=6)
+    queue.add_task(task_1, [item_1])
+    queue.add_task(task_2, [item_2])
+
+    assert queue.list_items(server_id="site-1") == [item_1]
+
+
 def _queue(tmp_path: Path) -> tuple[TransferQueue, FakeRemoteClient]:
     database = tmp_path / "filezall.sqlite3"
     initialize_database(database)
