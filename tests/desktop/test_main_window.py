@@ -1,9 +1,18 @@
 from pathlib import Path, PurePosixPath
+from datetime import UTC, datetime
 
 from filezall_desktop.main_window import MainWindow
 from PySide6.QtCore import Qt
 
-from filezall_core.models import AuthMode, Direction, Protocol, SiteProfile, TransferItem, TransferStatus
+from filezall_core.models import (
+    AuthMode,
+    Direction,
+    Protocol,
+    RemoteFileEntry,
+    SiteProfile,
+    TransferItem,
+    TransferStatus,
+)
 from filezall_core.resource_models import (
     CpuStats,
     DiskUsage,
@@ -29,6 +38,7 @@ class FakeController:
         self.retried = []
         self.resource_refreshes = 0
         self.process_details = []
+        self.agent_installs = 0
 
     def load_saved_sites(self) -> None:
         self.loaded_sites = True
@@ -66,6 +76,9 @@ class FakeController:
     def show_process_detail(self, pid) -> None:
         self.process_details.append(pid)
 
+    def install_agent(self) -> None:
+        self.agent_installs += 1
+
 
 def test_main_window_has_filezall_title(qtbot) -> None:
     window = MainWindow()
@@ -89,11 +102,99 @@ def test_main_window_exposes_connection_and_file_panels(qtbot) -> None:
     ] == ["SFTP", "FTP", "FTPS"]
     assert window.connection_bar.secret_edit.placeholderText() == "Password / passphrase"
     assert window.connection_bar.ssh_key_path_edit.placeholderText() == "SSH key path"
+    assert window.connection_bar.install_agent_button.text() == "Install Agent"
     assert window.local_panel.title.text() == "Local Files"
     assert window.remote_panel.title.text() == "Remote Files"
     assert window.local_panel.action_button.text() == "Upload"
     assert window.remote_panel.action_button.text() == "Download"
+    assert window.local_panel.path_button.maximumWidth() <= 32
+    assert window.remote_panel.path_button.maximumWidth() <= 32
     assert window.transfer_table.columnCount() == 5
+
+
+def test_main_window_install_agent_button_confirms_before_controller_call(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(
+        controller=controller,
+        agent_install_confirmer=lambda _parent: True,
+    )
+    qtbot.addWidget(window)
+
+    qtbot.mouseClick(window.connection_bar.install_agent_button, Qt.MouseButton.LeftButton)
+
+    assert controller.agent_installs == 1
+
+
+def test_main_window_uses_draggable_splitters_for_major_regions(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window.main_splitter.count() == 3
+    assert window.file_splitter.count() == 2
+
+
+def test_main_window_has_help_menu_actions(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    menus = {action.text(): action.menu() for action in window.menuBar().actions()}
+    assert "Help" in menus
+    help_actions = {action.text(): action for action in window.help_menu.actions()}
+
+    assert set(help_actions) == {"About FileZall", "Version", "Protocols"}
+    assert help_actions["About FileZall"].statusTip()
+    assert help_actions["Version"].statusTip()
+    assert help_actions["Protocols"].statusTip()
+
+
+def test_main_window_local_path_button_chooses_and_loads_directory(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(
+        controller=controller,
+        local_directory_chooser=lambda _parent, _current: str(tmp_path),
+    )
+    qtbot.addWidget(window)
+
+    qtbot.mouseClick(window.local_panel.path_button, Qt.MouseButton.LeftButton)
+
+    assert window.local_panel.path_edit.text() == str(tmp_path)
+    assert controller.local_refreshes == [tmp_path]
+
+
+def test_main_window_remote_path_button_enters_selected_directory(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.remote_panel.set_entries(
+        [
+            RemoteFileEntry(
+                path=PurePosixPath("/home/deploy/releases"),
+                name="releases",
+                is_dir=True,
+                size_bytes=0,
+                modified_time=datetime(2026, 6, 25, tzinfo=UTC),
+            )
+        ]
+    )
+    window.remote_panel.table.selectRow(0)
+
+    qtbot.mouseClick(window.remote_panel.path_button, Qt.MouseButton.LeftButton)
+
+    assert [str(path) for path in controller.remote_refreshes] == ["/home/deploy/releases"]
+
+
+def test_main_window_refresh_buttons_clear_current_selection(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.local_panel.path_edit.setText(str(tmp_path))
+    window.local_panel.set_placeholder_row("app.txt")
+    window.local_panel.table.selectRow(0)
+
+    qtbot.mouseClick(window.local_panel.refresh_button, Qt.MouseButton.LeftButton)
+
+    assert window.local_panel.table.selectionModel().selectedRows() == []
 
 
 def test_main_window_loads_sites_and_connects_button_to_controller(qtbot) -> None:
@@ -180,6 +281,8 @@ def test_main_window_refresh_upload_and_download_buttons_call_controller(qtbot, 
 
     qtbot.mouseClick(window.local_panel.refresh_button, Qt.MouseButton.LeftButton)
     qtbot.mouseClick(window.remote_panel.refresh_button, Qt.MouseButton.LeftButton)
+    window.local_panel.table.selectRow(0)
+    window.remote_panel.table.selectRow(0)
     qtbot.mouseClick(window.local_panel.action_button, Qt.MouseButton.LeftButton)
     qtbot.mouseClick(window.remote_panel.action_button, Qt.MouseButton.LeftButton)
 

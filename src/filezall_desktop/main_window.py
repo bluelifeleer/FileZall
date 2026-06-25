@@ -4,9 +4,12 @@ from pathlib import Path, PurePosixPath
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QStatusBar,
@@ -17,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from filezall_core import __version__
 from filezall_core.models import AuthMode, Protocol, SiteProfile, TransferItem
 from filezall_core.resource_models import ProcessDetail, ResourceSnapshot
 from filezall_desktop.assets import app_icon
@@ -31,11 +35,16 @@ class MainWindow(QMainWindow):
         site_repository=None,
         credential_service=None,
         queue_service=None,
+        local_directory_chooser=None,
+        agent_install_confirmer=None,
     ) -> None:
         super().__init__()
+        self._local_directory_chooser = local_directory_chooser or _choose_local_directory
+        self._agent_install_confirmer = agent_install_confirmer or _confirm_agent_install
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
+        self._build_help_menu()
         self._build_toolbar()
         self._build_central_layout()
         self.setStatusBar(QStatusBar(self))
@@ -49,6 +58,36 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self.controller.load_saved_sites()
 
+    def _build_help_menu(self) -> None:
+        self.help_menu = QMenu("Help", self)
+        self.menuBar().addMenu(self.help_menu)
+        self.about_action = self.help_menu.addAction("About FileZall")
+        self.about_action.setStatusTip("Show FileZall product information")
+        self.about_action.triggered.connect(self._show_about)
+        self.version_action = self.help_menu.addAction("Version")
+        self.version_action.setStatusTip("Show the current FileZall version")
+        self.version_action.triggered.connect(self._show_version)
+        self.protocols_action = self.help_menu.addAction("Protocols")
+        self.protocols_action.setStatusTip("Show supported transfer protocols")
+        self.protocols_action.triggered.connect(self._show_protocols)
+
+    def _show_about(self) -> None:
+        QMessageBox.information(
+            self,
+            "About FileZall",
+            "FileZall is a desktop file transfer client with queued resumable transfers and optional Linux Agent acceleration.",
+        )
+
+    def _show_version(self) -> None:
+        QMessageBox.information(self, "FileZall Version", f"FileZall {__version__}")
+
+    def _show_protocols(self) -> None:
+        QMessageBox.information(
+            self,
+            "Supported Protocols",
+            "SFTP, FTP, FTPS, and FileZall Agent HTTP transfers are supported.",
+        )
+
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Connection")
         toolbar.setMovable(False)
@@ -60,16 +99,19 @@ class MainWindow(QMainWindow):
         root = QWidget(self)
         root_layout = QVBoxLayout(root)
 
-        file_splitter = QSplitter(root)
-        self.local_panel = FilePanel("Local Files", "Upload", self)
-        self.remote_panel = FilePanel("Remote Files", "Download", self)
+        self.main_splitter = QSplitter(Qt.Orientation.Vertical, root)
+        self.file_splitter = QSplitter(Qt.Orientation.Horizontal, self.main_splitter)
+        self.local_panel = FilePanel("Local Files", "Upload", "...", self)
+        self.remote_panel = FilePanel("Remote Files", "Download", ">", self)
         self.local_panel.set_placeholder_row("No directory loaded")
         self.remote_panel.set_placeholder_row("Not connected")
-        file_splitter.addWidget(self.local_panel)
-        file_splitter.addWidget(self.remote_panel)
-        file_splitter.setSizes([640, 640])
+        self.file_splitter.addWidget(self.local_panel)
+        self.file_splitter.addWidget(self.remote_panel)
+        self.file_splitter.setSizes([640, 640])
 
-        self.transfer_table = QTableWidget(0, 5, root)
+        transfer_widget = QWidget(self.main_splitter)
+        transfer_layout = QVBoxLayout(transfer_widget)
+        self.transfer_table = QTableWidget(0, 5, transfer_widget)
         self.transfer_table.setHorizontalHeaderLabels(
             ["Server", "Direction", "File", "Progress", "Status"]
         )
@@ -84,7 +126,14 @@ class MainWindow(QMainWindow):
         transfer_actions.addWidget(self.resume_transfer_button)
         transfer_actions.addWidget(self.cancel_transfer_button)
         transfer_actions.addWidget(self.retry_transfer_button)
-        self.monitoring_status_label = QLabel("", root)
+        self.monitoring_status_label = QLabel("", transfer_widget)
+
+        transfer_layout.addLayout(transfer_actions, stretch=0)
+        transfer_layout.addWidget(self.monitoring_status_label, stretch=0)
+        transfer_layout.addWidget(self.transfer_table, stretch=1)
+
+        resource_widget = QWidget(self.main_splitter)
+        resource_layout = QVBoxLayout(resource_widget)
         resource_actions = QHBoxLayout()
         self.resource_refresh_button = QPushButton("Refresh Resources", root)
         self.process_detail_button = QPushButton("Process Detail", root)
@@ -111,14 +160,16 @@ class MainWindow(QMainWindow):
         self.process_table.setHorizontalHeaderLabels(["PID", "User", "Name", "CPU", "Memory"])
         self.process_detail_label = QLabel("", root)
 
-        root_layout.addWidget(file_splitter, stretch=4)
-        root_layout.addLayout(transfer_actions, stretch=0)
-        root_layout.addWidget(self.monitoring_status_label, stretch=0)
-        root_layout.addWidget(self.transfer_table, stretch=1)
-        root_layout.addLayout(resource_actions, stretch=0)
-        root_layout.addLayout(resource_values, stretch=0)
-        root_layout.addWidget(self.process_table, stretch=1)
-        root_layout.addWidget(self.process_detail_label, stretch=0)
+        resource_layout.addLayout(resource_actions, stretch=0)
+        resource_layout.addLayout(resource_values, stretch=0)
+        resource_layout.addWidget(self.process_table, stretch=1)
+        resource_layout.addWidget(self.process_detail_label, stretch=0)
+
+        self.main_splitter.addWidget(self.file_splitter)
+        self.main_splitter.addWidget(transfer_widget)
+        self.main_splitter.addWidget(resource_widget)
+        self.main_splitter.setSizes([420, 190, 190])
+        root_layout.addWidget(self.main_splitter)
         self.setCentralWidget(root)
 
     def set_local_entries(self, entries) -> None:
@@ -179,6 +230,9 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         self.connection_bar.connect_button.clicked.connect(self._handle_connect_clicked)
+        self.connection_bar.install_agent_button.clicked.connect(self._handle_install_agent_clicked)
+        self.local_panel.path_button.clicked.connect(self._handle_local_path_button_clicked)
+        self.remote_panel.path_button.clicked.connect(self._handle_remote_path_button_clicked)
         self.local_panel.refresh_button.clicked.connect(self._handle_local_refresh_clicked)
         self.remote_panel.refresh_button.clicked.connect(self._handle_remote_refresh_clicked)
         self.local_panel.action_button.clicked.connect(self._handle_upload_clicked)
@@ -194,13 +248,37 @@ class MainWindow(QMainWindow):
         site = self._selected_saved_site()
         self.controller.connect(site or self._site_from_fields(), None if site else self._secret_from_fields())
 
+    def _handle_install_agent_clicked(self) -> None:
+        if self._agent_install_confirmer(self):
+            self.controller.install_agent()
+
     def _handle_local_refresh_clicked(self) -> None:
+        self.local_panel.clear_selection()
         path_text = self.local_panel.path_edit.text().strip()
         self.controller.load_local_directory(Path(path_text) if path_text else Path.home())
 
     def _handle_remote_refresh_clicked(self) -> None:
+        self.remote_panel.clear_selection()
         remote_path = self._remote_path_from_field()
         self.controller.list_remote_directory(remote_path)
+
+    def _handle_local_path_button_clicked(self) -> None:
+        current = self.local_panel.path_edit.text().strip() or str(Path.home())
+        selected = self._local_directory_chooser(self, current)
+        if not selected:
+            return
+        path = Path(selected)
+        self.local_panel.path_edit.setText(str(path))
+        self.local_panel.clear_selection()
+        self.controller.load_local_directory(path)
+
+    def _handle_remote_path_button_clicked(self) -> None:
+        remote_name = self.remote_panel.selected_name()
+        if not remote_name or not self.remote_panel.selected_is_dir():
+            self.show_status("Select a remote directory to open")
+            return
+        self.remote_panel.clear_selection()
+        self.controller.list_remote_directory(self._remote_path_from_field() / remote_name)
 
     def _handle_upload_clicked(self) -> None:
         local_name = self.local_panel.selected_name()
@@ -316,3 +394,18 @@ def _protocol_from_label(label: str) -> Protocol:
         "FTPS": Protocol.FTPS,
     }
     return mapping.get(label, Protocol.SFTP)
+
+
+def _choose_local_directory(parent, current: str) -> str:
+    return QFileDialog.getExistingDirectory(parent, "Choose Local Directory", current)
+
+
+def _confirm_agent_install(parent) -> bool:
+    return (
+        QMessageBox.question(
+            parent,
+            "Install FileZall Agent",
+            "Install and start FileZall Agent on the connected server?",
+        )
+        == QMessageBox.StandardButton.Yes
+    )

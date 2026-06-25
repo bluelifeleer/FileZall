@@ -22,6 +22,7 @@ class MainWindowController:
         credential_service=None,
         queue_service=None,
         resource_monitor_service=None,
+        agent_install_service=None,
     ) -> None:
         self._window = window
         self._local_lister = local_lister
@@ -32,8 +33,10 @@ class MainWindowController:
         self._credential_service = credential_service
         self._queue_service = queue_service
         self._resource_monitor_service = resource_monitor_service
+        self._agent_install_service = agent_install_service
         self._session: RemoteSession | None = None
         self._connected_site: SiteProfile | None = None
+        self._connected_secret: str | None = None
 
     def load_saved_sites(self) -> None:
         if self._site_repository is None:
@@ -51,6 +54,7 @@ class MainWindowController:
         password = password or self._secret_for_site(site)
         self._session = self._session_factory(site)
         self._connected_site = site
+        self._connected_secret = password
         entries = self._session.connect_and_list_default(password=password)
         self._window.set_remote_entries(entries, self._session.current_remote_path)
         if hasattr(self._window, "set_monitoring_status"):
@@ -103,6 +107,21 @@ class MainWindowController:
         if detail is not None:
             self._window.set_process_detail(detail)
             self._window.show_status(f"Loaded process detail {pid}")
+
+    def install_agent(self) -> None:
+        if self._agent_install_service is None:
+            self._window.show_status("Agent installation is not configured.")
+            return
+        result = self._agent_install_service.install(
+            self._require_connected_site(),
+            self._connected_secret,
+        )
+        if result.success and result.verified:
+            self._window.show_status("Agent installed and verified")
+        elif result.success:
+            self._window.show_status("Agent installed")
+        else:
+            self._window.show_status("Agent installation failed")
 
     def _require_session(self) -> RemoteSession:
         if self._session is None:

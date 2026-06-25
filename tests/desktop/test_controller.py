@@ -1,6 +1,7 @@
 from pathlib import Path, PurePosixPath
 
 from filezall_core.models import AuthMode, LocalFileEntry, Protocol, RemoteFileEntry, SiteProfile
+from filezall_core.agent_deployment import AgentInstallResult
 from filezall_core.resource_models import (
     CpuStats,
     MemoryStats,
@@ -144,6 +145,16 @@ class FakeResourceMonitor:
 class UnavailableResourceMonitor:
     def snapshot(self, site):
         raise ResourceMonitoringUnavailable("Resource monitoring requires SSH or FileZall Agent.")
+
+
+class FakeAgentInstallService:
+    def __init__(self, result: AgentInstallResult) -> None:
+        self.result = result
+        self.calls = []
+
+    def install(self, site, password):
+        self.calls.append((site, password))
+        return self.result
 
 
 def test_controller_loads_local_directory(tmp_path: Path) -> None:
@@ -345,3 +356,29 @@ def test_controller_reports_resource_monitoring_unavailable() -> None:
     controller.refresh_resources()
 
     assert window.statuses[-1] == "Resource monitoring requires SSH or FileZall Agent."
+
+
+def test_controller_installs_agent_for_connected_site() -> None:
+    window = FakeWindow()
+    service = FakeAgentInstallService(AgentInstallResult(success=True, commands_run=8, verified=True))
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: FakeSession(),
+        agent_install_service=service,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+    controller.install_agent()
+
+    assert service.calls == [(site, "secret")]
+    assert window.statuses[-1] == "Agent installed and verified"
