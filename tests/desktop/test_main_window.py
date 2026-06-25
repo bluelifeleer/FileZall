@@ -96,6 +96,12 @@ class FakeController:
         self.agent_installs += 1
 
 
+class FailingConnectController(FakeController):
+    def connect(self, site, password=None) -> None:
+        super().connect(site, password)
+        raise RuntimeError("connect failed")
+
+
 def test_main_window_has_filezall_title(qtbot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
@@ -313,6 +319,22 @@ def test_main_window_loads_sites_and_connects_button_to_controller(qtbot) -> Non
     assert site.username == "deploy"
     assert str(site.default_remote_path) == "/var/www"
     assert password == "secret"
+    assert window.connection_state_label.text() == "Connected"
+    assert "green" in window.connection_state_label.styleSheet()
+
+
+def test_main_window_connection_failure_shows_red_status(qtbot) -> None:
+    controller = FailingConnectController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.connection_bar.host_edit.setText("example.com")
+    window.connection_bar.username_edit.setText("deploy")
+
+    qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
+
+    assert window.connection_state_label.text() == "Failed"
+    assert "red" in window.connection_state_label.styleSheet()
+    assert window.connection_bar.connect_button.isEnabled()
 
 
 def test_main_window_uses_selected_ftp_protocol_when_connecting(qtbot) -> None:

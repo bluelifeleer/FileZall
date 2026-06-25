@@ -48,6 +48,9 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_central_layout()
         self.setStatusBar(QStatusBar(self))
+        self.connection_state_label = QLabel("Idle", self)
+        self.statusBar().addPermanentWidget(self.connection_state_label)
+        self._set_connection_state("Idle", "grey")
         self.statusBar().showMessage("Ready")
         self.controller = controller or MainWindowController(
             self,
@@ -262,7 +265,17 @@ class MainWindow(QMainWindow):
 
     def _handle_connect_clicked(self) -> None:
         site = self._selected_saved_site()
-        self.controller.connect(site or self._site_from_fields(), None if site else self._secret_from_fields())
+        self._set_connection_state("Connecting", "goldenrod")
+        self.connection_bar.connect_button.setEnabled(False)
+        try:
+            self.controller.connect(site or self._site_from_fields(), None if site else self._secret_from_fields())
+        except Exception as exc:
+            self._set_connection_state("Failed", "red")
+            self.connection_bar.connect_button.setEnabled(True)
+            self.show_status(str(exc))
+            return
+        self._set_connection_state("Connected", "green")
+        self.connection_bar.connect_button.setEnabled(True)
 
     def _handle_install_agent_clicked(self) -> None:
         if self._agent_install_confirmer(self):
@@ -380,6 +393,10 @@ class MainWindow(QMainWindow):
     def _handle_process_detail_clicked(self) -> None:
         if pid := self._selected_process_id():
             self.controller.show_process_detail(pid)
+
+    def _set_connection_state(self, text: str, color: str) -> None:
+        self.connection_state_label.setText(text)
+        self.connection_state_label.setStyleSheet(f"color: {color}; font-weight: 600;")
 
     def _site_from_fields(self) -> SiteProfile:
         host = self.connection_bar.host_edit.text().strip()
