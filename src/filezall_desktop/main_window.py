@@ -36,9 +36,11 @@ class MainWindow(QMainWindow):
         credential_service=None,
         queue_service=None,
         local_directory_chooser=None,
+        agent_install_confirmer=None,
     ) -> None:
         super().__init__()
         self._local_directory_chooser = local_directory_chooser or _choose_local_directory
+        self._agent_install_confirmer = agent_install_confirmer or _confirm_agent_install
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
@@ -228,6 +230,7 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         self.connection_bar.connect_button.clicked.connect(self._handle_connect_clicked)
+        self.connection_bar.install_agent_button.clicked.connect(self._handle_install_agent_clicked)
         self.local_panel.path_button.clicked.connect(self._handle_local_path_button_clicked)
         self.remote_panel.path_button.clicked.connect(self._handle_remote_path_button_clicked)
         self.local_panel.refresh_button.clicked.connect(self._handle_local_refresh_clicked)
@@ -244,6 +247,10 @@ class MainWindow(QMainWindow):
     def _handle_connect_clicked(self) -> None:
         site = self._selected_saved_site()
         self.controller.connect(site or self._site_from_fields(), None if site else self._secret_from_fields())
+
+    def _handle_install_agent_clicked(self) -> None:
+        if self._agent_install_confirmer(self):
+            self.controller.install_agent()
 
     def _handle_local_refresh_clicked(self) -> None:
         self.local_panel.clear_selection()
@@ -391,3 +398,14 @@ def _protocol_from_label(label: str) -> Protocol:
 
 def _choose_local_directory(parent, current: str) -> str:
     return QFileDialog.getExistingDirectory(parent, "Choose Local Directory", current)
+
+
+def _confirm_agent_install(parent) -> bool:
+    return (
+        QMessageBox.question(
+            parent,
+            "Install FileZall Agent",
+            "Install and start FileZall Agent on the connected server?",
+        )
+        == QMessageBox.StandardButton.Yes
+    )

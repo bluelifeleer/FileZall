@@ -38,6 +38,7 @@ class FakeController:
         self.retried = []
         self.resource_refreshes = 0
         self.process_details = []
+        self.agent_installs = 0
 
     def load_saved_sites(self) -> None:
         self.loaded_sites = True
@@ -75,6 +76,9 @@ class FakeController:
     def show_process_detail(self, pid) -> None:
         self.process_details.append(pid)
 
+    def install_agent(self) -> None:
+        self.agent_installs += 1
+
 
 def test_main_window_has_filezall_title(qtbot) -> None:
     window = MainWindow()
@@ -98,6 +102,7 @@ def test_main_window_exposes_connection_and_file_panels(qtbot) -> None:
     ] == ["SFTP", "FTP", "FTPS"]
     assert window.connection_bar.secret_edit.placeholderText() == "Password / passphrase"
     assert window.connection_bar.ssh_key_path_edit.placeholderText() == "SSH key path"
+    assert window.connection_bar.install_agent_button.text() == "Install Agent"
     assert window.local_panel.title.text() == "Local Files"
     assert window.remote_panel.title.text() == "Remote Files"
     assert window.local_panel.action_button.text() == "Upload"
@@ -105,6 +110,19 @@ def test_main_window_exposes_connection_and_file_panels(qtbot) -> None:
     assert window.local_panel.path_button.maximumWidth() <= 32
     assert window.remote_panel.path_button.maximumWidth() <= 32
     assert window.transfer_table.columnCount() == 5
+
+
+def test_main_window_install_agent_button_confirms_before_controller_call(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(
+        controller=controller,
+        agent_install_confirmer=lambda _parent: True,
+    )
+    qtbot.addWidget(window)
+
+    qtbot.mouseClick(window.connection_bar.install_agent_button, Qt.MouseButton.LeftButton)
+
+    assert controller.agent_installs == 1
 
 
 def test_main_window_uses_draggable_splitters_for_major_regions(qtbot) -> None:

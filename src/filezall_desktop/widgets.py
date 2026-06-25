@@ -40,6 +40,7 @@ class ConnectionBar(QWidget):
         self.protocol_selector.addItems(["SFTP", "FTP", "FTPS"])
         self.connect_button = QPushButton("Connect", self)
         self.disconnect_button = QPushButton("Disconnect", self)
+        self.install_agent_button = QPushButton("Install Agent", self)
 
         layout.addWidget(QLabel("Site", self))
         layout.addWidget(self.site_selector)
@@ -52,6 +53,7 @@ class ConnectionBar(QWidget):
         layout.addWidget(self.protocol_selector)
         layout.addWidget(self.connect_button)
         layout.addWidget(self.disconnect_button)
+        layout.addWidget(self.install_agent_button)
 
 
 class FilePanel(QWidget):
