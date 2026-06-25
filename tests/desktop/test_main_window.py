@@ -2,6 +2,7 @@ from pathlib import Path, PurePosixPath
 from datetime import UTC, datetime
 
 from filezall_desktop.main_window import MainWindow
+from filezall_desktop.theme import hover_color_for_theme
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView, QSplitter, QTableWidgetSelectionRange
 
@@ -187,6 +188,7 @@ def test_file_panels_use_full_row_selection_for_actions(qtbot) -> None:
     assert window.local_panel.table.selectionMode() == QAbstractItemView.SelectionMode.ExtendedSelection
     assert window.local_panel.table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
     assert window.local_panel.table.hasMouseTracking()
+    assert window.local_panel.table.full_row_hover_color == hover_color_for_theme(window.current_theme)
     window.local_panel.table.set_hovered_row(1)
     assert window.local_panel.table.hovered_row == 1
 
@@ -365,6 +367,40 @@ def test_main_window_has_help_menu_actions(qtbot) -> None:
     assert help_actions["About FileZall"].statusTip()
     assert help_actions["Version"].statusTip()
     assert help_actions["Protocols"].statusTip()
+
+
+def test_main_window_has_theme_menu_actions(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    menus = {action.text(): action.menu() for action in window.menuBar().actions()}
+    assert "Theme" in menus
+    theme_actions = {action.text(): action for action in window.theme_menu.actions()}
+
+    assert set(theme_actions) == {"System", "Light", "Dark"}
+    assert window.system_theme_action.isCheckable()
+    assert window.light_theme_action.isCheckable()
+    assert window.dark_theme_action.isCheckable()
+    assert window.system_theme_action.isChecked()
+
+
+def test_main_window_applies_theme_actions(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    window.dark_theme_action.trigger()
+    dark_stylesheet = window.styleSheet()
+
+    assert window.current_theme == "dark"
+    assert window.dark_theme_action.isChecked()
+    assert "background-color: #111827" in dark_stylesheet
+
+    window.light_theme_action.trigger()
+
+    assert window.current_theme == "light"
+    assert window.light_theme_action.isChecked()
+    assert window.styleSheet() != dark_stylesheet
+    assert "background-color: #f5f7fb" in window.styleSheet()
 
 
 def test_main_window_displays_and_exports_logs(qtbot, tmp_path) -> None:
