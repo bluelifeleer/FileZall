@@ -115,6 +115,20 @@ def test_main_window_uses_draggable_splitters_for_major_regions(qtbot) -> None:
     assert window.file_splitter.count() == 2
 
 
+def test_main_window_has_help_menu_actions(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    menus = {action.text(): action.menu() for action in window.menuBar().actions()}
+    assert "Help" in menus
+    help_actions = {action.text(): action for action in window.help_menu.actions()}
+
+    assert set(help_actions) == {"About FileZall", "Version", "Protocols"}
+    assert help_actions["About FileZall"].statusTip()
+    assert help_actions["Version"].statusTip()
+    assert help_actions["Protocols"].statusTip()
+
+
 def test_main_window_local_path_button_chooses_and_loads_directory(qtbot, tmp_path) -> None:
     controller = FakeController()
     window = MainWindow(

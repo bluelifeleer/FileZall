@@ -8,6 +8,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QStatusBar,
@@ -18,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from filezall_core import __version__
 from filezall_core.models import AuthMode, Protocol, SiteProfile, TransferItem
 from filezall_core.resource_models import ProcessDetail, ResourceSnapshot
 from filezall_desktop.assets import app_icon
@@ -39,6 +42,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
+        self._build_help_menu()
         self._build_toolbar()
         self._build_central_layout()
         self.setStatusBar(QStatusBar(self))
@@ -51,6 +55,36 @@ class MainWindow(QMainWindow):
         )
         self._connect_signals()
         self.controller.load_saved_sites()
+
+    def _build_help_menu(self) -> None:
+        self.help_menu = QMenu("Help", self)
+        self.menuBar().addMenu(self.help_menu)
+        self.about_action = self.help_menu.addAction("About FileZall")
+        self.about_action.setStatusTip("Show FileZall product information")
+        self.about_action.triggered.connect(self._show_about)
+        self.version_action = self.help_menu.addAction("Version")
+        self.version_action.setStatusTip("Show the current FileZall version")
+        self.version_action.triggered.connect(self._show_version)
+        self.protocols_action = self.help_menu.addAction("Protocols")
+        self.protocols_action.setStatusTip("Show supported transfer protocols")
+        self.protocols_action.triggered.connect(self._show_protocols)
+
+    def _show_about(self) -> None:
+        QMessageBox.information(
+            self,
+            "About FileZall",
+            "FileZall is a desktop file transfer client with queued resumable transfers and optional Linux Agent acceleration.",
+        )
+
+    def _show_version(self) -> None:
+        QMessageBox.information(self, "FileZall Version", f"FileZall {__version__}")
+
+    def _show_protocols(self) -> None:
+        QMessageBox.information(
+            self,
+            "Supported Protocols",
+            "SFTP, FTP, FTPS, and FileZall Agent HTTP transfers are supported.",
+        )
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Connection")
