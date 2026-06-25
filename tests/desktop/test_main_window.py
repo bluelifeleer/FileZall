@@ -49,6 +49,7 @@ class FakeController:
         self.resource_refreshes = 0
         self.process_details = []
         self.agent_installs = 0
+        self.agent_uninstalls = 0
         self.heartbeat_results = []
 
     def load_saved_sites(self) -> None:
@@ -101,6 +102,9 @@ class FakeController:
 
     def install_agent(self) -> None:
         self.agent_installs += 1
+
+    def uninstall_agent(self) -> None:
+        self.agent_uninstalls += 1
 
     def secret_for_site(self, site):
         return None
@@ -161,6 +165,7 @@ def test_main_window_exposes_connection_and_file_panels(qtbot) -> None:
     assert window.local_panel.transfer_action.text() == "Upload"
     assert window.remote_panel.transfer_action.text() == "Download"
     assert window.local_panel.path_button.maximumWidth() <= 32
+    assert window.local_panel.path_button.text() == "..."
     assert window.remote_panel.path_button.maximumWidth() <= 32
     assert window.transfer_table.columnCount() == 5
 
@@ -176,6 +181,22 @@ def test_main_window_install_agent_button_confirms_before_controller_call(qtbot)
     qtbot.mouseClick(window.connection_bar.install_agent_button, Qt.MouseButton.LeftButton)
 
     assert controller.agent_installs == 1
+
+
+def test_main_window_logs_agent_install_steps(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(
+        controller=controller,
+        agent_install_confirmer=lambda _parent: True,
+    )
+    qtbot.addWidget(window)
+
+    qtbot.mouseClick(window.connection_bar.install_agent_button, Qt.MouseButton.LeftButton)
+
+    logs = window.log_view.toPlainText()
+    assert "Agent install requested" in logs
+    assert "Agent install confirmed" in logs
+    assert "Agent install command finished" in logs
 
 
 def test_main_window_uses_draggable_splitters_for_major_regions(qtbot) -> None:
@@ -210,6 +231,7 @@ def test_file_panels_use_full_row_selection_for_actions(qtbot) -> None:
     assert window.local_panel.table.hasMouseTracking()
     assert not window.local_panel.table.showGrid()
     assert window.local_panel.table.itemDelegate().uses_full_row_activity
+    assert window.local_panel.table.itemDelegate().clears_cell_selection_paint
     assert window.local_panel.table.full_row_hover_color == hover_color_for_theme(window.current_theme)
     window.local_panel.table.set_hovered_row(1)
     assert window.local_panel.table.hovered_row == 1
@@ -795,6 +817,26 @@ def test_resource_agent_install_button_uses_confirmed_install_flow(qtbot) -> Non
     qtbot.mouseClick(window.resource_install_agent_button, Qt.MouseButton.LeftButton)
 
     assert controller.agent_installs == 1
+
+
+def test_resource_agent_uninstall_button_uses_confirmed_flow_and_logs(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(
+        controller=controller,
+        agent_install_confirmer=lambda _parent: True,
+    )
+    qtbot.addWidget(window)
+    window.set_monitoring_status("Resource monitoring requires SSH or FileZall Agent.")
+
+    assert not window.resource_uninstall_agent_button.isHidden()
+
+    qtbot.mouseClick(window.resource_uninstall_agent_button, Qt.MouseButton.LeftButton)
+
+    assert controller.agent_uninstalls == 1
+    logs = window.log_view.toPlainText()
+    assert "Agent uninstall requested" in logs
+    assert "Agent uninstall confirmed" in logs
+    assert "Agent uninstall command finished" in logs
 
 
 def test_main_window_connects_selected_saved_site_with_stored_credential_ref(qtbot) -> None:

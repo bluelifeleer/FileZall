@@ -137,6 +137,7 @@ class HoverRowTableWidget(QTableWidget):
 
 class HoverRowDelegate(QStyledItemDelegate):
     uses_full_row_activity = True
+    clears_cell_selection_paint = True
 
     def paint(self, painter, option, index) -> None:
         table = self.parent()
@@ -145,13 +146,20 @@ class HoverRowDelegate(QStyledItemDelegate):
             or option.state & QStyle.StateFlag.State_Selected
         ):
             option = QStyleOptionViewItem(option)
+            self.initStyleOption(option, index)
+            painter.save()
+            painter.fillRect(
+                option.rect,
+                QColor(
+                    table.full_row_hover_color
+                    if index.row() == table.hovered_row
+                    else table.full_row_selected_color
+                ),
+            )
+            painter.restore()
             option.state &= ~QStyle.StateFlag.State_Selected
             option.state &= ~QStyle.StateFlag.State_HasFocus
-            option.backgroundBrush = QColor(
-                table.full_row_hover_color
-                if index.row() == table.hovered_row
-                else table.full_row_selected_color
-            )
+            option.showDecorationSelected = False
         super().paint(painter, option, index)
 
 
@@ -225,6 +233,7 @@ class FilePanel(QWidget):
         refresh_label: str,
         action_label: str,
         transfer_label: str,
+        path_button_text: str,
         choose_directory_tooltip: str,
         headers: list[str],
         parent_label: str,
@@ -238,6 +247,7 @@ class FilePanel(QWidget):
         self.title.setText(title)
         self.refresh_button.setText(refresh_label)
         self.action_button.setText(action_label)
+        self.path_button.setText(path_button_text)
         self.path_button.setToolTip(choose_directory_tooltip)
         self.table.setHorizontalHeaderLabels(headers)
         self._transfer_action_label = transfer_label

@@ -247,12 +247,14 @@ class MainWindow(QMainWindow):
                 title=self._text("files.local"),
                 action_label=self._text("files.upload"),
                 transfer_label=self._text("files.upload"),
+                path_button_text="...",
                 **common,
             )
             self.remote_panel.set_texts(
                 title=self._text("files.remote"),
                 action_label=self._text("files.download"),
                 transfer_label=self._text("files.download"),
+                path_button_text=">",
                 **common,
             )
 
@@ -269,6 +271,7 @@ class MainWindow(QMainWindow):
             self.resource_refresh_button.setText(self._text("resource.refresh"))
             self.process_detail_button.setText(self._text("resource.show_process"))
             self.resource_install_agent_button.setText(self._text("resource.install_agent"))
+            self.resource_uninstall_agent_button.setText(self._text("resource.uninstall_agent"))
             self.resource_monitor_label.setText(self._text("resource.monitor"))
             self.cpu_label.setText(self._text("resource.cpu"))
             self.memory_label.setText(self._text("resource.memory"))
@@ -352,12 +355,15 @@ class MainWindow(QMainWindow):
         self.process_detail_button = QPushButton("Process Detail", root)
         self.agent_status_label = QLabel("", resource_widget)
         self.resource_install_agent_button = QPushButton("Install Agent", resource_widget)
+        self.resource_uninstall_agent_button = QPushButton("Uninstall Agent", resource_widget)
         self.resource_install_agent_button.hide()
+        self.resource_uninstall_agent_button.hide()
         self.resource_monitor_label = QLabel("Resource Monitor", root)
         resource_actions.addWidget(self.resource_monitor_label)
         resource_actions.addWidget(self.agent_status_label)
         resource_actions.addStretch(1)
         resource_actions.addWidget(self.resource_install_agent_button)
+        resource_actions.addWidget(self.resource_uninstall_agent_button)
         resource_actions.addWidget(self.resource_refresh_button)
         resource_actions.addWidget(self.process_detail_button)
 
@@ -424,9 +430,11 @@ class MainWindow(QMainWindow):
         if "Agent" in message:
             self.agent_status_label.setText("Agent not installed")
             self.resource_install_agent_button.show()
+            self.resource_uninstall_agent_button.show()
         else:
             self.agent_status_label.setText("")
             self.resource_install_agent_button.hide()
+            self.resource_uninstall_agent_button.hide()
 
     def set_transfer_items(self, items: list[TransferItem]) -> None:
         self.transfer_table.setRowCount(len(items))
@@ -511,6 +519,7 @@ class MainWindow(QMainWindow):
         self.retry_transfer_button.clicked.connect(self._handle_retry_transfer_clicked)
         self.resource_refresh_button.clicked.connect(self.controller.refresh_resources)
         self.resource_install_agent_button.clicked.connect(self._handle_install_agent_clicked)
+        self.resource_uninstall_agent_button.clicked.connect(self._handle_uninstall_agent_clicked)
         self.process_detail_button.clicked.connect(self._handle_process_detail_clicked)
 
     def _handle_connect_clicked(self) -> None:
@@ -547,8 +556,35 @@ class MainWindow(QMainWindow):
         self.connection_bar.connect_button.setEnabled(True)
 
     def _handle_install_agent_clicked(self) -> None:
-        if self._agent_install_confirmer(self):
+        self.append_log("Agent install requested")
+        if not self._agent_install_confirmer(self):
+            self.append_log("Agent install canceled")
+            return
+        self.append_log("Agent install confirmed")
+        self._set_agent_action_enabled(False)
+        try:
             self.controller.install_agent()
+        finally:
+            self._set_agent_action_enabled(True)
+        self.append_log("Agent install command finished")
+
+    def _handle_uninstall_agent_clicked(self) -> None:
+        self.append_log("Agent uninstall requested")
+        if not self._agent_install_confirmer(self):
+            self.append_log("Agent uninstall canceled")
+            return
+        self.append_log("Agent uninstall confirmed")
+        self._set_agent_action_enabled(False)
+        try:
+            self.controller.uninstall_agent()
+        finally:
+            self._set_agent_action_enabled(True)
+        self.append_log("Agent uninstall command finished")
+
+    def _set_agent_action_enabled(self, enabled: bool) -> None:
+        self.connection_bar.install_agent_button.setEnabled(enabled)
+        self.resource_install_agent_button.setEnabled(enabled)
+        self.resource_uninstall_agent_button.setEnabled(enabled)
 
     def _handle_local_refresh_clicked(self) -> None:
         self.local_panel.clear_selection()

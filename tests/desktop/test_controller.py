@@ -164,9 +164,14 @@ class FakeAgentInstallService:
     def __init__(self, result: AgentInstallResult) -> None:
         self.result = result
         self.calls = []
+        self.uninstall_calls = []
 
     def install(self, site, password):
         self.calls.append((site, password))
+        return self.result
+
+    def uninstall(self, site, password):
+        self.uninstall_calls.append((site, password))
         return self.result
 
 
@@ -493,3 +498,29 @@ def test_controller_installs_agent_for_connected_site() -> None:
 
     assert service.calls == [(site, "secret")]
     assert window.statuses[-1] == "Agent installed and verified"
+
+
+def test_controller_uninstalls_agent_for_connected_site() -> None:
+    window = FakeWindow()
+    service = FakeAgentInstallService(AgentInstallResult(success=True, commands_run=4, verified=True))
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: FakeSession(),
+        agent_install_service=service,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+    controller.uninstall_agent()
+
+    assert service.uninstall_calls == [(site, "secret")]
+    assert window.statuses[-1] == "Agent uninstalled"

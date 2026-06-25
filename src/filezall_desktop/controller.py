@@ -175,6 +175,24 @@ class MainWindowController:
             self._window.show_status("Agent installation failed")
             self._log("Agent installation failed")
 
+    def uninstall_agent(self) -> None:
+        if self._agent_install_service is None or not hasattr(
+            self._agent_install_service,
+            "uninstall",
+        ):
+            self._window.show_status("Agent uninstallation is not configured.")
+            return
+        result = self._agent_install_service.uninstall(
+            self._require_connected_site(),
+            self._connected_secret,
+        )
+        if result.success:
+            self._window.show_status("Agent uninstalled")
+            self._log("Agent uninstalled")
+        else:
+            self._window.show_status("Agent uninstallation failed")
+            self._log("Agent uninstallation failed")
+
     def _require_session(self) -> RemoteSession:
         if self._session is None:
             raise RuntimeError("Remote session is not connected")

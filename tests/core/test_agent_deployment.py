@@ -61,3 +61,20 @@ def test_agent_installer_reports_failure_when_health_check_fails(tmp_path: Path)
 
     assert result.success is False
     assert result.verified is False
+
+
+def test_agent_installer_uninstalls_systemd_service() -> None:
+    runner = FakeRunner()
+    installer = AgentInstaller(runner)
+
+    result = installer.uninstall()
+
+    assert runner.commands == [
+        "sudo systemctl stop filezall-agent || true",
+        "sudo systemctl disable filezall-agent || true",
+        "sudo rm -f /etc/systemd/system/filezall-agent.service",
+        "sudo systemctl daemon-reload",
+        "sudo rm -rf /opt/filezall-agent",
+    ]
+    assert result.success is True
+    assert result.commands_run == len(runner.commands)
