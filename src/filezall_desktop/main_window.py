@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from filezall_core.models import AuthMode, Protocol, SiteProfile, TransferItem
 from filezall_core.resource_models import ProcessDetail, ResourceSnapshot
+from filezall_desktop.assets import app_icon
 from filezall_desktop.controller import MainWindowController
 from filezall_desktop.widgets import ConnectionBar, FilePanel
 
@@ -33,6 +34,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self.setWindowTitle("FileZall")
+        self.setWindowIcon(app_icon())
         self.resize(1280, 800)
         self._build_toolbar()
         self._build_central_layout()

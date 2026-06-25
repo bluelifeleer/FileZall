@@ -14,6 +14,9 @@ def test_packaging_files_exist() -> None:
         "packaging/README.md",
         "docs/agent-deployment.md",
         "scripts/validate-linux-agent.ps1",
+        "src/filezall_desktop/assets/icons/filezall.svg",
+        "src/filezall_desktop/assets/icons/filezall.ico",
+        "src/filezall_desktop/assets/icons/filezall.icns",
     ]:
         assert (ROOT / relative_path).exists()
 
@@ -26,10 +29,15 @@ def test_packaging_files_contain_platform_build_commands() -> None:
     readme = (ROOT / "packaging/README.md").read_text(encoding="utf-8")
 
     assert "filezall_desktop.app" in spec
+    assert "filezall.ico" in spec
+    assert "filezall.icns" in spec
+    assert "filezall_desktop/assets/icons" in spec
     assert "pyinstaller" in windows_build
     assert ".venv" in windows_build
     assert "-m PyInstaller" in windows_build
     assert "Inno Setup" in inno
+    assert "SetupIconFile" in inno
+    assert "UninstallDisplayIcon" in inno
     assert "create-dmg" in macos_build
     assert "notarization" in readme
     assert "code signing" in readme

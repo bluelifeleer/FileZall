@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="FileZall icon">
+  <defs>
+    <linearGradient id="bg" x1="28" y1="24" x2="228" y2="232" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#18a999"/>
+      <stop offset="0.56" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+  </defs>
+  <rect x="18" y="18" width="220" height="220" rx="46" fill="url(#bg)"/>
+  <path d="M74 64h88l34 34v94H74z" fill="#f8fafc"/>
+  <path d="M162 64v38h34z" fill="#c7d2fe"/>
+  <path d="M96 101h64v20H96zm0 38h72v20H96z" fill="#1f2937"/>
+  <path d="M63 136h61v-18l34 28-34 28v-18H63z" fill="#10b981"/>
+  <path d="M193 120h-61v18l-34-28 34-28v18h61z" fill="#f97316"/>
+  <path d="M42 208h172" stroke="#e5e7eb" stroke-width="12" stroke-linecap="round"/>
+</svg>

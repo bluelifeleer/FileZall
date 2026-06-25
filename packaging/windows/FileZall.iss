@@ -4,6 +4,7 @@
 #define MyAppVersion "0.1.0"
 #define MyAppPublisher "FileZall"
 #define MyAppExeName "FileZall.exe"
+#define MyAppIcon "..\..\src\filezall_desktop\assets\icons\filezall.ico"
 
 [Setup]
 AppId={{6B34A8A8-A175-4C5C-9D5A-F11E2A110001}
@@ -17,6 +18,8 @@ OutputBaseFilename=FileZallSetup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile={#MyAppIcon}
+UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Files]
 Source: "..\..\dist\FileZall\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
