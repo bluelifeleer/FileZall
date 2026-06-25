@@ -1051,6 +1051,22 @@ def test_main_window_displays_monitoring_status(qtbot) -> None:
     assert not window.resource_install_agent_button.isHidden()
 
 
+def test_main_window_displays_detected_agent_status(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    window.set_monitoring_status("Resource monitoring requires SSH or FileZall Agent.")
+
+    window.set_agent_status(None)
+    assert window.agent_status_label.text() == "Checking Agent..."
+    assert not window.resource_install_agent_button.isHidden()
+    assert window.resource_uninstall_agent_button.isHidden()
+
+    window.set_agent_status(True)
+    assert window.agent_status_label.text() == "Agent installed"
+    assert window.resource_install_agent_button.isHidden()
+    assert not window.resource_uninstall_agent_button.isHidden()
+
+
 def test_resource_agent_install_button_uses_confirmed_install_flow(qtbot) -> None:
     controller = FakeController()
     window = MainWindow(

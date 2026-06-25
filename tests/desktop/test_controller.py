@@ -29,6 +29,7 @@ class FakeWindow:
         self.monitoring_status = None
         self.resource_snapshot = None
         self.process_detail = None
+        self.agent_statuses = []
         self.statuses: list[str] = []
         self.transfer_item_snapshots = []
 
@@ -46,6 +47,9 @@ class FakeWindow:
 
     def set_monitoring_status(self, message: str) -> None:
         self.monitoring_status = message
+
+    def set_agent_status(self, installed: bool | None) -> None:
+        self.agent_statuses.append(installed)
 
     def set_resource_snapshot(self, snapshot) -> None:
         self.resource_snapshot = snapshot
@@ -217,6 +221,8 @@ class FakeAgentInstallService:
         self.uninstall_calls = []
         self.resource_calls = []
         self.detail_calls = []
+        self.installed_checks = []
+        self.installed = False
         self.expected_snapshot = ResourceSnapshot(
             cpu=CpuStats(percent=33.3),
             memory=MemoryStats(total_bytes=2000, used_bytes=1000, available_bytes=1000),
@@ -247,6 +253,12 @@ class FakeAgentInstallService:
         if progress_callback is not None:
             progress_callback("Agent uninstall: test progress")
         return self.result
+
+    def is_agent_installed(self, site, password, progress_callback=None):
+        self.installed_checks.append((site, password))
+        if progress_callback is not None:
+            progress_callback("Agent detection: test progress")
+        return self.installed
 
     def resource_snapshot(self, site, password):
         self.resource_calls.append((site, password))
@@ -549,6 +561,58 @@ def test_controller_reports_monitoring_degradation_for_ftp() -> None:
     controller.connect(site, password="secret")
 
     assert window.monitoring_status == "Resource monitoring requires SSH or FileZall Agent."
+
+
+def test_controller_detects_agent_installation_after_connecting() -> None:
+    window = FakeWindow()
+    service = FakeAgentInstallService(AgentInstallResult(success=True, commands_run=8))
+    service.installed = True
+    session = FakeSession()
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: session,
+        agent_install_service=service,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+
+    assert service.installed_checks == [(site, "secret")]
+    assert window.agent_statuses == [None, True]
+
+
+def test_controller_skips_agent_detection_for_ftp_connection() -> None:
+    window = FakeWindow()
+    service = FakeAgentInstallService(AgentInstallResult(success=True, commands_run=8))
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: FakeSession(),
+        agent_install_service=service,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="ftp.example.com",
+        port=21,
+        protocol=Protocol.FTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+
+    assert service.installed_checks == []
+    assert window.agent_statuses == []
 
 
 def test_controller_delegates_transfer_queue_actions() -> None:

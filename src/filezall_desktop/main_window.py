@@ -465,13 +465,27 @@ class MainWindow(QMainWindow):
     def set_monitoring_status(self, message: str) -> None:
         self.monitoring_status_label.setText(message)
         if "Agent" in message:
-            self.agent_status_label.setText("Agent not installed")
+            self.set_agent_status(False)
             self.resource_install_agent_button.show()
             self.resource_uninstall_agent_button.show()
         else:
             self.agent_status_label.setText("")
             self.resource_install_agent_button.hide()
             self.resource_uninstall_agent_button.hide()
+
+    def set_agent_status(self, installed: bool | None) -> None:
+        if installed is None:
+            self.agent_status_label.setText("Checking Agent...")
+            self.resource_install_agent_button.show()
+            self.resource_uninstall_agent_button.hide()
+        elif installed:
+            self.agent_status_label.setText("Agent installed")
+            self.resource_install_agent_button.hide()
+            self.resource_uninstall_agent_button.show()
+        else:
+            self.agent_status_label.setText("Agent not installed")
+            self.resource_install_agent_button.show()
+            self.resource_uninstall_agent_button.show()
 
     def set_transfer_items(self, items: list[TransferItem]) -> None:
         self.transfer_table.setRowCount(len(items))

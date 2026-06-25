@@ -8,7 +8,7 @@ from uuid import uuid4
 from filezall_core.capabilities import resource_monitoring_message
 from filezall_core.client_factory import create_remote_client
 from filezall_core.local_files import list_local_directory
-from filezall_core.models import AuthMode, ConflictPolicy, Direction, SiteProfile, TransferTask
+from filezall_core.models import AuthMode, ConflictPolicy, Direction, Protocol, SiteProfile, TransferTask
 from filezall_core.resource_monitor import ResourceMonitoringUnavailable
 from filezall_core.session import RemoteSession
 
@@ -73,6 +73,7 @@ class MainWindowController:
         self._window.set_remote_entries(entries, self._session.current_remote_path)
         if hasattr(self._window, "set_monitoring_status"):
             self._window.set_monitoring_status(resource_monitoring_message(site.protocol))
+        self._detect_agent_installation(site, password)
         self._window.show_status(f"Connected to {site.name}")
         self._log(f"Connected to {site.name}")
 
@@ -316,6 +317,37 @@ class MainWindowController:
             agent_token_ref=getattr(result, "agent_token_ref", None)
             or self._connected_site.agent_token_ref,
         )
+
+    def _detect_agent_installation(self, site: SiteProfile, password: str | None) -> None:
+        if site.protocol is Protocol.AGENT_HTTP:
+            if hasattr(self._window, "set_agent_status"):
+                self._window.set_agent_status(True)
+            self._log("Agent service installed")
+            return
+        if site.protocol is not Protocol.SFTP:
+            return
+        if self._agent_install_service is None or not hasattr(
+            self._agent_install_service,
+            "is_agent_installed",
+        ):
+            return
+        if hasattr(self._window, "set_agent_status"):
+            self._window.set_agent_status(None)
+        self._log("Agent detection started")
+        try:
+            installed = self._agent_install_service.is_agent_installed(
+                site,
+                password,
+                progress_callback=lambda message: self._log(message),
+            )
+        except Exception as exc:
+            self._log(f"Agent detection failed: {exc}")
+            if hasattr(self._window, "set_agent_status"):
+                self._window.set_agent_status(False)
+            return
+        if hasattr(self._window, "set_agent_status"):
+            self._window.set_agent_status(installed)
+        self._log("Agent service installed" if installed else "Agent service not installed")
 
     def _require_session(self) -> RemoteSession:
         if self._session is None:

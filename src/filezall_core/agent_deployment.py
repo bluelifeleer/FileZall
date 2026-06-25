@@ -241,6 +241,29 @@ class AgentDeploymentService:
             )
         return result
 
+    def is_agent_installed(
+        self,
+        site: SiteProfile,
+        password: str | None = None,
+        progress_callback: Callable[[str], None] | None = None,
+    ) -> bool:
+        _progress(progress_callback, "Agent detection: opening SSH session")
+        runner = self._runner_factory(site, password)
+        try:
+            _progress(progress_callback, "Agent detection: checking installed service")
+            runner.run(
+                "test -d /opt/filezall-agent "
+                "-o -f /etc/systemd/system/filezall-agent.service "
+                "-o -f /lib/systemd/system/filezall-agent.service"
+            )
+        except Exception:
+            _progress(progress_callback, "Agent detection: service not installed")
+            return False
+        finally:
+            runner.close()
+        _progress(progress_callback, "Agent detection: service installed")
+        return True
+
     def resource_snapshot(self, site: SiteProfile, password: str | None = None) -> ResourceSnapshot:
         return _snapshot_from_json(self._agent_get_json(site, password, "/resources"))
 

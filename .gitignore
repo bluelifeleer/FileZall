@@ -13,3 +13,5 @@ dist/
 *.sqlite3
 .filezall/
 .superpowers/
+.DS_Store
+.pyinstaller-cache/
