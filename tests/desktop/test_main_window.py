@@ -32,6 +32,10 @@ class FakeController:
         self.remote_refreshes = []
         self.uploads = []
         self.downloads = []
+        self.deleted = []
+        self.queued = []
+        self.created_dirs = []
+        self.created_files = []
         self.paused = []
         self.resumed = []
         self.canceled = []
@@ -43,8 +47,8 @@ class FakeController:
     def load_saved_sites(self) -> None:
         self.loaded_sites = True
 
-    def connect(self, site, password=None) -> None:
-        self.connect_calls.append((site, password))
+    def connect(self, site, password=None, remember_secret: bool = True) -> None:
+        self.connect_calls.append((site, password, remember_secret))
 
     def load_local_directory(self, path) -> None:
         self.local_refreshes.append(path)
@@ -57,6 +61,18 @@ class FakeController:
 
     def download_file(self, remote_path, local_path) -> None:
         self.downloads.append((remote_path, local_path))
+
+    def delete_path(self, path, remote: bool) -> None:
+        self.deleted.append((path, remote))
+
+    def add_to_queue(self, source_path, destination_path, direction) -> None:
+        self.queued.append((source_path, destination_path, direction))
+
+    def create_directory(self, path, remote: bool) -> None:
+        self.created_dirs.append((path, remote))
+
+    def create_file(self, path, remote: bool) -> None:
+        self.created_files.append((path, remote))
 
     def pause_transfer(self, task_id) -> None:
         self.paused.append(task_id)
@@ -78,6 +94,12 @@ class FakeController:
 
     def install_agent(self) -> None:
         self.agent_installs += 1
+
+
+class FailingConnectController(FakeController):
+    def connect(self, site, password=None, remember_secret: bool = True) -> None:
+        super().connect(site, password, remember_secret)
+        raise RuntimeError("connect failed")
 
 
 def test_main_window_has_filezall_title(qtbot) -> None:
@@ -147,6 +169,21 @@ def test_main_window_has_help_menu_actions(qtbot) -> None:
     assert help_actions["Protocols"].statusTip()
 
 
+def test_main_window_displays_and_exports_logs(qtbot, tmp_path) -> None:
+    export_path = tmp_path / "filezall.log"
+    window = MainWindow(
+        controller=FakeController(),
+        log_file_chooser=lambda _parent: str(export_path),
+    )
+    qtbot.addWidget(window)
+
+    window.append_log("Uploaded app.txt")
+    window.export_logs_action.trigger()
+
+    assert "Uploaded app.txt" in window.log_view.toPlainText()
+    assert "Uploaded app.txt" in export_path.read_text(encoding="utf-8")
+
+
 def test_main_window_local_path_button_chooses_and_loads_directory(qtbot, tmp_path) -> None:
     controller = FakeController()
     window = MainWindow(
@@ -184,6 +221,89 @@ def test_main_window_remote_path_button_enters_selected_directory(qtbot) -> None
     assert [str(path) for path in controller.remote_refreshes] == ["/home/deploy/releases"]
 
 
+def test_main_window_double_clicks_directories_to_enter(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    window.local_panel.path_edit.setText(str(local_root))
+    window.local_panel.set_entries(
+        [
+            type(
+                "Entry",
+                (),
+                {
+                    "name": "src",
+                    "is_dir": True,
+                    "size_bytes": 0,
+                    "modified_time": None,
+                },
+            )()
+        ]
+    )
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.remote_panel.set_entries(
+        [
+            RemoteFileEntry(
+                path=PurePosixPath("/home/deploy/releases"),
+                name="releases",
+                is_dir=True,
+                size_bytes=0,
+                modified_time=None,
+            )
+        ]
+    )
+
+    window.local_panel.table.cellDoubleClicked.emit(0, 0)
+    window.remote_panel.table.cellDoubleClicked.emit(0, 0)
+
+    assert controller.local_refreshes == [local_root / "src"]
+    assert [str(path) for path in controller.remote_refreshes] == ["/home/deploy/releases"]
+
+
+def test_main_window_path_enter_loads_typed_directories(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.local_panel.path_edit.setText(str(tmp_path))
+    window.remote_panel.path_edit.setText("/var/www")
+
+    qtbot.keyClick(window.local_panel.path_edit, Qt.Key.Key_Return)
+    qtbot.keyClick(window.remote_panel.path_edit, Qt.Key.Key_Return)
+
+    assert controller.local_refreshes == [tmp_path]
+    assert [str(path) for path in controller.remote_refreshes] == ["/var/www"]
+
+
+def test_file_panel_context_actions_route_to_controller(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    window.local_panel.path_edit.setText(str(local_root))
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.local_panel.set_placeholder_row("app.txt")
+    window.remote_panel.set_placeholder_row("remote.txt")
+    window.local_panel.table.selectRow(0)
+    window.remote_panel.table.selectRow(0)
+
+    window.local_panel.queue_action.trigger()
+    window.local_panel.delete_action.trigger()
+    window.local_panel.create_dir_action.trigger()
+    window.local_panel.create_file_action.trigger()
+    window.remote_panel.queue_action.trigger()
+    window.remote_panel.delete_action.trigger()
+
+    assert controller.queued[0] == (local_root / "app.txt", PurePosixPath("/home/deploy/app.txt"), Direction.UPLOAD)
+    assert controller.deleted[0] == (local_root / "app.txt", False)
+    assert controller.created_dirs[0] == (local_root, False)
+    assert controller.created_files[0] == (local_root, False)
+    assert controller.queued[1] == (PurePosixPath("/home/deploy/remote.txt"), local_root / "remote.txt", Direction.DOWNLOAD)
+    assert controller.deleted[1] == (PurePosixPath("/home/deploy/remote.txt"), True)
+
+
 def test_main_window_refresh_buttons_clear_current_selection(qtbot, tmp_path) -> None:
     controller = FakeController()
     window = MainWindow(controller=controller)
@@ -208,12 +328,46 @@ def test_main_window_loads_sites_and_connects_button_to_controller(qtbot) -> Non
 
     qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
 
-    site, password = controller.connect_calls[0]
+    site, password, remember_secret = controller.connect_calls[0]
     assert controller.loaded_sites is True
     assert site.host == "example.com"
     assert site.username == "deploy"
     assert str(site.default_remote_path) == "/var/www"
     assert password == "secret"
+    assert remember_secret is True
+    assert window.connection_state_label.text() == "Connected"
+    assert "green" in window.connection_state_label.styleSheet()
+
+
+def test_main_window_connection_failure_shows_red_status(qtbot) -> None:
+    controller = FailingConnectController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.connection_bar.host_edit.setText("example.com")
+    window.connection_bar.username_edit.setText("deploy")
+
+    qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
+
+    assert window.connection_state_label.text() == "Failed"
+    assert "red" in window.connection_state_label.styleSheet()
+    assert window.connection_bar.connect_button.isEnabled()
+
+
+def test_main_window_can_connect_without_remembering_password(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(
+        controller=controller,
+        remember_secret_confirmer=lambda _parent: False,
+    )
+    qtbot.addWidget(window)
+    window.connection_bar.host_edit.setText("example.com")
+    window.connection_bar.username_edit.setText("deploy")
+    window.connection_bar.secret_edit.setText("secret")
+
+    qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
+
+    _site, _password, remember_secret = controller.connect_calls[0]
+    assert remember_secret is False
 
 
 def test_main_window_uses_selected_ftp_protocol_when_connecting(qtbot) -> None:
@@ -228,7 +382,7 @@ def test_main_window_uses_selected_ftp_protocol_when_connecting(qtbot) -> None:
 
     qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
 
-    site, _password = controller.connect_calls[0]
+    site, _password, _remember_secret = controller.connect_calls[0]
     assert site.protocol == Protocol.FTP
 
 
@@ -239,6 +393,22 @@ def test_main_window_displays_monitoring_status(qtbot) -> None:
     window.set_monitoring_status("Resource monitoring requires SSH or FileZall Agent.")
 
     assert window.monitoring_status_label.text() == "Resource monitoring requires SSH or FileZall Agent."
+    assert window.agent_status_label.text() == "Agent not installed"
+    assert not window.resource_install_agent_button.isHidden()
+
+
+def test_resource_agent_install_button_uses_confirmed_install_flow(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(
+        controller=controller,
+        agent_install_confirmer=lambda _parent: True,
+    )
+    qtbot.addWidget(window)
+    window.set_monitoring_status("Resource monitoring requires SSH or FileZall Agent.")
+
+    qtbot.mouseClick(window.resource_install_agent_button, Qt.MouseButton.LeftButton)
+
+    assert controller.agent_installs == 1
 
 
 def test_main_window_connects_selected_saved_site_with_stored_credential_ref(qtbot) -> None:
@@ -260,7 +430,7 @@ def test_main_window_connects_selected_saved_site_with_stored_credential_ref(qtb
 
     qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
 
-    site, password = controller.connect_calls[0]
+    site, password, _remember_secret = controller.connect_calls[0]
     assert site == saved_site
     assert password is None
 

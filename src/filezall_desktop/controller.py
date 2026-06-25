@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 from filezall_core.capabilities import resource_monitoring_message
 from filezall_core.client_factory import create_remote_client
 from filezall_core.local_files import list_local_directory
-from filezall_core.models import AuthMode, SiteProfile
+from filezall_core.models import AuthMode, Direction, SiteProfile
 from filezall_core.resource_monitor import ResourceMonitoringUnavailable
 from filezall_core.session import RemoteSession
 
@@ -23,6 +23,7 @@ class MainWindowController:
         queue_service=None,
         resource_monitor_service=None,
         agent_install_service=None,
+        log_service=None,
     ) -> None:
         self._window = window
         self._local_lister = local_lister
@@ -34,6 +35,7 @@ class MainWindowController:
         self._queue_service = queue_service
         self._resource_monitor_service = resource_monitor_service
         self._agent_install_service = agent_install_service
+        self._log_service = log_service
         self._session: RemoteSession | None = None
         self._connected_site: SiteProfile | None = None
         self._connected_secret: str | None = None
@@ -48,9 +50,15 @@ class MainWindowController:
         entries = self._local_lister(path)
         self._window.set_local_entries(entries)
         self._window.show_status(f"Loaded local directory {path}")
+        self._log(f"Loaded local directory {path}")
 
-    def connect(self, site: SiteProfile, password: str | None = None) -> None:
-        site = self._save_site_if_configured(site, password)
+    def connect(
+        self,
+        site: SiteProfile,
+        password: str | None = None,
+        remember_secret: bool = True,
+    ) -> None:
+        site = self._save_site_if_configured(site, password, remember_secret)
         password = password or self._secret_for_site(site)
         self._session = self._session_factory(site)
         self._connected_site = site
@@ -60,19 +68,47 @@ class MainWindowController:
         if hasattr(self._window, "set_monitoring_status"):
             self._window.set_monitoring_status(resource_monitoring_message(site.protocol))
         self._window.show_status(f"Connected to {site.name}")
+        self._log(f"Connected to {site.name}")
 
     def list_remote_directory(self, path: PurePosixPath) -> None:
         entries = self._require_session().list_directory(path)
         self._window.set_remote_entries(entries, path)
         self._window.show_status(f"Loaded remote directory {path}")
+        self._log(f"Loaded remote directory {path}")
 
     def upload_file(self, local_path: Path, remote_path: PurePosixPath) -> None:
         self._require_session().upload_file(local_path, remote_path)
         self._window.show_status(f"Uploaded {local_path.name}")
+        self._log(f"Uploaded {local_path} to {remote_path}")
 
     def download_file(self, remote_path: PurePosixPath, local_path: Path) -> None:
         self._require_session().download_file(remote_path, local_path)
         self._window.show_status(f"Downloaded {remote_path.name}")
+        self._log(f"Downloaded {remote_path} to {local_path}")
+
+    def delete_path(self, path: Path | PurePosixPath, remote: bool) -> None:
+        location = "remote" if remote else "local"
+        self._window.show_status(f"Delete requested for {location} path {path}")
+        self._log(f"Delete requested for {location} path {path}")
+
+    def add_to_queue(
+        self,
+        source_path: Path | PurePosixPath,
+        destination_path: Path | PurePosixPath,
+        direction: Direction,
+    ) -> None:
+        self._window.show_status(f"Queued {direction.value} {source_path}")
+        self._log(f"Queued {direction.value} {source_path} -> {destination_path}")
+
+    def create_directory(self, path: Path | PurePosixPath, remote: bool) -> None:
+        location = "remote" if remote else "local"
+        self._window.show_status(f"Create directory requested in {location} path {path}")
+        self._log(f"Create directory requested in {location} path {path}")
+
+    def create_file(self, path: Path | PurePosixPath, remote: bool) -> None:
+        location = "remote" if remote else "local"
+        self._window.show_status(f"Create file requested in {location} path {path}")
+        self._log(f"Create file requested in {location} path {path}")
 
     def pause_transfer(self, task_id: str) -> None:
         self._require_queue().pause_task(task_id)
@@ -118,10 +154,13 @@ class MainWindowController:
         )
         if result.success and result.verified:
             self._window.show_status("Agent installed and verified")
+            self._log("Agent installed and verified")
         elif result.success:
             self._window.show_status("Agent installed")
+            self._log("Agent installed")
         else:
             self._window.show_status("Agent installation failed")
+            self._log("Agent installation failed")
 
     def _require_session(self) -> RemoteSession:
         if self._session is None:
@@ -147,8 +186,9 @@ class MainWindowController:
         self,
         site: SiteProfile,
         password: str | None,
+        remember_secret: bool,
     ) -> SiteProfile:
-        if self._site_repository is None:
+        if self._site_repository is None or not remember_secret:
             return site
 
         if password and self._credential_service is not None:
@@ -163,3 +203,9 @@ class MainWindowController:
         if self._credential_service is None:
             return None
         return self._credential_service.get_secret(site.credential_ref)
+
+    def _log(self, message: str) -> None:
+        if hasattr(self._window, "append_log"):
+            self._window.append_log(message)
+        elif self._log_service is not None:
+            self._log_service.append(message)

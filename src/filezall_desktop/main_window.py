@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QStatusBar,
@@ -21,7 +22,8 @@ from PySide6.QtWidgets import (
 )
 
 from filezall_core import __version__
-from filezall_core.models import AuthMode, Protocol, SiteProfile, TransferItem
+from filezall_core.log_service import TransferLogService
+from filezall_core.models import AuthMode, Direction, Protocol, SiteProfile, TransferItem
 from filezall_core.resource_models import ProcessDetail, ResourceSnapshot
 from filezall_desktop.assets import app_icon
 from filezall_desktop.controller import MainWindowController
@@ -37,23 +39,34 @@ class MainWindow(QMainWindow):
         queue_service=None,
         local_directory_chooser=None,
         agent_install_confirmer=None,
+        remember_secret_confirmer=None,
+        log_file_chooser=None,
     ) -> None:
         super().__init__()
+        self.log_service = TransferLogService()
         self._local_directory_chooser = local_directory_chooser or _choose_local_directory
         self._agent_install_confirmer = agent_install_confirmer or _confirm_agent_install
+        self._remember_secret_confirmer = remember_secret_confirmer
+        self._log_file_chooser = log_file_chooser or _choose_log_file
+        self._should_confirm_remember_secret = controller is None
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
         self._build_help_menu()
+        self._build_logs_menu()
         self._build_toolbar()
         self._build_central_layout()
         self.setStatusBar(QStatusBar(self))
+        self.connection_state_label = QLabel("Idle", self)
+        self.statusBar().addPermanentWidget(self.connection_state_label)
+        self._set_connection_state("Idle", "grey")
         self.statusBar().showMessage("Ready")
         self.controller = controller or MainWindowController(
             self,
             site_repository=site_repository,
             credential_service=credential_service,
             queue_service=queue_service,
+            log_service=self.log_service,
         )
         self._connect_signals()
         self.controller.load_saved_sites()
@@ -88,6 +101,13 @@ class MainWindow(QMainWindow):
             "SFTP, FTP, FTPS, and FileZall Agent HTTP transfers are supported.",
         )
 
+    def _build_logs_menu(self) -> None:
+        self.logs_menu = QMenu("Logs", self)
+        self.menuBar().addMenu(self.logs_menu)
+        self.export_logs_action = self.logs_menu.addAction("Export Logs")
+        self.export_logs_action.setStatusTip("Export FileZall transfer and connection logs")
+        self.export_logs_action.triggered.connect(self._export_logs)
+
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Connection")
         toolbar.setMovable(False)
@@ -115,6 +135,9 @@ class MainWindow(QMainWindow):
         self.transfer_table.setHorizontalHeaderLabels(
             ["Server", "Direction", "File", "Progress", "Status"]
         )
+        self.log_view = QPlainTextEdit(transfer_widget)
+        self.log_view.setReadOnly(True)
+        self.log_view.setMaximumBlockCount(1000)
         transfer_actions = QHBoxLayout()
         self.pause_transfer_button = QPushButton("Pause", root)
         self.resume_transfer_button = QPushButton("Resume", root)
@@ -131,14 +154,21 @@ class MainWindow(QMainWindow):
         transfer_layout.addLayout(transfer_actions, stretch=0)
         transfer_layout.addWidget(self.monitoring_status_label, stretch=0)
         transfer_layout.addWidget(self.transfer_table, stretch=1)
+        transfer_layout.addWidget(QLabel("Transfer Logs", transfer_widget), stretch=0)
+        transfer_layout.addWidget(self.log_view, stretch=1)
 
         resource_widget = QWidget(self.main_splitter)
         resource_layout = QVBoxLayout(resource_widget)
         resource_actions = QHBoxLayout()
         self.resource_refresh_button = QPushButton("Refresh Resources", root)
         self.process_detail_button = QPushButton("Process Detail", root)
+        self.agent_status_label = QLabel("", resource_widget)
+        self.resource_install_agent_button = QPushButton("Install Agent", resource_widget)
+        self.resource_install_agent_button.hide()
         resource_actions.addWidget(QLabel("Resource Monitor", root))
+        resource_actions.addWidget(self.agent_status_label)
         resource_actions.addStretch(1)
+        resource_actions.addWidget(self.resource_install_agent_button)
         resource_actions.addWidget(self.resource_refresh_button)
         resource_actions.addWidget(self.process_detail_button)
 
@@ -182,8 +212,25 @@ class MainWindow(QMainWindow):
     def show_status(self, message: str) -> None:
         self.statusBar().showMessage(message)
 
+    def append_log(self, message: str) -> None:
+        entry = self.log_service.append(message)
+        self.log_view.appendPlainText(entry.format())
+
+    def _export_logs(self) -> None:
+        selected = self._log_file_chooser(self)
+        if not selected:
+            return
+        self.log_service.export(Path(selected))
+        self.show_status(f"Exported logs to {selected}")
+
     def set_monitoring_status(self, message: str) -> None:
         self.monitoring_status_label.setText(message)
+        if "Agent" in message:
+            self.agent_status_label.setText("Agent not installed")
+            self.resource_install_agent_button.show()
+        else:
+            self.agent_status_label.setText("")
+            self.resource_install_agent_button.hide()
 
     def set_transfer_items(self, items: list[TransferItem]) -> None:
         self.transfer_table.setRowCount(len(items))
@@ -235,6 +282,22 @@ class MainWindow(QMainWindow):
         self.remote_panel.path_button.clicked.connect(self._handle_remote_path_button_clicked)
         self.local_panel.refresh_button.clicked.connect(self._handle_local_refresh_clicked)
         self.remote_panel.refresh_button.clicked.connect(self._handle_remote_refresh_clicked)
+        self.local_panel.path_edit.returnPressed.connect(self._handle_local_refresh_clicked)
+        self.remote_panel.path_edit.returnPressed.connect(self._handle_remote_refresh_clicked)
+        self.local_panel.table.cellDoubleClicked.connect(self._handle_local_double_clicked)
+        self.remote_panel.table.cellDoubleClicked.connect(self._handle_remote_double_clicked)
+        self.local_panel.refresh_action.triggered.connect(self._handle_local_refresh_clicked)
+        self.remote_panel.refresh_action.triggered.connect(self._handle_remote_refresh_clicked)
+        self.local_panel.delete_action.triggered.connect(self._handle_local_delete_action)
+        self.remote_panel.delete_action.triggered.connect(self._handle_remote_delete_action)
+        self.local_panel.queue_action.triggered.connect(self._handle_local_queue_action)
+        self.remote_panel.queue_action.triggered.connect(self._handle_remote_queue_action)
+        self.local_panel.transfer_action.triggered.connect(self._handle_upload_clicked)
+        self.remote_panel.transfer_action.triggered.connect(self._handle_download_clicked)
+        self.local_panel.create_dir_action.triggered.connect(self._handle_local_create_dir_action)
+        self.remote_panel.create_dir_action.triggered.connect(self._handle_remote_create_dir_action)
+        self.local_panel.create_file_action.triggered.connect(self._handle_local_create_file_action)
+        self.remote_panel.create_file_action.triggered.connect(self._handle_remote_create_file_action)
         self.local_panel.action_button.clicked.connect(self._handle_upload_clicked)
         self.remote_panel.action_button.clicked.connect(self._handle_download_clicked)
         self.pause_transfer_button.clicked.connect(self._handle_pause_transfer_clicked)
@@ -242,11 +305,33 @@ class MainWindow(QMainWindow):
         self.cancel_transfer_button.clicked.connect(self._handle_cancel_transfer_clicked)
         self.retry_transfer_button.clicked.connect(self._handle_retry_transfer_clicked)
         self.resource_refresh_button.clicked.connect(self.controller.refresh_resources)
+        self.resource_install_agent_button.clicked.connect(self._handle_install_agent_clicked)
         self.process_detail_button.clicked.connect(self._handle_process_detail_clicked)
 
     def _handle_connect_clicked(self) -> None:
         site = self._selected_saved_site()
-        self.controller.connect(site or self._site_from_fields(), None if site else self._secret_from_fields())
+        secret = None if site else self._secret_from_fields()
+        remember_secret = True
+        if not site and secret:
+            if self._remember_secret_confirmer is not None:
+                remember_secret = self._remember_secret_confirmer(self)
+            elif self._should_confirm_remember_secret:
+                remember_secret = _confirm_remember_secret(self)
+        self._set_connection_state("Connecting", "goldenrod")
+        self.connection_bar.connect_button.setEnabled(False)
+        try:
+            self.controller.connect(
+                site or self._site_from_fields(),
+                secret,
+                remember_secret=remember_secret,
+            )
+        except Exception as exc:
+            self._set_connection_state("Failed", "red")
+            self.connection_bar.connect_button.setEnabled(True)
+            self.show_status(str(exc))
+            return
+        self._set_connection_state("Connected", "green")
+        self.connection_bar.connect_button.setEnabled(True)
 
     def _handle_install_agent_clicked(self) -> None:
         if self._agent_install_confirmer(self):
@@ -280,6 +365,20 @@ class MainWindow(QMainWindow):
         self.remote_panel.clear_selection()
         self.controller.list_remote_directory(self._remote_path_from_field() / remote_name)
 
+    def _handle_local_double_clicked(self, row: int, _column: int) -> None:
+        if not self.local_panel.is_dir_at(row):
+            return
+        name = self.local_panel.name_at(row)
+        if name:
+            self.controller.load_local_directory(self._local_root() / name)
+
+    def _handle_remote_double_clicked(self, row: int, _column: int) -> None:
+        if not self.remote_panel.is_dir_at(row):
+            return
+        name = self.remote_panel.name_at(row)
+        if name:
+            self.controller.list_remote_directory(self._remote_path_from_field() / name)
+
     def _handle_upload_clicked(self) -> None:
         local_name = self.local_panel.selected_name()
         if not local_name:
@@ -294,6 +393,42 @@ class MainWindow(QMainWindow):
             return
         local_root = Path(self.local_panel.path_edit.text().strip() or Path.home())
         self.controller.download_file(self._remote_path_from_field() / remote_name, local_root / remote_name)
+
+    def _handle_local_queue_action(self) -> None:
+        if local_name := self.local_panel.selected_name():
+            self.controller.add_to_queue(
+                self._local_root() / local_name,
+                self._remote_path_from_field() / local_name,
+                Direction.UPLOAD,
+            )
+
+    def _handle_remote_queue_action(self) -> None:
+        if remote_name := self.remote_panel.selected_name():
+            self.controller.add_to_queue(
+                self._remote_path_from_field() / remote_name,
+                self._local_root() / remote_name,
+                Direction.DOWNLOAD,
+            )
+
+    def _handle_local_delete_action(self) -> None:
+        if local_name := self.local_panel.selected_name():
+            self.controller.delete_path(self._local_root() / local_name, remote=False)
+
+    def _handle_remote_delete_action(self) -> None:
+        if remote_name := self.remote_panel.selected_name():
+            self.controller.delete_path(self._remote_path_from_field() / remote_name, remote=True)
+
+    def _handle_local_create_dir_action(self) -> None:
+        self.controller.create_directory(self._local_root(), remote=False)
+
+    def _handle_remote_create_dir_action(self) -> None:
+        self.controller.create_directory(self._remote_path_from_field(), remote=True)
+
+    def _handle_local_create_file_action(self) -> None:
+        self.controller.create_file(self._local_root(), remote=False)
+
+    def _handle_remote_create_file_action(self) -> None:
+        self.controller.create_file(self._remote_path_from_field(), remote=True)
 
     def _handle_pause_transfer_clicked(self) -> None:
         if task_id := self._selected_transfer_task_id():
@@ -314,6 +449,10 @@ class MainWindow(QMainWindow):
     def _handle_process_detail_clicked(self) -> None:
         if pid := self._selected_process_id():
             self.controller.show_process_detail(pid)
+
+    def _set_connection_state(self, text: str, color: str) -> None:
+        self.connection_state_label.setText(text)
+        self.connection_state_label.setStyleSheet(f"color: {color}; font-weight: 600;")
 
     def _site_from_fields(self) -> SiteProfile:
         host = self.connection_bar.host_edit.text().strip()
@@ -354,6 +493,9 @@ class MainWindow(QMainWindow):
 
     def _remote_path_from_field(self) -> PurePosixPath:
         return PurePosixPath(self.remote_panel.path_edit.text().strip() or "~")
+
+    def _local_root(self) -> Path:
+        return Path(self.local_panel.path_edit.text().strip() or Path.home())
 
     def _selected_transfer_task_id(self) -> str | None:
         selected = self.transfer_table.selectionModel().selectedRows()
@@ -400,12 +542,33 @@ def _choose_local_directory(parent, current: str) -> str:
     return QFileDialog.getExistingDirectory(parent, "Choose Local Directory", current)
 
 
+def _choose_log_file(parent) -> str:
+    path, _selected_filter = QFileDialog.getSaveFileName(
+        parent,
+        "Export FileZall Logs",
+        "filezall.log",
+        "Log Files (*.log);;Text Files (*.txt);;All Files (*)",
+    )
+    return path
+
+
 def _confirm_agent_install(parent) -> bool:
     return (
         QMessageBox.question(
             parent,
             "Install FileZall Agent",
             "Install and start FileZall Agent on the connected server?",
+        )
+        == QMessageBox.StandardButton.Yes
+    )
+
+
+def _confirm_remember_secret(parent) -> bool:
+    return (
+        QMessageBox.question(
+            parent,
+            "Remember Password",
+            "Remember this server password for future logins?",
         )
         == QMessageBox.StandardButton.Yes
     )

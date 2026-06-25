@@ -3,11 +3,13 @@ from __future__ import annotations
 from datetime import datetime
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -77,6 +79,9 @@ class FilePanel(QWidget):
         self.action_button = QPushButton(action_label, self)
         self.table = QTableWidget(0, 4, self)
         self.table.setHorizontalHeaderLabels(["Name", "Size", "Type", "Modified"])
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
+        self._build_context_menu()
 
         header.addWidget(self.title)
         header.addWidget(self.path_edit)
@@ -85,6 +90,27 @@ class FilePanel(QWidget):
         header.addWidget(self.action_button)
         layout.addLayout(header)
         layout.addWidget(self.table)
+
+    def _build_context_menu(self) -> None:
+        self.context_menu = QMenu(self)
+        self.refresh_action = QAction("Refresh", self)
+        self.delete_action = QAction("Delete", self)
+        self.queue_action = QAction("Add to Queue", self)
+        self.transfer_action = QAction("Transfer", self)
+        self.create_dir_action = QAction("Create Directory", self)
+        self.create_file_action = QAction("Create File", self)
+        for action in [
+            self.refresh_action,
+            self.delete_action,
+            self.queue_action,
+            self.transfer_action,
+            self.create_dir_action,
+            self.create_file_action,
+        ]:
+            self.context_menu.addAction(action)
+
+    def _show_context_menu(self, position) -> None:
+        self.context_menu.exec(self.table.viewport().mapToGlobal(position))
 
     def set_placeholder_row(self, text: str) -> None:
         self.table.setRowCount(1)
@@ -110,14 +136,20 @@ class FilePanel(QWidget):
         selected = self.table.selectionModel().selectedRows()
         if not selected:
             return None
-        item = self.table.item(selected[0].row(), 0)
-        return item.text() if item else None
+        return self.name_at(selected[0].row())
 
     def selected_is_dir(self) -> bool:
         selected = self.table.selectionModel().selectedRows()
         if not selected:
             return False
-        item = self.table.item(selected[0].row(), 0)
+        return self.is_dir_at(selected[0].row())
+
+    def name_at(self, row: int) -> str | None:
+        item = self.table.item(row, 0)
+        return item.text() if item else None
+
+    def is_dir_at(self, row: int) -> bool:
+        item = self.table.item(row, 0)
         return bool(item.data(Qt.ItemDataRole.UserRole)) if item else False
 
     def clear_selection(self) -> None:
