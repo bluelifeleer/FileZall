@@ -37,7 +37,8 @@ class ConnectionBar(QWidget):
         self.username_edit = QLineEdit(self)
         self.username_edit.setPlaceholderText("Username")
         self.auth_mode_selector = QComboBox(self)
-        self.auth_mode_selector.addItems(["Password", "SSH Key"])
+        self.auth_mode_selector.addItem("Password", "password")
+        self.auth_mode_selector.addItem("SSH Key", "ssh_key")
         self.secret_edit = QLineEdit(self)
         self.secret_edit.setPlaceholderText("Password / passphrase")
         self.secret_edit.setEchoMode(QLineEdit.EchoMode.Password)
@@ -49,7 +50,8 @@ class ConnectionBar(QWidget):
         self.disconnect_button = QPushButton("Disconnect", self)
         self.install_agent_button = QPushButton("Install Agent", self)
 
-        layout.addWidget(QLabel("Site", self))
+        self.site_label = QLabel("Site", self)
+        layout.addWidget(self.site_label)
         layout.addWidget(self.site_selector)
         layout.addWidget(self.host_edit)
         layout.addWidget(self.port_edit)
@@ -68,11 +70,17 @@ class HoverRowTableWidget(QTableWidget):
         super().__init__(rows, columns, parent)
         self.hovered_row = -1
         self.full_row_hover_color = "#243244"
+        self.full_row_selected_color = "#2563eb"
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
+        self.setShowGrid(False)
 
     def set_full_row_hover_color(self, color: str) -> None:
         self.full_row_hover_color = color
+        self.viewport().update()
+
+    def set_full_row_selected_color(self, color: str) -> None:
+        self.full_row_selected_color = color
         self.viewport().update()
 
     def set_hovered_row(self, row: int) -> None:
@@ -92,15 +100,15 @@ class HoverRowTableWidget(QTableWidget):
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
-        if self._should_paint_hover_row():
-            first_rect = self.visualRect(self.model().index(self.hovered_row, 0))
+        for row, color in self._active_row_colors():
+            first_rect = self.visualRect(self.model().index(row, 0))
             last_rect = self.visualRect(
-                self.model().index(self.hovered_row, self.columnCount() - 1)
+                self.model().index(row, self.columnCount() - 1)
             )
             if first_rect.isValid() and last_rect.isValid():
                 left = last_rect.right() + 1
                 if left >= self.viewport().width():
-                    return
+                    continue
                 painter = QPainter(self.viewport())
                 trailing_rect = QRect(
                     left,
@@ -110,29 +118,40 @@ class HoverRowTableWidget(QTableWidget):
                 )
                 painter.fillRect(
                     trailing_rect,
-                    QColor(self.full_row_hover_color),
+                    QColor(color),
                 )
                 painter.end()
 
-    def _should_paint_hover_row(self) -> bool:
-        if self.hovered_row < 0:
-            return False
+    def _active_row_colors(self) -> list[tuple[int, str]]:
+        rows: list[tuple[int, str]] = []
         selection_model = self.selectionModel()
-        if not selection_model:
-            return True
-        return not selection_model.isRowSelected(self.hovered_row, self.rootIndex())
+        if selection_model:
+            rows.extend(
+                (index.row(), self.full_row_selected_color)
+                for index in selection_model.selectedRows()
+            )
+        if self.hovered_row >= 0 and not any(row == self.hovered_row for row, _ in rows):
+            rows.append((self.hovered_row, self.full_row_hover_color))
+        return rows
 
 
 class HoverRowDelegate(QStyledItemDelegate):
+    uses_full_row_activity = True
+
     def paint(self, painter, option, index) -> None:
         table = self.parent()
-        if (
-            isinstance(table, HoverRowTableWidget)
-            and index.row() == table.hovered_row
-            and not (option.state & QStyle.StateFlag.State_Selected)
+        if isinstance(table, HoverRowTableWidget) and (
+            index.row() == table.hovered_row
+            or option.state & QStyle.StateFlag.State_Selected
         ):
             option = QStyleOptionViewItem(option)
-            option.backgroundBrush = QColor(table.full_row_hover_color)
+            option.state &= ~QStyle.StateFlag.State_Selected
+            option.state &= ~QStyle.StateFlag.State_HasFocus
+            option.backgroundBrush = QColor(
+                table.full_row_hover_color
+                if index.row() == table.hovered_row
+                else table.full_row_selected_color
+            )
         super().paint(painter, option, index)
 
 
@@ -146,6 +165,9 @@ class FilePanel(QWidget):
     ) -> None:
         super().__init__(parent)
         self._transfer_action_label = action_label
+        self._parent_label = "Parent Directory"
+        self._directory_label = "Directory"
+        self._file_label = "File"
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
         self.title = QLabel(title, self)
@@ -196,6 +218,38 @@ class FilePanel(QWidget):
         ]:
             self.context_menu.addAction(action)
 
+    def set_texts(
+        self,
+        *,
+        title: str,
+        refresh_label: str,
+        action_label: str,
+        transfer_label: str,
+        choose_directory_tooltip: str,
+        headers: list[str],
+        parent_label: str,
+        directory_label: str,
+        file_label: str,
+        delete_label: str,
+        queue_label: str,
+        create_dir_label: str,
+        create_file_label: str,
+    ) -> None:
+        self.title.setText(title)
+        self.refresh_button.setText(refresh_label)
+        self.action_button.setText(action_label)
+        self.path_button.setToolTip(choose_directory_tooltip)
+        self.table.setHorizontalHeaderLabels(headers)
+        self._transfer_action_label = transfer_label
+        self._parent_label = parent_label
+        self._directory_label = directory_label
+        self._file_label = file_label
+        self.transfer_action.setText(transfer_label)
+        self.delete_action.setText(delete_label)
+        self.queue_action.setText(queue_label)
+        self.create_dir_action.setText(create_dir_label)
+        self.create_file_action.setText(create_file_label)
+
     def _show_context_menu(self, position) -> None:
         self.context_menu.exec(self.table.viewport().mapToGlobal(position))
 
@@ -208,14 +262,17 @@ class FilePanel(QWidget):
 
     def set_entries(self, entries) -> None:
         self.table.setRowCount(len(entries) + 1)
-        self._set_row(0, "..", "", "Parent Directory", "", is_dir=True, row_kind="parent")
+        self._set_row(0, "..", "", self._parent_label, "", is_dir=True, row_kind="parent")
         for row, entry in enumerate(entries, start=1):
             self.table.setItem(row, 0, _entry_item(entry.name, entry.is_dir))
             self.table.setItem(row, 1, _entry_item(str(entry.size_bytes), entry.is_dir))
             self.table.setItem(
                 row,
                 2,
-                _entry_item("Directory" if entry.is_dir else "File", entry.is_dir),
+                _entry_item(
+                    self._directory_label if entry.is_dir else self._file_label,
+                    entry.is_dir,
+                ),
             )
             self.table.setItem(row, 3, _entry_item(_format_time(entry.modified_time), entry.is_dir))
         self.clear_selection()

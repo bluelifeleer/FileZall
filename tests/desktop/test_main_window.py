@@ -26,6 +26,10 @@ from filezall_core.resource_models import (
 )
 
 
+def _use_english(window: MainWindow) -> None:
+    window.english_language_action.trigger()
+
+
 class FakeController:
     def __init__(self) -> None:
         self.loaded_sites = False
@@ -111,6 +115,21 @@ class FailingConnectController(FakeController):
         raise RuntimeError("connect failed")
 
 
+class ObservingRemoteLoadingController(FakeController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.window = None
+        self.loading_snapshot = None
+
+    def list_remote_directory(self, path) -> None:
+        self.loading_snapshot = (
+            self.window.remote_panel.table.isEnabled(),
+            self.window.remote_panel.refresh_button.isEnabled(),
+            self.window.statusBar().currentMessage(),
+        )
+        super().list_remote_directory(path)
+
+
 def test_main_window_has_filezall_title(qtbot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
@@ -122,6 +141,7 @@ def test_main_window_has_filezall_title(qtbot) -> None:
 def test_main_window_exposes_connection_and_file_panels(qtbot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
+    _use_english(window)
 
     assert window.connection_bar.host_edit.placeholderText() == "Host"
     assert window.connection_bar.port_edit.text() == "22"
@@ -188,6 +208,8 @@ def test_file_panels_use_full_row_selection_for_actions(qtbot) -> None:
     assert window.local_panel.table.selectionMode() == QAbstractItemView.SelectionMode.ExtendedSelection
     assert window.local_panel.table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
     assert window.local_panel.table.hasMouseTracking()
+    assert not window.local_panel.table.showGrid()
+    assert window.local_panel.table.itemDelegate().uses_full_row_activity
     assert window.local_panel.table.full_row_hover_color == hover_color_for_theme(window.current_theme)
     window.local_panel.table.set_hovered_row(1)
     assert window.local_panel.table.hovered_row == 1
@@ -358,6 +380,7 @@ def test_transfer_logs_have_resizable_splitter(qtbot) -> None:
 def test_main_window_has_help_menu_actions(qtbot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
+    _use_english(window)
 
     menus = {action.text(): action.menu() for action in window.menuBar().actions()}
     assert "Help" in menus
@@ -372,6 +395,7 @@ def test_main_window_has_help_menu_actions(qtbot) -> None:
 def test_main_window_has_theme_menu_actions(qtbot) -> None:
     window = MainWindow(controller=FakeController())
     qtbot.addWidget(window)
+    _use_english(window)
 
     menus = {action.text(): action.menu() for action in window.menuBar().actions()}
     assert "Theme" in menus
@@ -401,6 +425,45 @@ def test_main_window_applies_theme_actions(qtbot) -> None:
     assert window.light_theme_action.isChecked()
     assert window.styleSheet() != dark_stylesheet
     assert "background-color: #f5f7fb" in window.styleSheet()
+
+
+def test_main_window_has_language_menu_actions(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    menus = {action.text(): action.menu() for action in window.menuBar().actions()}
+    assert "语言" in menus
+    language_actions = {action.text(): action for action in window.language_menu.actions()}
+
+    assert set(language_actions) == {"System", "English", "简体中文"}
+    assert window.system_language_action.isCheckable()
+    assert window.english_language_action.isCheckable()
+    assert window.chinese_language_action.isCheckable()
+    assert window.system_language_action.isChecked()
+
+
+def test_main_window_applies_language_actions(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    window.chinese_language_action.trigger()
+
+    assert window.current_language == "zh_CN"
+    assert window.local_panel.title.text() == "本地文件"
+    assert window.remote_panel.title.text() == "远端文件"
+    assert window.local_panel.refresh_button.text() == "刷新"
+    assert window.local_panel.action_button.text() == "上传"
+    assert window.remote_panel.action_button.text() == "下载"
+    assert window.local_panel.table.horizontalHeaderItem(0).text() == "名称"
+    assert window.local_panel.transfer_action.text() == "上传"
+    assert window.remote_panel.transfer_action.text() == "下载"
+
+    window.english_language_action.trigger()
+
+    assert window.current_language == "en"
+    assert window.local_panel.title.text() == "Local Files"
+    assert window.local_panel.refresh_button.text() == "Refresh"
+    assert window.local_panel.table.horizontalHeaderItem(0).text() == "Name"
 
 
 def test_main_window_displays_and_exports_logs(qtbot, tmp_path) -> None:
@@ -453,6 +516,36 @@ def test_main_window_remote_path_button_enters_selected_directory(qtbot) -> None
     qtbot.mouseClick(window.remote_panel.path_button, Qt.MouseButton.LeftButton)
 
     assert [str(path) for path in controller.remote_refreshes] == ["/home/deploy/releases"]
+
+
+def test_remote_directory_navigation_shows_loading_state_while_request_runs(qtbot) -> None:
+    controller = ObservingRemoteLoadingController()
+    window = MainWindow(controller=controller)
+    controller.window = window
+    qtbot.addWidget(window)
+    _use_english(window)
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.remote_panel.set_entries(
+        [
+            RemoteFileEntry(
+                path=PurePosixPath("/home/deploy/releases"),
+                name="releases",
+                is_dir=True,
+                size_bytes=0,
+                modified_time=None,
+            )
+        ]
+    )
+
+    window.remote_panel.table.cellDoubleClicked.emit(1, 0)
+
+    assert controller.loading_snapshot == (
+        False,
+        False,
+        "Loading remote directory /home/deploy/releases...",
+    )
+    assert window.remote_panel.table.isEnabled()
+    assert window.remote_panel.refresh_button.isEnabled()
 
 
 def test_main_window_double_clicks_directories_to_enter(qtbot, tmp_path) -> None:
@@ -736,6 +829,7 @@ def test_saved_site_autofills_quick_connect_fields_with_secret(qtbot, tmp_path) 
     controller = SavedController()
     window = MainWindow(controller=controller)
     qtbot.addWidget(window)
+    _use_english(window)
     saved_site = SiteProfile(
         id="site-1",
         name="Production",

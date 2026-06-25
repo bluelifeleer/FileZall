@@ -51,6 +51,8 @@ class MainWindowController:
 
     def load_local_directory(self, path: Path) -> None:
         entries = self._local_lister(path)
+        if hasattr(self._window, "set_local_directory_path"):
+            self._window.set_local_directory_path(path)
         self._window.set_local_entries(entries)
         self._window.show_status(f"Loaded local directory {path}")
         self._log(f"Loaded local directory {path}")
