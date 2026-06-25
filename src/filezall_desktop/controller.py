@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 from filezall_core.capabilities import resource_monitoring_message
 from filezall_core.client_factory import create_remote_client
 from filezall_core.local_files import list_local_directory
-from filezall_core.models import AuthMode, SiteProfile
+from filezall_core.models import AuthMode, Direction, SiteProfile
 from filezall_core.resource_monitor import ResourceMonitoringUnavailable
 from filezall_core.session import RemoteSession
 
@@ -73,6 +73,26 @@ class MainWindowController:
     def download_file(self, remote_path: PurePosixPath, local_path: Path) -> None:
         self._require_session().download_file(remote_path, local_path)
         self._window.show_status(f"Downloaded {remote_path.name}")
+
+    def delete_path(self, path: Path | PurePosixPath, remote: bool) -> None:
+        location = "remote" if remote else "local"
+        self._window.show_status(f"Delete requested for {location} path {path}")
+
+    def add_to_queue(
+        self,
+        source_path: Path | PurePosixPath,
+        destination_path: Path | PurePosixPath,
+        direction: Direction,
+    ) -> None:
+        self._window.show_status(f"Queued {direction.value} {source_path}")
+
+    def create_directory(self, path: Path | PurePosixPath, remote: bool) -> None:
+        location = "remote" if remote else "local"
+        self._window.show_status(f"Create directory requested in {location} path {path}")
+
+    def create_file(self, path: Path | PurePosixPath, remote: bool) -> None:
+        location = "remote" if remote else "local"
+        self._window.show_status(f"Create file requested in {location} path {path}")
 
     def pause_transfer(self, task_id: str) -> None:
         self._require_queue().pause_task(task_id)

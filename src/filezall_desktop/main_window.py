@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from filezall_core import __version__
-from filezall_core.models import AuthMode, Protocol, SiteProfile, TransferItem
+from filezall_core.models import AuthMode, Direction, Protocol, SiteProfile, TransferItem
 from filezall_core.resource_models import ProcessDetail, ResourceSnapshot
 from filezall_desktop.assets import app_icon
 from filezall_desktop.controller import MainWindowController
@@ -235,6 +235,22 @@ class MainWindow(QMainWindow):
         self.remote_panel.path_button.clicked.connect(self._handle_remote_path_button_clicked)
         self.local_panel.refresh_button.clicked.connect(self._handle_local_refresh_clicked)
         self.remote_panel.refresh_button.clicked.connect(self._handle_remote_refresh_clicked)
+        self.local_panel.path_edit.returnPressed.connect(self._handle_local_refresh_clicked)
+        self.remote_panel.path_edit.returnPressed.connect(self._handle_remote_refresh_clicked)
+        self.local_panel.table.cellDoubleClicked.connect(self._handle_local_double_clicked)
+        self.remote_panel.table.cellDoubleClicked.connect(self._handle_remote_double_clicked)
+        self.local_panel.refresh_action.triggered.connect(self._handle_local_refresh_clicked)
+        self.remote_panel.refresh_action.triggered.connect(self._handle_remote_refresh_clicked)
+        self.local_panel.delete_action.triggered.connect(self._handle_local_delete_action)
+        self.remote_panel.delete_action.triggered.connect(self._handle_remote_delete_action)
+        self.local_panel.queue_action.triggered.connect(self._handle_local_queue_action)
+        self.remote_panel.queue_action.triggered.connect(self._handle_remote_queue_action)
+        self.local_panel.transfer_action.triggered.connect(self._handle_upload_clicked)
+        self.remote_panel.transfer_action.triggered.connect(self._handle_download_clicked)
+        self.local_panel.create_dir_action.triggered.connect(self._handle_local_create_dir_action)
+        self.remote_panel.create_dir_action.triggered.connect(self._handle_remote_create_dir_action)
+        self.local_panel.create_file_action.triggered.connect(self._handle_local_create_file_action)
+        self.remote_panel.create_file_action.triggered.connect(self._handle_remote_create_file_action)
         self.local_panel.action_button.clicked.connect(self._handle_upload_clicked)
         self.remote_panel.action_button.clicked.connect(self._handle_download_clicked)
         self.pause_transfer_button.clicked.connect(self._handle_pause_transfer_clicked)
@@ -280,6 +296,20 @@ class MainWindow(QMainWindow):
         self.remote_panel.clear_selection()
         self.controller.list_remote_directory(self._remote_path_from_field() / remote_name)
 
+    def _handle_local_double_clicked(self, row: int, _column: int) -> None:
+        if not self.local_panel.is_dir_at(row):
+            return
+        name = self.local_panel.name_at(row)
+        if name:
+            self.controller.load_local_directory(self._local_root() / name)
+
+    def _handle_remote_double_clicked(self, row: int, _column: int) -> None:
+        if not self.remote_panel.is_dir_at(row):
+            return
+        name = self.remote_panel.name_at(row)
+        if name:
+            self.controller.list_remote_directory(self._remote_path_from_field() / name)
+
     def _handle_upload_clicked(self) -> None:
         local_name = self.local_panel.selected_name()
         if not local_name:
@@ -294,6 +324,42 @@ class MainWindow(QMainWindow):
             return
         local_root = Path(self.local_panel.path_edit.text().strip() or Path.home())
         self.controller.download_file(self._remote_path_from_field() / remote_name, local_root / remote_name)
+
+    def _handle_local_queue_action(self) -> None:
+        if local_name := self.local_panel.selected_name():
+            self.controller.add_to_queue(
+                self._local_root() / local_name,
+                self._remote_path_from_field() / local_name,
+                Direction.UPLOAD,
+            )
+
+    def _handle_remote_queue_action(self) -> None:
+        if remote_name := self.remote_panel.selected_name():
+            self.controller.add_to_queue(
+                self._remote_path_from_field() / remote_name,
+                self._local_root() / remote_name,
+                Direction.DOWNLOAD,
+            )
+
+    def _handle_local_delete_action(self) -> None:
+        if local_name := self.local_panel.selected_name():
+            self.controller.delete_path(self._local_root() / local_name, remote=False)
+
+    def _handle_remote_delete_action(self) -> None:
+        if remote_name := self.remote_panel.selected_name():
+            self.controller.delete_path(self._remote_path_from_field() / remote_name, remote=True)
+
+    def _handle_local_create_dir_action(self) -> None:
+        self.controller.create_directory(self._local_root(), remote=False)
+
+    def _handle_remote_create_dir_action(self) -> None:
+        self.controller.create_directory(self._remote_path_from_field(), remote=True)
+
+    def _handle_local_create_file_action(self) -> None:
+        self.controller.create_file(self._local_root(), remote=False)
+
+    def _handle_remote_create_file_action(self) -> None:
+        self.controller.create_file(self._remote_path_from_field(), remote=True)
 
     def _handle_pause_transfer_clicked(self) -> None:
         if task_id := self._selected_transfer_task_id():
@@ -354,6 +420,9 @@ class MainWindow(QMainWindow):
 
     def _remote_path_from_field(self) -> PurePosixPath:
         return PurePosixPath(self.remote_panel.path_edit.text().strip() or "~")
+
+    def _local_root(self) -> Path:
+        return Path(self.local_panel.path_edit.text().strip() or Path.home())
 
     def _selected_transfer_task_id(self) -> str | None:
         selected = self.transfer_table.selectionModel().selectedRows()

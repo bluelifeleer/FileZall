@@ -32,6 +32,10 @@ class FakeController:
         self.remote_refreshes = []
         self.uploads = []
         self.downloads = []
+        self.deleted = []
+        self.queued = []
+        self.created_dirs = []
+        self.created_files = []
         self.paused = []
         self.resumed = []
         self.canceled = []
@@ -57,6 +61,18 @@ class FakeController:
 
     def download_file(self, remote_path, local_path) -> None:
         self.downloads.append((remote_path, local_path))
+
+    def delete_path(self, path, remote: bool) -> None:
+        self.deleted.append((path, remote))
+
+    def add_to_queue(self, source_path, destination_path, direction) -> None:
+        self.queued.append((source_path, destination_path, direction))
+
+    def create_directory(self, path, remote: bool) -> None:
+        self.created_dirs.append((path, remote))
+
+    def create_file(self, path, remote: bool) -> None:
+        self.created_files.append((path, remote))
 
     def pause_transfer(self, task_id) -> None:
         self.paused.append(task_id)
@@ -182,6 +198,89 @@ def test_main_window_remote_path_button_enters_selected_directory(qtbot) -> None
     qtbot.mouseClick(window.remote_panel.path_button, Qt.MouseButton.LeftButton)
 
     assert [str(path) for path in controller.remote_refreshes] == ["/home/deploy/releases"]
+
+
+def test_main_window_double_clicks_directories_to_enter(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    window.local_panel.path_edit.setText(str(local_root))
+    window.local_panel.set_entries(
+        [
+            type(
+                "Entry",
+                (),
+                {
+                    "name": "src",
+                    "is_dir": True,
+                    "size_bytes": 0,
+                    "modified_time": None,
+                },
+            )()
+        ]
+    )
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.remote_panel.set_entries(
+        [
+            RemoteFileEntry(
+                path=PurePosixPath("/home/deploy/releases"),
+                name="releases",
+                is_dir=True,
+                size_bytes=0,
+                modified_time=None,
+            )
+        ]
+    )
+
+    window.local_panel.table.cellDoubleClicked.emit(0, 0)
+    window.remote_panel.table.cellDoubleClicked.emit(0, 0)
+
+    assert controller.local_refreshes == [local_root / "src"]
+    assert [str(path) for path in controller.remote_refreshes] == ["/home/deploy/releases"]
+
+
+def test_main_window_path_enter_loads_typed_directories(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.local_panel.path_edit.setText(str(tmp_path))
+    window.remote_panel.path_edit.setText("/var/www")
+
+    qtbot.keyClick(window.local_panel.path_edit, Qt.Key.Key_Return)
+    qtbot.keyClick(window.remote_panel.path_edit, Qt.Key.Key_Return)
+
+    assert controller.local_refreshes == [tmp_path]
+    assert [str(path) for path in controller.remote_refreshes] == ["/var/www"]
+
+
+def test_file_panel_context_actions_route_to_controller(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    window.local_panel.path_edit.setText(str(local_root))
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.local_panel.set_placeholder_row("app.txt")
+    window.remote_panel.set_placeholder_row("remote.txt")
+    window.local_panel.table.selectRow(0)
+    window.remote_panel.table.selectRow(0)
+
+    window.local_panel.queue_action.trigger()
+    window.local_panel.delete_action.trigger()
+    window.local_panel.create_dir_action.trigger()
+    window.local_panel.create_file_action.trigger()
+    window.remote_panel.queue_action.trigger()
+    window.remote_panel.delete_action.trigger()
+
+    assert controller.queued[0] == (local_root / "app.txt", PurePosixPath("/home/deploy/app.txt"), Direction.UPLOAD)
+    assert controller.deleted[0] == (local_root / "app.txt", False)
+    assert controller.created_dirs[0] == (local_root, False)
+    assert controller.created_files[0] == (local_root, False)
+    assert controller.queued[1] == (PurePosixPath("/home/deploy/remote.txt"), local_root / "remote.txt", Direction.DOWNLOAD)
+    assert controller.deleted[1] == (PurePosixPath("/home/deploy/remote.txt"), True)
 
 
 def test_main_window_refresh_buttons_clear_current_selection(qtbot, tmp_path) -> None:
