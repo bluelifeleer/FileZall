@@ -4,6 +4,7 @@ from PyInstaller.utils.hooks import collect_submodules
 
 
 block_cipher = None
+icon_dir = "../src/filezall_desktop/assets/icons"
 
 # Entry module: filezall_desktop.app
 
@@ -11,7 +12,7 @@ a = Analysis(
     ["../src/filezall_desktop/app.py"],
     pathex=["..", "../src"],
     binaries=[],
-    datas=[],
+    datas=[(icon_dir, "filezall_desktop/assets/icons")],
     hiddenimports=collect_submodules("filezall_core") + collect_submodules("filezall_desktop"),
     hookspath=[],
     hooksconfig={},
@@ -35,6 +36,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
+    icon=f"{icon_dir}/filezall.ico",
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -56,6 +58,6 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="FileZall.app",
-    icon=None,
+    icon=f"{icon_dir}/filezall.icns",
     bundle_identifier="com.filezall.desktop",
 )
