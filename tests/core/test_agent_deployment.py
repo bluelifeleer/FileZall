@@ -90,6 +90,27 @@ def test_agent_installer_marks_install_verified_when_health_check_passes(tmp_pat
     assert result.verified is True
 
 
+def test_agent_installer_reports_install_progress(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    messages = []
+    installer = AgentInstaller(
+        runner,
+        health_check=lambda: True,
+        progress_callback=messages.append,
+    )
+    package = tmp_path / "filezall-agent.tar.gz"
+    package.write_bytes(b"agent")
+
+    result = installer.install_or_update(package, token="secret-token")
+
+    assert result.verified is True
+    assert "Agent install: uploading package" in messages
+    assert "Agent install: extracting package" in messages
+    assert "Agent install: checking service status" in messages
+    assert "Agent install: checking health endpoint" in messages
+    assert "Agent install: health check passed" in messages
+
+
 def test_agent_installer_reports_failure_when_health_check_fails(tmp_path: Path) -> None:
     runner = FakeRunner()
     installer = AgentInstaller(runner, health_check=lambda: False)
@@ -174,6 +195,39 @@ def test_agent_deployment_service_installs_and_marks_site_agent_enabled(tmp_path
     assert repository.saved[-1].agent_enabled is True
     assert repository.saved[-1].agent_token_ref == "site-1:agent-token"
     assert any("/health" in command for command in runner.commands)
+
+
+def test_agent_deployment_service_reports_high_level_install_progress(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    credentials = FakeCredentials()
+    repository = FakeRepository()
+    package = tmp_path / "filezall-agent.tar.gz"
+    package.write_bytes(b"agent")
+    messages = []
+    service = AgentDeploymentService(
+        package_builder=lambda: package,
+        runner_factory=lambda site, password: runner,
+        credential_service=credentials,
+        site_repository=repository,
+        token_factory=lambda: "generated-token",
+    )
+
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    result = service.install(site, password="secret", progress_callback=messages.append)
+
+    assert result.success is True
+    assert "Agent install: opening SSH session" in messages
+    assert "Agent install: building local package" in messages
+    assert "Agent install: saving Agent token" in messages
 
 
 def test_agent_deployment_service_uninstalls_and_clears_agent_flag() -> None:

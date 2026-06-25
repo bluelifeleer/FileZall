@@ -1,3 +1,4 @@
+import time
 from pathlib import Path, PurePosixPath
 from datetime import UTC, datetime
 
@@ -15,6 +16,7 @@ from filezall_core.models import (
     TransferItem,
     TransferStatus,
 )
+from filezall_core.agent_deployment import AgentInstallResult
 from filezall_core.resource_models import (
     CpuStats,
     DiskUsage,
@@ -117,6 +119,31 @@ class FakeController:
         return self.heartbeat_results.pop(0) if self.heartbeat_results else True
 
 
+class ProgressAgentController(FakeController):
+    def __init__(self, delay_seconds: float = 0) -> None:
+        super().__init__()
+        self.delay_seconds = delay_seconds
+        self.agent_install_results = []
+
+    def install_agent_with_progress(self, progress) -> AgentInstallResult:
+        self.agent_installs += 1
+        progress("Agent install: uploading package")
+        if self.delay_seconds:
+            time.sleep(self.delay_seconds)
+        progress("Agent install: health check passed")
+        return AgentInstallResult(success=True, commands_run=2, verified=True)
+
+    def complete_agent_install(self, result: AgentInstallResult) -> None:
+        self.agent_install_results.append(result)
+
+
+class FailingProgressAgentController(FakeController):
+    def install_agent_with_progress(self, progress) -> AgentInstallResult:
+        self.agent_installs += 1
+        progress("Agent install: uploading package")
+        raise RuntimeError("sudo password required")
+
+
 class FailingConnectController(FakeController):
     def connect(self, site, password=None, remember_secret: bool = True) -> None:
         super().connect(site, password, remember_secret)
@@ -198,6 +225,7 @@ def test_main_window_install_agent_button_confirms_before_controller_call(qtbot)
 
     qtbot.mouseClick(window.connection_bar.install_agent_button, Qt.MouseButton.LeftButton)
 
+    qtbot.waitUntil(lambda: controller.agent_installs == 1, timeout=3000)
     assert controller.agent_installs == 1
 
 
@@ -211,10 +239,56 @@ def test_main_window_logs_agent_install_steps(qtbot) -> None:
 
     qtbot.mouseClick(window.connection_bar.install_agent_button, Qt.MouseButton.LeftButton)
 
+    qtbot.waitUntil(
+        lambda: "Agent install command finished" in window.log_view.toPlainText(),
+        timeout=3000,
+    )
     logs = window.log_view.toPlainText()
     assert "Agent install requested" in logs
     assert "Agent install confirmed" in logs
     assert "Agent install command finished" in logs
+
+
+def test_main_window_runs_agent_install_in_background_and_logs_progress(qtbot) -> None:
+    controller = ProgressAgentController(delay_seconds=0.1)
+    window = MainWindow(
+        controller=controller,
+        agent_install_confirmer=lambda _parent: True,
+    )
+    qtbot.addWidget(window)
+
+    qtbot.mouseClick(window.connection_bar.install_agent_button, Qt.MouseButton.LeftButton)
+
+    assert not window.connection_bar.install_agent_button.isEnabled()
+    qtbot.waitUntil(
+        lambda: "Agent install command finished" in window.log_view.toPlainText(),
+        timeout=3000,
+    )
+
+    logs = window.log_view.toPlainText()
+    assert "Agent install: uploading package" in logs
+    assert "Agent install: health check passed" in logs
+    assert controller.agent_install_results[0].verified is True
+    assert window.connection_bar.install_agent_button.isEnabled()
+
+
+def test_main_window_logs_agent_install_failure_from_background(qtbot) -> None:
+    controller = FailingProgressAgentController()
+    window = MainWindow(
+        controller=controller,
+        agent_install_confirmer=lambda _parent: True,
+    )
+    qtbot.addWidget(window)
+
+    qtbot.mouseClick(window.connection_bar.install_agent_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(
+        lambda: "Agent installation failed: sudo password required"
+        in window.log_view.toPlainText(),
+        timeout=3000,
+    )
+
+    assert window.connection_bar.install_agent_button.isEnabled()
 
 
 def test_main_window_uses_draggable_splitters_for_major_regions(qtbot) -> None:
@@ -699,6 +773,45 @@ def test_main_window_path_enter_loads_typed_directories(qtbot, tmp_path) -> None
     assert [str(path) for path in controller.remote_refreshes] == ["/var/www"]
 
 
+def test_main_window_path_history_selects_previous_directories(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    local_one = tmp_path / "one"
+    local_two = tmp_path / "two"
+    local_one.mkdir()
+    local_two.mkdir()
+
+    window.local_panel.path_edit.setText(str(local_one))
+    qtbot.keyClick(window.local_panel.path_edit, Qt.Key.Key_Return)
+    window.local_panel.path_edit.setText(str(local_two))
+    qtbot.keyClick(window.local_panel.path_edit, Qt.Key.Key_Return)
+    window.remote_panel.path_edit.setText("/srv/app")
+    qtbot.keyClick(window.remote_panel.path_edit, Qt.Key.Key_Return)
+    window.remote_panel.path_edit.setText("/srv/logs")
+    qtbot.keyClick(window.remote_panel.path_edit, Qt.Key.Key_Return)
+
+    window.local_panel.path_edit.setCurrentIndex(
+        window.local_panel.path_edit.findText(str(local_one))
+    )
+    window.local_panel.path_edit.activated.emit(window.local_panel.path_edit.currentIndex())
+    window.remote_panel.path_edit.setCurrentIndex(
+        window.remote_panel.path_edit.findText("/srv/app")
+    )
+    window.remote_panel.path_edit.activated.emit(window.remote_panel.path_edit.currentIndex())
+
+    assert [window.local_panel.path_edit.itemText(index) for index in range(2)] == [
+        str(local_one),
+        str(local_two),
+    ]
+    assert [window.remote_panel.path_edit.itemText(index) for index in range(2)] == [
+        "/srv/app",
+        "/srv/logs",
+    ]
+    assert controller.local_refreshes[-1] == local_one
+    assert str(controller.remote_refreshes[-1]) == "/srv/app"
+
+
 def test_file_panel_context_actions_route_to_controller(qtbot, tmp_path) -> None:
     controller = FakeController()
     window = MainWindow(controller=controller)
@@ -949,6 +1062,7 @@ def test_resource_agent_install_button_uses_confirmed_install_flow(qtbot) -> Non
 
     qtbot.mouseClick(window.resource_install_agent_button, Qt.MouseButton.LeftButton)
 
+    qtbot.waitUntil(lambda: controller.agent_installs == 1, timeout=3000)
     assert controller.agent_installs == 1
 
 
@@ -965,6 +1079,7 @@ def test_resource_agent_uninstall_button_uses_confirmed_flow_and_logs(qtbot) -> 
 
     qtbot.mouseClick(window.resource_uninstall_agent_button, Qt.MouseButton.LeftButton)
 
+    qtbot.waitUntil(lambda: controller.agent_uninstalls == 1, timeout=3000)
     assert controller.agent_uninstalls == 1
     logs = window.log_view.toPlainText()
     assert "Agent uninstall requested" in logs

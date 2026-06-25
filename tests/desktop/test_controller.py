@@ -236,12 +236,16 @@ class FakeAgentInstallService:
             status="running",
         )
 
-    def install(self, site, password):
+    def install(self, site, password, progress_callback=None):
         self.calls.append((site, password))
+        if progress_callback is not None:
+            progress_callback("Agent install: test progress")
         return self.result
 
-    def uninstall(self, site, password):
+    def uninstall(self, site, password, progress_callback=None):
         self.uninstall_calls.append((site, password))
+        if progress_callback is not None:
+            progress_callback("Agent uninstall: test progress")
         return self.result
 
     def resource_snapshot(self, site, password):

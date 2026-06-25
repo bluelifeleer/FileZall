@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import PurePath
 
-from PySide6.QtCore import QModelIndex, QRect, Qt
+from PySide6.QtCore import QModelIndex, QRect, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -165,6 +165,42 @@ class HoverRowDelegate(QStyledItemDelegate):
         super().paint(painter, option, index)
 
 
+class DirectoryHistoryComboBox(QComboBox):
+    history_selected = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None, max_history: int = 20) -> None:
+        super().__init__(parent)
+        self._max_history = max_history
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.returnPressed = self.lineEdit().returnPressed
+        self.activated.connect(self._handle_activated)
+
+    def text(self) -> str:
+        return self.currentText()
+
+    def setText(self, text: str) -> None:
+        self.setEditText(text)
+
+    def add_history(self, path: str) -> None:
+        value = path.strip()
+        if not value:
+            return
+        existing_index = self.findText(value)
+        if existing_index >= 0:
+            self.removeItem(existing_index)
+        self.insertItem(0, value)
+        while self.count() > self._max_history:
+            self.removeItem(self.count() - 1)
+        self.setCurrentIndex(0)
+        self.setEditText(value)
+
+    def _handle_activated(self, index: int) -> None:
+        text = self.itemText(index) if index >= 0 else self.currentText()
+        if text:
+            self.history_selected.emit(text)
+
+
 class FilePanel(QWidget):
     def __init__(
         self,
@@ -181,7 +217,7 @@ class FilePanel(QWidget):
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
         self.title = QLabel(title, self)
-        self.path_edit = QLineEdit(self)
+        self.path_edit = DirectoryHistoryComboBox(self)
         self.path_button = QToolButton(self)
         self.path_button.setObjectName("pathButton")
         self.path_button.setText(path_button_text)

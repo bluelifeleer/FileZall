@@ -244,10 +244,20 @@ class MainWindowController:
         if self._agent_install_service is None:
             self._window.show_status("Agent installation is not configured.")
             return
-        result = self._agent_install_service.install(
+        self.complete_agent_install(
+            self.install_agent_with_progress(lambda message: self._log(message))
+        )
+
+    def install_agent_with_progress(self, progress_callback=None):
+        if self._agent_install_service is None:
+            raise RuntimeError("Agent installation is not configured.")
+        return self._agent_install_service.install(
             self._require_connected_site(),
             self._connected_secret,
+            progress_callback=progress_callback,
         )
+
+    def complete_agent_install(self, result) -> None:
         if result.success and result.verified:
             self._mark_connected_site_agent_enabled(result)
             self._window.show_status("Agent installed and verified")
@@ -267,10 +277,23 @@ class MainWindowController:
         ):
             self._window.show_status("Agent uninstallation is not configured.")
             return
-        result = self._agent_install_service.uninstall(
+        self.complete_agent_uninstall(
+            self.uninstall_agent_with_progress(lambda message: self._log(message))
+        )
+
+    def uninstall_agent_with_progress(self, progress_callback=None):
+        if self._agent_install_service is None or not hasattr(
+            self._agent_install_service,
+            "uninstall",
+        ):
+            raise RuntimeError("Agent uninstallation is not configured.")
+        return self._agent_install_service.uninstall(
             self._require_connected_site(),
             self._connected_secret,
+            progress_callback=progress_callback,
         )
+
+    def complete_agent_uninstall(self, result) -> None:
         if result.success:
             if self._connected_site is not None:
                 self._connected_site = replace(

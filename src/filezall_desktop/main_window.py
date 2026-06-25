@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import (
     QApplication,
@@ -48,6 +49,23 @@ from filezall_desktop.theme import (
 from filezall_desktop.widgets import ConnectionBar, FilePanel
 
 
+class AgentActionWorker(QObject):
+    progress = Signal(str)
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, action: Callable[[Callable[[str], None]], object]) -> None:
+        super().__init__()
+        self._action = action
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            self.succeeded.emit(self._action(self.progress.emit))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class MainWindow(QMainWindow):
     def __init__(
         self,
@@ -74,6 +92,7 @@ class MainWindow(QMainWindow):
         self._new_session_factory = new_session_factory
         self._should_confirm_remember_secret = controller is None
         self._heartbeat_failed_logged = False
+        self._agent_workers = []
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
@@ -421,9 +440,12 @@ class MainWindow(QMainWindow):
 
     def set_local_directory_path(self, path) -> None:
         self.local_panel.path_edit.setText(str(path))
+        self.local_panel.path_edit.add_history(str(path))
 
     def set_remote_entries(self, entries, path) -> None:
         self.remote_panel.path_edit.setText(str(path or ""))
+        if path:
+            self.remote_panel.path_edit.add_history(str(path))
         self.remote_panel.set_entries(entries)
 
     def show_status(self, message: str) -> None:
@@ -507,6 +529,8 @@ class MainWindow(QMainWindow):
         self.connection_bar.install_agent_button.clicked.connect(self._handle_install_agent_clicked)
         self.local_panel.path_button.clicked.connect(self._handle_local_path_button_clicked)
         self.remote_panel.path_button.clicked.connect(self._handle_remote_path_button_clicked)
+        self.local_panel.path_edit.history_selected.connect(self._handle_local_history_selected)
+        self.remote_panel.path_edit.history_selected.connect(self._handle_remote_history_selected)
         self.local_panel.refresh_button.clicked.connect(self._handle_local_refresh_clicked)
         self.remote_panel.refresh_button.clicked.connect(self._handle_remote_refresh_clicked)
         self.local_panel.path_edit.returnPressed.connect(self._handle_local_refresh_clicked)
@@ -604,12 +628,11 @@ class MainWindow(QMainWindow):
             self.append_log("Agent install canceled")
             return
         self.append_log("Agent install confirmed")
-        self._set_agent_action_enabled(False)
-        try:
-            self.controller.install_agent()
-        finally:
-            self._set_agent_action_enabled(True)
-        self.append_log("Agent install command finished")
+        self._start_agent_action(
+            label="install",
+            action=self._run_agent_install,
+            complete=self._complete_agent_install,
+        )
 
     def _handle_uninstall_agent_clicked(self) -> None:
         self.append_log("Agent uninstall requested")
@@ -617,12 +640,97 @@ class MainWindow(QMainWindow):
             self.append_log("Agent uninstall canceled")
             return
         self.append_log("Agent uninstall confirmed")
+        self._start_agent_action(
+            label="uninstall",
+            action=self._run_agent_uninstall,
+            complete=self._complete_agent_uninstall,
+        )
+
+    def _start_agent_action(
+        self,
+        *,
+        label: str,
+        action: Callable[[Callable[[str], None]], object],
+        complete: Callable[[object], None],
+    ) -> None:
         self._set_agent_action_enabled(False)
+        thread = QThread(self)
+        worker = AgentActionWorker(action)
+        worker.moveToThread(thread)
+        self._agent_workers.append((thread, worker))
+        thread.started.connect(worker.run)
+        worker.progress.connect(self.append_log)
+        worker.succeeded.connect(
+            lambda result, label=label, thread=thread, worker=worker, complete=complete: (
+                self._finish_agent_action(label, result, thread, worker, complete)
+            )
+        )
+        worker.failed.connect(
+            lambda error, label=label, thread=thread, worker=worker: self._fail_agent_action(
+                label,
+                error,
+                thread,
+                worker,
+            )
+        )
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _run_agent_install(self, progress: Callable[[str], None]):
+        if hasattr(self.controller, "install_agent_with_progress"):
+            return self.controller.install_agent_with_progress(progress)
+        self.controller.install_agent()
+        return None
+
+    def _run_agent_uninstall(self, progress: Callable[[str], None]):
+        if hasattr(self.controller, "uninstall_agent_with_progress"):
+            return self.controller.uninstall_agent_with_progress(progress)
+        self.controller.uninstall_agent()
+        return None
+
+    def _complete_agent_install(self, result) -> None:
+        if hasattr(self.controller, "complete_agent_install") and result is not None:
+            self.controller.complete_agent_install(result)
+
+    def _complete_agent_uninstall(self, result) -> None:
+        if hasattr(self.controller, "complete_agent_uninstall") and result is not None:
+            self.controller.complete_agent_uninstall(result)
+
+    def _finish_agent_action(
+        self,
+        label: str,
+        result,
+        thread: QThread,
+        worker,
+        complete: Callable[[object], None],
+    ) -> None:
         try:
-            self.controller.uninstall_agent()
-        finally:
-            self._set_agent_action_enabled(True)
-        self.append_log("Agent uninstall command finished")
+            complete(result)
+        except Exception as exc:
+            self.append_log(f"Agent {label} completion failed: {exc}")
+            self.show_status(str(exc))
+        self.append_log(f"Agent {label} command finished")
+        self._set_agent_action_enabled(True)
+        self._cleanup_agent_worker(thread, worker)
+
+    def _fail_agent_action(self, label: str, error: str, thread: QThread, worker) -> None:
+        message = (
+            f"Agent installation failed: {error}"
+            if label == "install"
+            else f"Agent uninstall failed: {error}"
+        )
+        self.append_log(message)
+        self.show_status(message)
+        self._set_agent_action_enabled(True)
+        self._cleanup_agent_worker(thread, worker)
+
+    def _cleanup_agent_worker(self, thread: QThread, worker) -> None:
+        try:
+            self._agent_workers.remove((thread, worker))
+        except ValueError:
+            pass
+        thread.quit()
 
     def _set_agent_action_enabled(self, enabled: bool) -> None:
         self.connection_bar.install_agent_button.setEnabled(enabled)
@@ -632,12 +740,21 @@ class MainWindow(QMainWindow):
     def _handle_local_refresh_clicked(self) -> None:
         self.local_panel.clear_selection()
         path_text = self.local_panel.path_edit.text().strip()
-        self.controller.load_local_directory(Path(path_text) if path_text else Path.home())
+        path = Path(path_text) if path_text else Path.home()
+        self._load_local_directory(path)
 
     def _handle_remote_refresh_clicked(self) -> None:
         self.remote_panel.clear_selection()
         remote_path = self._remote_path_from_field()
         self._load_remote_directory(remote_path)
+
+    def _handle_local_history_selected(self, path_text: str) -> None:
+        self.local_panel.clear_selection()
+        self._load_local_directory(Path(path_text))
+
+    def _handle_remote_history_selected(self, path_text: str) -> None:
+        self.remote_panel.clear_selection()
+        self._load_remote_directory(PurePosixPath(path_text))
 
     def _handle_local_path_button_clicked(self) -> None:
         current = self.local_panel.path_edit.text().strip() or str(Path.home())
@@ -647,7 +764,7 @@ class MainWindow(QMainWindow):
         path = Path(selected)
         self.local_panel.path_edit.setText(str(path))
         self.local_panel.clear_selection()
-        self.controller.load_local_directory(path)
+        self._load_local_directory(path)
 
     def _handle_remote_path_button_clicked(self) -> None:
         remote_name = self.remote_panel.selected_name()
@@ -659,13 +776,13 @@ class MainWindow(QMainWindow):
 
     def _handle_local_double_clicked(self, row: int, _column: int) -> None:
         if self.local_panel.is_parent_at(row):
-            self.controller.load_local_directory(self._local_parent())
+            self._load_local_directory(self._local_parent())
             return
         if not self.local_panel.is_dir_at(row):
             return
         name = self.local_panel.name_at(row)
         if name:
-            self.controller.load_local_directory(self._local_root() / name)
+            self._load_local_directory(self._local_root() / name)
 
     def _handle_remote_double_clicked(self, row: int, _column: int) -> None:
         if self.remote_panel.is_parent_at(row):
@@ -679,13 +796,18 @@ class MainWindow(QMainWindow):
 
     def _handle_local_clicked(self, row: int, _column: int) -> None:
         if self.local_panel.is_parent_at(row):
-            self.controller.load_local_directory(self._local_parent())
+            self._load_local_directory(self._local_parent())
 
     def _handle_remote_clicked(self, row: int, _column: int) -> None:
         if self.remote_panel.is_parent_at(row):
             self._load_remote_directory(self._remote_parent())
 
+    def _load_local_directory(self, path: Path) -> None:
+        self.local_panel.path_edit.add_history(str(path))
+        self.controller.load_local_directory(path)
+
     def _load_remote_directory(self, path: PurePosixPath) -> None:
+        self.remote_panel.path_edit.add_history(str(path))
         self._set_remote_loading(True, path)
         QApplication.processEvents()
         try:

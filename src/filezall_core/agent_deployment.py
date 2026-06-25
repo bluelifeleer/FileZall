@@ -44,29 +44,45 @@ class AgentInstaller:
         self,
         runner: AgentDeployRunner,
         health_check: Callable[[], bool] | None = None,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> None:
         self._runner = runner
         self._health_check = health_check
+        self._progress_callback = progress_callback
 
     def install_or_update(self, package_path: Path, token: str) -> AgentInstallResult:
         remote_package = "/tmp/filezall-agent.tar.gz"
+        self._progress("Agent install: uploading package")
         self._runner.upload(package_path, remote_package)
         env_command = _agent_env_command(token)
         commands = [
-            "sudo mkdir -p /opt/filezall-agent",
-            f"sudo tar -xzf {remote_package} -C /opt/filezall-agent --strip-components=1",
-            env_command,
-            "sudo cp /opt/filezall-agent/systemd/filezall-agent.service /etc/systemd/system/filezall-agent.service",
-            "sudo systemctl daemon-reload",
-            "sudo systemctl enable filezall-agent",
-            "sudo systemctl restart filezall-agent",
-            "systemctl is-active --quiet filezall-agent",
+            ("creating install directory", "sudo mkdir -p /opt/filezall-agent"),
+            (
+                "extracting package",
+                f"sudo tar -xzf {remote_package} -C /opt/filezall-agent --strip-components=1",
+            ),
+            ("writing environment", env_command),
+            (
+                "installing systemd service",
+                "sudo cp /opt/filezall-agent/systemd/filezall-agent.service /etc/systemd/system/filezall-agent.service",
+            ),
+            ("reloading systemd", "sudo systemctl daemon-reload"),
+            ("enabling service", "sudo systemctl enable filezall-agent"),
+            ("restarting service", "sudo systemctl restart filezall-agent"),
+            ("checking service status", "systemctl is-active --quiet filezall-agent"),
         ]
-        for command in commands:
+        for label, command in commands:
+            self._progress(f"Agent install: {label}")
             self._runner.run(command)
         if self._health_check is None:
             return AgentInstallResult(success=True, commands_run=len(commands))
+        self._progress("Agent install: checking health endpoint")
         verified = self._health_check()
+        self._progress(
+            "Agent install: health check passed"
+            if verified
+            else "Agent install: health check failed"
+        )
         return AgentInstallResult(
             success=verified,
             commands_run=len(commands),
@@ -75,15 +91,23 @@ class AgentInstaller:
 
     def uninstall(self) -> AgentInstallResult:
         commands = [
-            "sudo systemctl stop filezall-agent || true",
-            "sudo systemctl disable filezall-agent || true",
-            "sudo rm -f /etc/systemd/system/filezall-agent.service",
-            "sudo systemctl daemon-reload",
-            "sudo rm -rf /opt/filezall-agent",
+            ("stopping service", "sudo systemctl stop filezall-agent || true"),
+            ("disabling service", "sudo systemctl disable filezall-agent || true"),
+            (
+                "removing systemd service",
+                "sudo rm -f /etc/systemd/system/filezall-agent.service",
+            ),
+            ("reloading systemd", "sudo systemctl daemon-reload"),
+            ("removing install directory", "sudo rm -rf /opt/filezall-agent"),
         ]
-        for command in commands:
+        for label, command in commands:
+            self._progress(f"Agent uninstall: {label}")
             self._runner.run(command)
         return AgentInstallResult(success=True, commands_run=len(commands))
+
+    def _progress(self, message: str) -> None:
+        if self._progress_callback is not None:
+            self._progress_callback(message)
 
 
 class ParamikoAgentDeployRunner:
@@ -163,19 +187,29 @@ class AgentDeploymentService:
         self._site_repository = site_repository
         self._token_factory = token_factory or (lambda: secrets.token_urlsafe(32))
 
-    def install(self, site: SiteProfile, password: str | None = None) -> AgentInstallResult:
+    def install(
+        self,
+        site: SiteProfile,
+        password: str | None = None,
+        progress_callback: Callable[[str], None] | None = None,
+    ) -> AgentInstallResult:
         token = self._token_factory()
+        _progress(progress_callback, "Agent install: opening SSH session")
         runner = self._runner_factory(site, password)
         try:
+            _progress(progress_callback, "Agent install: building local package")
+            package_path = self._package_builder()
             installer = AgentInstaller(
                 runner,
                 health_check=lambda: _remote_health_check(runner, token),
+                progress_callback=progress_callback,
             )
-            result = installer.install_or_update(self._package_builder(), token)
+            result = installer.install_or_update(package_path, token)
         finally:
             runner.close()
         if not result.success:
             return result
+        _progress(progress_callback, "Agent install: saving Agent token")
         token_ref = self._credential_service.save_secret(site.id, "agent-token", token)
         self._site_repository.save(
             _replace_agent_state(site, enabled=True, token_ref=token_ref),
@@ -187,13 +221,20 @@ class AgentDeploymentService:
             agent_token_ref=token_ref,
         )
 
-    def uninstall(self, site: SiteProfile, password: str | None = None) -> AgentInstallResult:
+    def uninstall(
+        self,
+        site: SiteProfile,
+        password: str | None = None,
+        progress_callback: Callable[[str], None] | None = None,
+    ) -> AgentInstallResult:
+        _progress(progress_callback, "Agent uninstall: opening SSH session")
         runner = self._runner_factory(site, password)
         try:
-            result = AgentInstaller(runner).uninstall()
+            result = AgentInstaller(runner, progress_callback=progress_callback).uninstall()
         finally:
             runner.close()
         if result.success:
+            _progress(progress_callback, "Agent uninstall: clearing saved Agent token")
             self._credential_service.delete_secret(site.agent_token_ref)
             self._site_repository.save(
                 _replace_agent_state(site, enabled=False, token_ref=None),
@@ -265,6 +306,11 @@ def _remote_health_check(runner: AgentDeployRunner, token: str) -> bool:
     except Exception:
         return False
     return True
+
+
+def _progress(callback: Callable[[str], None] | None, message: str) -> None:
+    if callback is not None:
+        callback(message)
 
 
 def _agent_get_code(token: str, path: str) -> str:
