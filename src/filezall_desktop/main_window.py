@@ -59,20 +59,24 @@ class MainWindow(QMainWindow):
         agent_install_confirmer=None,
         remember_secret_confirmer=None,
         log_file_chooser=None,
+        new_session_factory=None,
     ) -> None:
         super().__init__()
         self.log_service = TransferLogService()
         self.site_profiles = []
+        self._session_windows = []
         self._site_secret_lookup = None
         self._local_directory_chooser = local_directory_chooser or _choose_local_directory
         self._agent_install_confirmer = agent_install_confirmer or _confirm_agent_install
         self._remember_secret_confirmer = remember_secret_confirmer
         self._log_file_chooser = log_file_chooser or _choose_log_file
+        self._new_session_factory = new_session_factory
         self._should_confirm_remember_secret = controller is None
         self._heartbeat_failed_logged = False
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
+        self._build_session_menu()
         self._build_help_menu()
         self._build_theme_menu()
         self._build_language_menu()
@@ -99,6 +103,13 @@ class MainWindow(QMainWindow):
         )
         self._connect_signals()
         self.controller.load_saved_sites()
+
+    def _build_session_menu(self) -> None:
+        self.session_menu = QMenu("Session", self)
+        self.menuBar().addMenu(self.session_menu)
+        self.new_session_action = self.session_menu.addAction("New Session")
+        self.new_session_action.setStatusTip("Open a new FileZall connection session")
+        self.new_session_action.triggered.connect(self._handle_new_session_clicked)
 
     def _build_help_menu(self) -> None:
         self.help_menu = QMenu("Help", self)
@@ -193,6 +204,8 @@ class MainWindow(QMainWindow):
         return text.format(**values) if values else text
 
     def _refresh_texts(self) -> None:
+        self.session_menu.setTitle(self._text("menu.session"))
+        self.new_session_action.setText(self._text("session.new"))
         self.help_menu.setTitle(self._text("menu.help"))
         self.theme_menu.setTitle(self._text("menu.theme"))
         self.language_menu.setTitle(self._text("menu.language"))
@@ -485,6 +498,7 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         self.connection_bar.connect_button.clicked.connect(self._handle_connect_clicked)
+        self.connection_bar.disconnect_button.clicked.connect(self._handle_disconnect_clicked)
         self.connection_bar.site_selector.currentIndexChanged.connect(
             self._handle_site_selection_changed
         )
@@ -554,6 +568,33 @@ class MainWindow(QMainWindow):
         self._set_connection_state("Connected", "green")
         self.heartbeat_timer.start()
         self.connection_bar.connect_button.setEnabled(True)
+
+    def _handle_disconnect_clicked(self) -> None:
+        self.append_log("Disconnect requested")
+        self._set_connection_state("Disconnecting", "goldenrod")
+        self.connection_bar.disconnect_button.setEnabled(False)
+        log_checkpoint = self.log_view.toPlainText()
+        try:
+            self.controller.disconnect()
+        except Exception as exc:
+            self.append_log(f"Disconnect failed: {exc}")
+            self._set_connection_state(f"Disconnect failed: {exc}", "red")
+            self.show_status(str(exc))
+            return
+        finally:
+            self.connection_bar.disconnect_button.setEnabled(True)
+        self.heartbeat_timer.stop()
+        self._heartbeat_failed_logged = False
+        self._set_connection_state("Disconnected", "grey")
+        if "Disconnected" not in self.log_view.toPlainText()[len(log_checkpoint) :]:
+            self.append_log("Disconnected")
+
+    def _handle_new_session_clicked(self) -> None:
+        factory = self._new_session_factory or MainWindow
+        window = factory()
+        self._session_windows.append(window)
+        if hasattr(window, "show"):
+            window.show()
 
     def _handle_install_agent_clicked(self) -> None:
         self.append_log("Agent install requested")
@@ -730,7 +771,7 @@ class MainWindow(QMainWindow):
             self.controller.show_process_detail(pid)
 
     def _handle_heartbeat_tick(self) -> None:
-        self._set_connection_state("Checking", "goldenrod")
+        self._blink_connection_state("goldenrod")
         try:
             ok = self.controller.heartbeat()
         except Exception as exc:
@@ -758,6 +799,13 @@ class MainWindow(QMainWindow):
             f"background-color: {color}; "
             f"border: 1px solid {color};"
         )
+
+    def _blink_connection_state(self, color: str) -> None:
+        count = int(self.connection_state_label.property("blinkCount") or 0) + 1
+        self.connection_state_label.setProperty("lastBlinkColor", color)
+        self.connection_state_label.setProperty("blinkCount", count)
+        self._set_connection_state("Checking", color)
+        QApplication.processEvents()
 
     def _handle_site_selection_changed(self, index: int) -> None:
         if index <= 0:

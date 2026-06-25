@@ -93,6 +93,9 @@ QPushButton:pressed, QToolButton:pressed {{
     background-color: {colors["accent"]};
     color: #ffffff;
 }}
+QToolButton#pathButton {{
+    padding: 0px;
+}}
 QTableWidget {{
     background-color: {colors["table_bg"]};
     alternate-background-color: {colors["panel_bg"]};

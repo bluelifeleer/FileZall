@@ -75,6 +75,20 @@ class MainWindowController:
         self._window.show_status(f"Connected to {site.name}")
         self._log(f"Connected to {site.name}")
 
+    def disconnect(self) -> None:
+        session = self._session
+        try:
+            if session is not None:
+                closer = getattr(session, "disconnect", None) or getattr(session, "close", None)
+                if closer is not None:
+                    closer()
+        finally:
+            self._session = None
+            self._connected_site = None
+            self._connected_secret = None
+        self._window.show_status("Disconnected")
+        self._log("Disconnected")
+
     def list_remote_directory(self, path: PurePosixPath) -> None:
         entries = self._require_session().list_directory(path)
         self._window.set_remote_entries(entries, path)

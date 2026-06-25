@@ -52,6 +52,7 @@ class FakeSession:
         self.downloads = []
         self.list_calls = []
         self.fail_list = False
+        self.disconnect_calls = 0
 
     def connect_and_list_default(self, password=None):
         self.password = password
@@ -76,6 +77,9 @@ class FakeSession:
         if self.fail_list:
             raise RuntimeError("connection lost")
         return []
+
+    def disconnect(self) -> None:
+        self.disconnect_calls += 1
 
 
 class FakeRepository:
@@ -317,6 +321,32 @@ def test_controller_heartbeat_checks_current_remote_directory() -> None:
     session.fail_list = True
     assert controller.heartbeat() is False
     assert session.list_calls == [PurePosixPath("/home/deploy"), PurePosixPath("/home/deploy")]
+
+
+def test_controller_disconnects_active_session_and_clears_state() -> None:
+    window = FakeWindow()
+    session = FakeSession()
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: session,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+    controller.disconnect()
+
+    assert session.disconnect_calls == 1
+    assert window.statuses[-1] == "Disconnected"
+    assert controller.heartbeat() is False
 
 
 def test_controller_saves_site_and_secret_before_connecting() -> None:

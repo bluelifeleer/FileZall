@@ -51,12 +51,16 @@ class FakeController:
         self.agent_installs = 0
         self.agent_uninstalls = 0
         self.heartbeat_results = []
+        self.disconnect_calls = 0
 
     def load_saved_sites(self) -> None:
         self.loaded_sites = True
 
     def connect(self, site, password=None, remember_secret: bool = True) -> None:
         self.connect_calls.append((site, password, remember_secret))
+
+    def disconnect(self) -> None:
+        self.disconnect_calls += 1
 
     def load_local_directory(self, path) -> None:
         self.local_refreshes.append(path)
@@ -170,6 +174,20 @@ def test_main_window_exposes_connection_and_file_panels(qtbot) -> None:
     assert window.transfer_table.columnCount() == 5
 
 
+def test_local_path_button_keeps_ellipsis_after_language_and_theme_changes(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    window.dark_theme_action.trigger()
+    window.chinese_language_action.trigger()
+    window.light_theme_action.trigger()
+
+    assert window.local_panel.path_button.text() == "..."
+    assert window.local_panel.path_button.minimumWidth() >= 30
+    assert window.local_panel.path_button.maximumWidth() <= 34
+    assert window.remote_panel.path_button.text() == ">"
+
+
 def test_main_window_install_agent_button_confirms_before_controller_call(qtbot) -> None:
     controller = FakeController()
     window = MainWindow(
@@ -241,6 +259,35 @@ def test_file_panels_use_full_row_selection_for_actions(qtbot) -> None:
     assert window.local_panel.selected_name() == "src"
     assert window.local_panel.selected_is_dir() is True
     assert window.local_panel.table.item(1, 2).data(Qt.ItemDataRole.UserRole) is True
+
+
+def test_file_panel_shows_icons_for_parent_directories_and_file_suffixes(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    window.local_panel.set_entries(
+        [
+            type(
+                "Entry",
+                (),
+                {"name": "src", "is_dir": True, "size_bytes": 0, "modified_time": None},
+            )(),
+            type(
+                "Entry",
+                (),
+                {"name": "app.py", "is_dir": False, "size_bytes": 12, "modified_time": None},
+            )(),
+            type(
+                "Entry",
+                (),
+                {"name": "package.zip", "is_dir": False, "size_bytes": 24, "modified_time": None},
+            )(),
+        ]
+    )
+
+    assert not window.local_panel.table.item(0, 0).icon().isNull()
+    assert not window.local_panel.table.item(1, 0).icon().isNull()
+    assert not window.local_panel.table.item(2, 0).icon().isNull()
+    assert not window.local_panel.table.item(3, 0).icon().isNull()
 
 
 def test_file_panel_ctrl_a_and_drag_style_multiselect_batch_actions(qtbot, tmp_path) -> None:
@@ -412,6 +459,30 @@ def test_main_window_has_help_menu_actions(qtbot) -> None:
     assert help_actions["About FileZall"].statusTip()
     assert help_actions["Version"].statusTip()
     assert help_actions["Protocols"].statusTip()
+
+
+def test_main_window_has_session_menu_new_session_action(qtbot) -> None:
+    opened = []
+
+    class DummySessionWindow:
+        def show(self) -> None:
+            opened.append("shown")
+
+    window = MainWindow(
+        controller=FakeController(),
+        new_session_factory=lambda: DummySessionWindow(),
+    )
+    qtbot.addWidget(window)
+    _use_english(window)
+
+    menus = {action.text(): action.menu() for action in window.menuBar().actions()}
+    assert "Session" in menus
+    session_actions = {action.text(): action for action in window.session_menu.actions()}
+
+    session_actions["New Session"].trigger()
+
+    assert opened == ["shown"]
+    assert window._session_windows
 
 
 def test_main_window_has_theme_menu_actions(qtbot) -> None:
@@ -744,6 +815,36 @@ def test_heartbeat_updates_status_light_after_connection(qtbot) -> None:
     window._handle_heartbeat_tick()
     assert window.connection_state_label.toolTip() == "Disconnected"
     assert "red" in window.connection_state_label.styleSheet()
+
+
+def test_heartbeat_check_blinks_status_light_at_detection_frequency(qtbot) -> None:
+    controller = FakeController()
+    controller.heartbeat_results = [True]
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+
+    window._handle_heartbeat_tick()
+
+    assert window.connection_state_label.property("lastBlinkColor") == "goldenrod"
+    assert window.connection_state_label.property("blinkCount") == 1
+
+
+def test_disconnect_button_calls_controller_logs_and_stops_heartbeat(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.heartbeat_timer.start()
+    window._set_connection_state("Connected", "green")
+
+    qtbot.mouseClick(window.connection_bar.disconnect_button, Qt.MouseButton.LeftButton)
+
+    assert controller.disconnect_calls == 1
+    assert not window.heartbeat_timer.isActive()
+    assert window.connection_state_label.toolTip() == "Disconnected"
+    assert "grey" in window.connection_state_label.styleSheet()
+    logs = window.log_view.toPlainText()
+    assert "Disconnect requested" in logs
+    assert "Disconnected" in logs
 
 
 def test_heartbeat_failure_logs_once_until_recovered(qtbot) -> None:
