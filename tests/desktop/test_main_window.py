@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 from filezall_desktop.main_window import MainWindow
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractItemView, QSplitter
+from PySide6.QtWidgets import QAbstractItemView, QSplitter, QTableWidgetSelectionRange
 
 from filezall_core.models import (
     AuthMode,
@@ -44,6 +44,7 @@ class FakeController:
         self.resource_refreshes = 0
         self.process_details = []
         self.agent_installs = 0
+        self.heartbeat_results = []
 
     def load_saved_sites(self) -> None:
         self.loaded_sites = True
@@ -98,6 +99,9 @@ class FakeController:
 
     def secret_for_site(self, site):
         return None
+
+    def heartbeat(self) -> bool:
+        return self.heartbeat_results.pop(0) if self.heartbeat_results else True
 
 
 class FailingConnectController(FakeController):
@@ -178,14 +182,53 @@ def test_file_panels_use_full_row_selection_for_actions(qtbot) -> None:
     )
 
     assert window.local_panel.table.selectionBehavior() == QAbstractItemView.SelectionBehavior.SelectRows
-    assert window.local_panel.table.selectionMode() == QAbstractItemView.SelectionMode.SingleSelection
+    assert window.local_panel.table.selectionMode() == QAbstractItemView.SelectionMode.ExtendedSelection
     assert window.local_panel.table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
 
-    window.local_panel.table.setCurrentCell(0, 2)
+    window.local_panel.table.setCurrentCell(1, 2)
 
     assert window.local_panel.selected_name() == "src"
     assert window.local_panel.selected_is_dir() is True
-    assert window.local_panel.table.item(0, 2).data(Qt.ItemDataRole.UserRole) is True
+    assert window.local_panel.table.item(1, 2).data(Qt.ItemDataRole.UserRole) is True
+
+
+def test_file_panel_ctrl_a_and_drag_style_multiselect_batch_actions(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    window.local_panel.path_edit.setText(str(local_root))
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.local_panel.set_entries(
+        [
+            type(
+                "Entry",
+                (),
+                {"name": "a.txt", "is_dir": False, "size_bytes": 1, "modified_time": None},
+            )(),
+            type(
+                "Entry",
+                (),
+                {"name": "b.txt", "is_dir": False, "size_bytes": 1, "modified_time": None},
+            )(),
+        ]
+    )
+
+    window.local_panel.table.selectAll()
+    qtbot.mouseClick(window.local_panel.action_button, Qt.MouseButton.LeftButton)
+    window.local_panel.table.clearSelection()
+    window.local_panel.table.setRangeSelected(QTableWidgetSelectionRange(1, 0, 2, 3), True)
+    window.local_panel.queue_action.trigger()
+
+    assert controller.uploads == [
+        (local_root / "a.txt", PurePosixPath("/home/deploy/a.txt")),
+        (local_root / "b.txt", PurePosixPath("/home/deploy/b.txt")),
+    ]
+    assert controller.queued == [
+        (local_root / "a.txt", PurePosixPath("/home/deploy/a.txt"), Direction.UPLOAD),
+        (local_root / "b.txt", PurePosixPath("/home/deploy/b.txt"), Direction.UPLOAD),
+    ]
 
 
 def test_main_window_double_clicks_directory_rows_from_any_column(qtbot, tmp_path) -> None:
@@ -210,9 +253,48 @@ def test_main_window_double_clicks_directory_rows_from_any_column(qtbot, tmp_pat
         ]
     )
 
-    window.local_panel.table.cellDoubleClicked.emit(0, 2)
+    window.local_panel.table.cellDoubleClicked.emit(1, 2)
 
     assert controller.local_refreshes == [local_root / "src"]
+
+
+def test_file_panels_add_parent_row_and_clicking_it_navigates_up(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    local_root = tmp_path / "local" / "child"
+    local_root.mkdir(parents=True)
+    window.local_panel.path_edit.setText(str(local_root))
+    window.local_panel.set_entries(
+        [
+            type(
+                "Entry",
+                (),
+                {"name": "app.txt", "is_dir": False, "size_bytes": 1, "modified_time": None},
+            )()
+        ]
+    )
+    window.remote_panel.path_edit.setText("/home/deploy/releases")
+    window.remote_panel.set_entries(
+        [
+            RemoteFileEntry(
+                path=PurePosixPath("/home/deploy/releases/app.log"),
+                name="app.log",
+                is_dir=False,
+                size_bytes=1,
+                modified_time=None,
+            )
+        ]
+    )
+
+    assert window.local_panel.name_at(0) == ".."
+    assert window.remote_panel.name_at(0) == ".."
+
+    window.local_panel.table.cellClicked.emit(0, 0)
+    window.remote_panel.table.cellDoubleClicked.emit(0, 0)
+
+    assert controller.local_refreshes == [local_root.parent]
+    assert [str(path) for path in controller.remote_refreshes] == ["/home/deploy"]
 
 
 def test_transfer_logs_have_resizable_splitter(qtbot) -> None:
@@ -285,7 +367,7 @@ def test_main_window_remote_path_button_enters_selected_directory(qtbot) -> None
             )
         ]
     )
-    window.remote_panel.table.selectRow(0)
+    window.remote_panel.table.selectRow(1)
 
     qtbot.mouseClick(window.remote_panel.path_button, Qt.MouseButton.LeftButton)
 
@@ -326,8 +408,8 @@ def test_main_window_double_clicks_directories_to_enter(qtbot, tmp_path) -> None
         ]
     )
 
-    window.local_panel.table.cellDoubleClicked.emit(0, 0)
-    window.remote_panel.table.cellDoubleClicked.emit(0, 0)
+    window.local_panel.table.cellDoubleClicked.emit(1, 0)
+    window.remote_panel.table.cellDoubleClicked.emit(1, 0)
 
     assert controller.local_refreshes == [local_root / "src"]
     assert [str(path) for path in controller.remote_refreshes] == ["/home/deploy/releases"]
@@ -435,6 +517,21 @@ def test_connection_status_light_uses_tooltip_for_state_text(qtbot) -> None:
     assert window.connection_state_label.text() == ""
     assert window.connection_state_label.toolTip() == "Connecting"
     assert "goldenrod" in window.connection_state_label.styleSheet()
+
+
+def test_heartbeat_updates_status_light_after_connection(qtbot) -> None:
+    controller = FakeController()
+    controller.heartbeat_results = [True, False]
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+
+    window._handle_heartbeat_tick()
+    assert window.connection_state_label.toolTip() == "Connected"
+    assert "green" in window.connection_state_label.styleSheet()
+
+    window._handle_heartbeat_tick()
+    assert window.connection_state_label.toolTip() == "Disconnected"
+    assert "red" in window.connection_state_label.styleSheet()
 
 
 def test_main_window_can_connect_without_remembering_password(qtbot) -> None:

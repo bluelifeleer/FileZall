@@ -81,7 +81,7 @@ class FilePanel(QWidget):
         self.table = QTableWidget(0, 4, self)
         self.table.setHorizontalHeaderLabels(["Name", "Size", "Type", "Modified"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
@@ -124,8 +124,9 @@ class FilePanel(QWidget):
         self.table.setItem(0, 3, _entry_item("", False))
 
     def set_entries(self, entries) -> None:
-        self.table.setRowCount(len(entries))
-        for row, entry in enumerate(entries):
+        self.table.setRowCount(len(entries) + 1)
+        self._set_row(0, "..", "", "Parent Directory", "", is_dir=True, row_kind="parent")
+        for row, entry in enumerate(entries, start=1):
             self.table.setItem(row, 0, _entry_item(entry.name, entry.is_dir))
             self.table.setItem(row, 1, _entry_item(str(entry.size_bytes), entry.is_dir))
             self.table.setItem(
@@ -137,16 +138,27 @@ class FilePanel(QWidget):
         self.clear_selection()
 
     def selected_name(self) -> str | None:
+        names = self.selected_names()
+        return names[0] if names else None
+
+    def selected_names(self) -> list[str]:
+        return [
+            name
+            for row in self.selected_rows()
+            if not self.is_parent_at(row)
+            for name in [self.name_at(row)]
+            if name
+        ]
+
+    def selected_rows(self) -> list[int]:
         selected = self.table.selectionModel().selectedRows()
-        if not selected:
-            return None
-        return self.name_at(selected[0].row())
+        return sorted(index.row() for index in selected)
 
     def selected_is_dir(self) -> bool:
-        selected = self.table.selectionModel().selectedRows()
-        if not selected:
+        rows = [row for row in self.selected_rows() if not self.is_parent_at(row)]
+        if not rows:
             return False
-        return self.is_dir_at(selected[0].row())
+        return self.is_dir_at(rows[0])
 
     def name_at(self, row: int) -> str | None:
         item = self.table.item(row, 0)
@@ -156,15 +168,39 @@ class FilePanel(QWidget):
         item = self.table.item(row, 0)
         return bool(item.data(Qt.ItemDataRole.UserRole)) if item else False
 
+    def is_parent_at(self, row: int) -> bool:
+        item = self.table.item(row, 0)
+        return item.data(_ROW_KIND_ROLE) == "parent" if item else False
+
     def clear_selection(self) -> None:
         self.table.clearSelection()
+
+    def _set_row(
+        self,
+        row: int,
+        name: str,
+        size: str,
+        kind: str,
+        modified: str,
+        *,
+        is_dir: bool,
+        row_kind: str,
+    ) -> None:
+        self.table.setItem(row, 0, _entry_item(name, is_dir, row_kind))
+        self.table.setItem(row, 1, _entry_item(size, is_dir, row_kind))
+        self.table.setItem(row, 2, _entry_item(kind, is_dir, row_kind))
+        self.table.setItem(row, 3, _entry_item(modified, is_dir, row_kind))
 
 
 def _format_time(value: datetime | None) -> str:
     return value.isoformat(timespec="seconds") if value else ""
 
 
-def _entry_item(text: str, is_dir: bool) -> QTableWidgetItem:
+_ROW_KIND_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+def _entry_item(text: str, is_dir: bool, row_kind: str = "entry") -> QTableWidgetItem:
     item = QTableWidgetItem(text)
     item.setData(Qt.ItemDataRole.UserRole, is_dir)
+    item.setData(_ROW_KIND_ROLE, row_kind)
     return item
