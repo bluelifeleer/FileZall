@@ -1,6 +1,14 @@
 from pathlib import Path, PurePosixPath
 
 from filezall_core.models import AuthMode, LocalFileEntry, Protocol, RemoteFileEntry, SiteProfile
+from filezall_core.resource_models import (
+    CpuStats,
+    MemoryStats,
+    NetworkStats,
+    ProcessDetail,
+    ResourceSnapshot,
+)
+from filezall_core.resource_monitor import ResourceMonitoringUnavailable
 from filezall_desktop.controller import MainWindowController
 
 
@@ -9,6 +17,8 @@ class FakeWindow:
         self.local_entries = None
         self.remote_entries = None
         self.monitoring_status = None
+        self.resource_snapshot = None
+        self.process_detail = None
         self.statuses: list[str] = []
 
     def set_local_entries(self, entries):
@@ -22,6 +32,12 @@ class FakeWindow:
 
     def set_monitoring_status(self, message: str) -> None:
         self.monitoring_status = message
+
+    def set_resource_snapshot(self, snapshot) -> None:
+        self.resource_snapshot = snapshot
+
+    def set_process_detail(self, detail) -> None:
+        self.process_detail = detail
 
 
 class FakeSession:
@@ -91,6 +107,43 @@ class FakeQueue:
 
     def retry_failed(self, task_id: str) -> None:
         self.retried.append(task_id)
+
+
+class FakeResourceMonitor:
+    def __init__(self) -> None:
+        self.snapshot_sites = []
+        self.detail_calls = []
+        self.expected_snapshot = ResourceSnapshot(
+            cpu=CpuStats(percent=12.5),
+            memory=MemoryStats(total_bytes=1000, used_bytes=400, available_bytes=600),
+            disks=[],
+            network=NetworkStats(rx_bytes_per_sec=1, tx_bytes_per_sec=2),
+            processes=[],
+        )
+        self.detail = ProcessDetail(
+            pid=123,
+            user="deploy",
+            name="python",
+            cpu_percent=1.5,
+            memory_percent=2.5,
+            command_line="python app.py",
+            start_time="2026-06-25T12:00:00Z",
+            thread_count=8,
+            status="sleeping",
+        )
+
+    def snapshot(self, site):
+        self.snapshot_sites.append(site)
+        return self.expected_snapshot
+
+    def process_detail(self, site, pid: int):
+        self.detail_calls.append((site, pid))
+        return self.detail
+
+
+class UnavailableResourceMonitor:
+    def snapshot(self, site):
+        raise ResourceMonitoringUnavailable("Resource monitoring requires SSH or FileZall Agent.")
 
 
 def test_controller_loads_local_directory(tmp_path: Path) -> None:
@@ -238,3 +291,57 @@ def test_controller_delegates_transfer_queue_actions() -> None:
     assert queue.resumed == ["task-1"]
     assert queue.canceled == ["task-1"]
     assert queue.retried == ["task-1"]
+
+
+def test_controller_refreshes_resources_for_connected_site() -> None:
+    window = FakeWindow()
+    session = FakeSession()
+    resource_monitor = FakeResourceMonitor()
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: session,
+        resource_monitor_service=resource_monitor,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+    controller.refresh_resources()
+    controller.show_process_detail(123)
+
+    assert resource_monitor.snapshot_sites == [site]
+    assert window.resource_snapshot == resource_monitor.expected_snapshot
+    assert resource_monitor.detail_calls == [(site, 123)]
+    assert window.process_detail == resource_monitor.detail
+
+
+def test_controller_reports_resource_monitoring_unavailable() -> None:
+    window = FakeWindow()
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: FakeSession(),
+        resource_monitor_service=UnavailableResourceMonitor(),
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=21,
+        protocol=Protocol.FTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+    controller.refresh_resources()
+
+    assert window.statuses[-1] == "Resource monitoring requires SSH or FileZall Agent."

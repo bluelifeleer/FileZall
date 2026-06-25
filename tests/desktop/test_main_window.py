@@ -4,6 +4,15 @@ from filezall_desktop.main_window import MainWindow
 from PySide6.QtCore import Qt
 
 from filezall_core.models import AuthMode, Direction, Protocol, SiteProfile, TransferItem, TransferStatus
+from filezall_core.resource_models import (
+    CpuStats,
+    DiskUsage,
+    MemoryStats,
+    NetworkStats,
+    ProcessDetail,
+    ProcessSummary,
+    ResourceSnapshot,
+)
 
 
 class FakeController:
@@ -18,6 +27,8 @@ class FakeController:
         self.resumed = []
         self.canceled = []
         self.retried = []
+        self.resource_refreshes = 0
+        self.process_details = []
 
     def load_saved_sites(self) -> None:
         self.loaded_sites = True
@@ -48,6 +59,12 @@ class FakeController:
 
     def retry_transfer(self, task_id) -> None:
         self.retried.append(task_id)
+
+    def refresh_resources(self) -> None:
+        self.resource_refreshes += 1
+
+    def show_process_detail(self, pid) -> None:
+        self.process_details.append(pid)
 
 
 def test_main_window_has_filezall_title(qtbot) -> None:
@@ -204,3 +221,51 @@ def test_main_window_renders_transfer_rows_and_queue_action_buttons(qtbot, tmp_p
     assert controller.resumed == ["task-1"]
     assert controller.canceled == ["task-1"]
     assert controller.retried == ["task-1"]
+
+
+def test_main_window_renders_resource_snapshot_and_process_detail(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    snapshot = ResourceSnapshot(
+        cpu=CpuStats(percent=12.5),
+        memory=MemoryStats(total_bytes=1000, used_bytes=400, available_bytes=600),
+        disks=[DiskUsage(mount="/", total_bytes=2000, used_bytes=1000, available_bytes=1000)],
+        network=NetworkStats(rx_bytes_per_sec=10, tx_bytes_per_sec=20),
+        processes=[
+            ProcessSummary(
+                pid=123,
+                user="deploy",
+                name="python",
+                cpu_percent=1.5,
+                memory_percent=2.5,
+            )
+        ],
+    )
+    detail = ProcessDetail(
+        pid=123,
+        user="deploy",
+        name="python",
+        cpu_percent=1.5,
+        memory_percent=2.5,
+        command_line="python app.py",
+        start_time="2026-06-25T12:00:00Z",
+        thread_count=8,
+        status="sleeping",
+    )
+
+    window.set_resource_snapshot(snapshot)
+    window.process_table.selectRow(0)
+    qtbot.mouseClick(window.resource_refresh_button, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window.process_detail_button, Qt.MouseButton.LeftButton)
+    window.set_process_detail(detail)
+
+    assert window.cpu_value_label.text() == "12.5%"
+    assert window.memory_value_label.text() == "400 / 1000 bytes"
+    assert window.disk_value_label.text() == "/: 1000 / 2000 bytes"
+    assert window.network_value_label.text() == "RX 10 B/s, TX 20 B/s"
+    assert window.process_table.item(0, 0).text() == "123"
+    assert controller.resource_refreshes == 1
+    assert controller.process_details == [123]
+    assert "python app.py" in window.process_detail_label.text()
+    assert "threads: 8" in window.process_detail_label.text()

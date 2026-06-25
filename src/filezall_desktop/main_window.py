@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from filezall_core.models import AuthMode, Protocol, SiteProfile, TransferItem
+from filezall_core.resource_models import ProcessDetail, ResourceSnapshot
 from filezall_desktop.controller import MainWindowController
 from filezall_desktop.widgets import ConnectionBar, FilePanel
 
@@ -82,11 +83,40 @@ class MainWindow(QMainWindow):
         transfer_actions.addWidget(self.cancel_transfer_button)
         transfer_actions.addWidget(self.retry_transfer_button)
         self.monitoring_status_label = QLabel("", root)
+        resource_actions = QHBoxLayout()
+        self.resource_refresh_button = QPushButton("Refresh Resources", root)
+        self.process_detail_button = QPushButton("Process Detail", root)
+        resource_actions.addWidget(QLabel("Resource Monitor", root))
+        resource_actions.addStretch(1)
+        resource_actions.addWidget(self.resource_refresh_button)
+        resource_actions.addWidget(self.process_detail_button)
+
+        resource_values = QHBoxLayout()
+        self.cpu_value_label = QLabel("0.0%", root)
+        self.memory_value_label = QLabel("0 / 0 bytes", root)
+        self.disk_value_label = QLabel("", root)
+        self.network_value_label = QLabel("RX 0 B/s, TX 0 B/s", root)
+        resource_values.addWidget(QLabel("CPU", root))
+        resource_values.addWidget(self.cpu_value_label)
+        resource_values.addWidget(QLabel("Memory", root))
+        resource_values.addWidget(self.memory_value_label)
+        resource_values.addWidget(QLabel("Disk", root))
+        resource_values.addWidget(self.disk_value_label)
+        resource_values.addWidget(QLabel("Network", root))
+        resource_values.addWidget(self.network_value_label)
+
+        self.process_table = QTableWidget(0, 5, root)
+        self.process_table.setHorizontalHeaderLabels(["PID", "User", "Name", "CPU", "Memory"])
+        self.process_detail_label = QLabel("", root)
 
         root_layout.addWidget(file_splitter, stretch=4)
         root_layout.addLayout(transfer_actions, stretch=0)
         root_layout.addWidget(self.monitoring_status_label, stretch=0)
         root_layout.addWidget(self.transfer_table, stretch=1)
+        root_layout.addLayout(resource_actions, stretch=0)
+        root_layout.addLayout(resource_values, stretch=0)
+        root_layout.addWidget(self.process_table, stretch=1)
+        root_layout.addWidget(self.process_detail_label, stretch=0)
         self.setCentralWidget(root)
 
     def set_local_entries(self, entries) -> None:
@@ -113,6 +143,31 @@ class MainWindow(QMainWindow):
             self.transfer_table.setItem(row, 3, QTableWidgetItem(_progress_text(item)))
             self.transfer_table.setItem(row, 4, QTableWidgetItem(item.status.value))
 
+    def set_resource_snapshot(self, snapshot: ResourceSnapshot) -> None:
+        self.cpu_value_label.setText(f"{snapshot.cpu.percent:.1f}%")
+        self.memory_value_label.setText(
+            f"{snapshot.memory.used_bytes} / {snapshot.memory.total_bytes} bytes"
+        )
+        self.disk_value_label.setText(_disk_text(snapshot))
+        self.network_value_label.setText(
+            f"RX {snapshot.network.rx_bytes_per_sec} B/s, TX {snapshot.network.tx_bytes_per_sec} B/s"
+        )
+        self.process_table.setRowCount(len(snapshot.processes))
+        for row, process in enumerate(snapshot.processes):
+            pid_cell = QTableWidgetItem(str(process.pid))
+            pid_cell.setData(Qt.ItemDataRole.UserRole, process.pid)
+            self.process_table.setItem(row, 0, pid_cell)
+            self.process_table.setItem(row, 1, QTableWidgetItem(process.user))
+            self.process_table.setItem(row, 2, QTableWidgetItem(process.name))
+            self.process_table.setItem(row, 3, QTableWidgetItem(f"{process.cpu_percent:.1f}%"))
+            self.process_table.setItem(row, 4, QTableWidgetItem(f"{process.memory_percent:.1f}%"))
+
+    def set_process_detail(self, detail: ProcessDetail) -> None:
+        self.process_detail_label.setText(
+            f"PID {detail.pid} {detail.name} | user: {detail.user} | "
+            f"status: {detail.status} | threads: {detail.thread_count} | {detail.command_line}"
+        )
+
     def set_site_profiles(self, sites) -> None:
         self.site_profiles = list(sites)
         self.connection_bar.site_selector.clear()
@@ -130,6 +185,8 @@ class MainWindow(QMainWindow):
         self.resume_transfer_button.clicked.connect(self._handle_resume_transfer_clicked)
         self.cancel_transfer_button.clicked.connect(self._handle_cancel_transfer_clicked)
         self.retry_transfer_button.clicked.connect(self._handle_retry_transfer_clicked)
+        self.resource_refresh_button.clicked.connect(self.controller.refresh_resources)
+        self.process_detail_button.clicked.connect(self._handle_process_detail_clicked)
 
     def _handle_connect_clicked(self) -> None:
         site = self._selected_saved_site()
@@ -173,6 +230,10 @@ class MainWindow(QMainWindow):
     def _handle_retry_transfer_clicked(self) -> None:
         if task_id := self._selected_transfer_task_id():
             self.controller.retry_transfer(task_id)
+
+    def _handle_process_detail_clicked(self) -> None:
+        if pid := self._selected_process_id():
+            self.controller.show_process_detail(pid)
 
     def _site_from_fields(self) -> SiteProfile:
         host = self.connection_bar.host_edit.text().strip()
@@ -221,6 +282,13 @@ class MainWindow(QMainWindow):
         item = self.transfer_table.item(selected[0].row(), 0)
         return str(item.data(Qt.ItemDataRole.UserRole)) if item else None
 
+    def _selected_process_id(self) -> int | None:
+        selected = self.process_table.selectionModel().selectedRows()
+        if not selected:
+            return None
+        item = self.process_table.item(selected[0].row(), 0)
+        return int(item.data(Qt.ItemDataRole.UserRole)) if item else None
+
 
 def _path_name(path: Path | PurePosixPath) -> str:
     return path.name
@@ -230,6 +298,13 @@ def _progress_text(item: TransferItem) -> str:
     if item.size_bytes <= 0:
         return "0%"
     return f"{int(item.bytes_transferred * 100 / item.size_bytes)}%"
+
+
+def _disk_text(snapshot: ResourceSnapshot) -> str:
+    if not snapshot.disks:
+        return ""
+    disk = snapshot.disks[0]
+    return f"{disk.mount}: {disk.used_bytes} / {disk.total_bytes} bytes"
 
 
 def _protocol_from_label(label: str) -> Protocol:

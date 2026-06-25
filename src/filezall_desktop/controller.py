@@ -8,6 +8,7 @@ from filezall_core.capabilities import resource_monitoring_message
 from filezall_core.client_factory import create_remote_client
 from filezall_core.local_files import list_local_directory
 from filezall_core.models import AuthMode, SiteProfile
+from filezall_core.resource_monitor import ResourceMonitoringUnavailable
 from filezall_core.session import RemoteSession
 
 
@@ -20,6 +21,7 @@ class MainWindowController:
         site_repository=None,
         credential_service=None,
         queue_service=None,
+        resource_monitor_service=None,
     ) -> None:
         self._window = window
         self._local_lister = local_lister
@@ -29,7 +31,9 @@ class MainWindowController:
         self._site_repository = site_repository
         self._credential_service = credential_service
         self._queue_service = queue_service
+        self._resource_monitor_service = resource_monitor_service
         self._session: RemoteSession | None = None
+        self._connected_site: SiteProfile | None = None
 
     def load_saved_sites(self) -> None:
         if self._site_repository is None:
@@ -46,6 +50,7 @@ class MainWindowController:
         site = self._save_site_if_configured(site, password)
         password = password or self._secret_for_site(site)
         self._session = self._session_factory(site)
+        self._connected_site = site
         entries = self._session.connect_and_list_default(password=password)
         self._window.set_remote_entries(entries, self._session.current_remote_path)
         if hasattr(self._window, "set_monitoring_status"):
@@ -81,6 +86,24 @@ class MainWindowController:
         self._require_queue().retry_failed(task_id)
         self._window.show_status(f"Retried transfer task {task_id}")
 
+    def refresh_resources(self) -> None:
+        try:
+            snapshot = self._require_resource_monitor().snapshot(self._require_connected_site())
+        except ResourceMonitoringUnavailable as exc:
+            self._window.show_status(str(exc))
+            return
+        self._window.set_resource_snapshot(snapshot)
+        self._window.show_status("Resource snapshot refreshed")
+
+    def show_process_detail(self, pid: int) -> None:
+        detail = self._require_resource_monitor().process_detail(
+            self._require_connected_site(),
+            pid,
+        )
+        if detail is not None:
+            self._window.set_process_detail(detail)
+            self._window.show_status(f"Loaded process detail {pid}")
+
     def _require_session(self) -> RemoteSession:
         if self._session is None:
             raise RuntimeError("Remote session is not connected")
@@ -90,6 +113,16 @@ class MainWindowController:
         if self._queue_service is None:
             raise RuntimeError("Transfer queue is not configured")
         return self._queue_service
+
+    def _require_resource_monitor(self):
+        if self._resource_monitor_service is None:
+            raise RuntimeError("Resource monitor is not configured")
+        return self._resource_monitor_service
+
+    def _require_connected_site(self) -> SiteProfile:
+        if self._connected_site is None:
+            raise RuntimeError("Remote session is not connected")
+        return self._connected_site
 
     def _save_site_if_configured(
         self,
