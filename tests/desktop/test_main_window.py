@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from filezall_desktop.main_window import MainWindow
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QAbstractItemView, QSplitter
 
 from filezall_core.models import (
     AuthMode,
@@ -95,6 +96,9 @@ class FakeController:
     def install_agent(self) -> None:
         self.agent_installs += 1
 
+    def secret_for_site(self, site):
+        return None
+
 
 class FailingConnectController(FakeController):
     def connect(self, site, password=None, remember_secret: bool = True) -> None:
@@ -153,6 +157,73 @@ def test_main_window_uses_draggable_splitters_for_major_regions(qtbot) -> None:
 
     assert window.main_splitter.count() == 3
     assert window.file_splitter.count() == 2
+
+
+def test_file_panels_use_full_row_selection_for_actions(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    window.local_panel.set_entries(
+        [
+            type(
+                "Entry",
+                (),
+                {
+                    "name": "src",
+                    "is_dir": True,
+                    "size_bytes": 0,
+                    "modified_time": None,
+                },
+            )()
+        ]
+    )
+
+    assert window.local_panel.table.selectionBehavior() == QAbstractItemView.SelectionBehavior.SelectRows
+    assert window.local_panel.table.selectionMode() == QAbstractItemView.SelectionMode.SingleSelection
+    assert window.local_panel.table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
+
+    window.local_panel.table.setCurrentCell(0, 2)
+
+    assert window.local_panel.selected_name() == "src"
+    assert window.local_panel.selected_is_dir() is True
+    assert window.local_panel.table.item(0, 2).data(Qt.ItemDataRole.UserRole) is True
+
+
+def test_main_window_double_clicks_directory_rows_from_any_column(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    window.local_panel.path_edit.setText(str(local_root))
+    window.local_panel.set_entries(
+        [
+            type(
+                "Entry",
+                (),
+                {
+                    "name": "src",
+                    "is_dir": True,
+                    "size_bytes": 0,
+                    "modified_time": None,
+                },
+            )()
+        ]
+    )
+
+    window.local_panel.table.cellDoubleClicked.emit(0, 2)
+
+    assert controller.local_refreshes == [local_root / "src"]
+
+
+def test_transfer_logs_have_resizable_splitter(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    assert isinstance(window.transfer_splitter, QSplitter)
+    assert window.transfer_splitter.orientation() == Qt.Orientation.Vertical
+    assert window.transfer_splitter.count() == 2
+    assert window.transfer_splitter.widget(0) is window.transfer_table
+    assert window.transfer_splitter.widget(1) is window.log_view
 
 
 def test_main_window_has_help_menu_actions(qtbot) -> None:
@@ -335,7 +406,8 @@ def test_main_window_loads_sites_and_connects_button_to_controller(qtbot) -> Non
     assert str(site.default_remote_path) == "/var/www"
     assert password == "secret"
     assert remember_secret is True
-    assert window.connection_state_label.text() == "Connected"
+    assert window.connection_state_label.text() == ""
+    assert window.connection_state_label.toolTip() == "Connected"
     assert "green" in window.connection_state_label.styleSheet()
 
 
@@ -348,9 +420,21 @@ def test_main_window_connection_failure_shows_red_status(qtbot) -> None:
 
     qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
 
-    assert window.connection_state_label.text() == "Failed"
+    assert window.connection_state_label.text() == ""
+    assert window.connection_state_label.toolTip() == "Failed"
     assert "red" in window.connection_state_label.styleSheet()
     assert window.connection_bar.connect_button.isEnabled()
+
+
+def test_connection_status_light_uses_tooltip_for_state_text(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    window._set_connection_state("Connecting", "goldenrod")
+
+    assert window.connection_state_label.text() == ""
+    assert window.connection_state_label.toolTip() == "Connecting"
+    assert "goldenrod" in window.connection_state_label.styleSheet()
 
 
 def test_main_window_can_connect_without_remembering_password(qtbot) -> None:
@@ -433,6 +517,40 @@ def test_main_window_connects_selected_saved_site_with_stored_credential_ref(qtb
     site, password, _remember_secret = controller.connect_calls[0]
     assert site == saved_site
     assert password is None
+
+
+def test_saved_site_autofills_quick_connect_fields_with_secret(qtbot, tmp_path) -> None:
+    class SavedController(FakeController):
+        def secret_for_site(self, site):
+            return "remembered-secret"
+
+    controller = SavedController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    saved_site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=2121,
+        protocol=Protocol.FTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+        default_local_path=tmp_path,
+        default_remote_path=PurePosixPath("/var/www"),
+        credential_ref="site-1:password",
+    )
+
+    window.set_site_profiles([saved_site])
+
+    assert window.connection_bar.site_selector.currentIndex() == 1
+    assert window.connection_bar.host_edit.text() == "example.com"
+    assert window.connection_bar.port_edit.text() == "2121"
+    assert window.connection_bar.username_edit.text() == "deploy"
+    assert window.connection_bar.protocol_selector.currentText() == "FTP"
+    assert window.connection_bar.auth_mode_selector.currentText() == "Password"
+    assert window.connection_bar.secret_edit.text() == "remembered-secret"
+    assert window.local_panel.path_edit.text() == str(tmp_path)
+    assert window.remote_panel.path_edit.text() == "/var/www"
 
 
 def test_main_window_refresh_upload_and_download_buttons_call_controller(qtbot, tmp_path) -> None:

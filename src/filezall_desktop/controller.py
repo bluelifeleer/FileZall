@@ -44,7 +44,10 @@ class MainWindowController:
         if self._site_repository is None:
             self._window.set_site_profiles([])
             return
-        self._window.set_site_profiles(self._site_repository.list())
+        self._window.set_site_profiles(self._site_repository.list(), secret_lookup=self.secret_for_site)
+
+    def secret_for_site(self, site: SiteProfile) -> str | None:
+        return self._secret_for_site(site)
 
     def load_local_directory(self, path: Path) -> None:
         entries = self._local_lister(path)

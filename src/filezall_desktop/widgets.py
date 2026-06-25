@@ -5,6 +5,7 @@ from datetime import datetime
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QHBoxLayout,
     QLabel,
@@ -79,6 +80,9 @@ class FilePanel(QWidget):
         self.action_button = QPushButton(action_label, self)
         self.table = QTableWidget(0, 4, self)
         self.table.setHorizontalHeaderLabels(["Name", "Size", "Type", "Modified"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
         self._build_context_menu()
@@ -114,22 +118,22 @@ class FilePanel(QWidget):
 
     def set_placeholder_row(self, text: str) -> None:
         self.table.setRowCount(1)
-        name_item = QTableWidgetItem(text)
-        name_item.setData(Qt.ItemDataRole.UserRole, False)
-        self.table.setItem(0, 0, name_item)
-        self.table.setItem(0, 1, QTableWidgetItem(""))
-        self.table.setItem(0, 2, QTableWidgetItem(""))
-        self.table.setItem(0, 3, QTableWidgetItem(""))
+        self.table.setItem(0, 0, _entry_item(text, False))
+        self.table.setItem(0, 1, _entry_item("", False))
+        self.table.setItem(0, 2, _entry_item("", False))
+        self.table.setItem(0, 3, _entry_item("", False))
 
     def set_entries(self, entries) -> None:
         self.table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
-            name_item = QTableWidgetItem(entry.name)
-            name_item.setData(Qt.ItemDataRole.UserRole, entry.is_dir)
-            self.table.setItem(row, 0, name_item)
-            self.table.setItem(row, 1, QTableWidgetItem(str(entry.size_bytes)))
-            self.table.setItem(row, 2, QTableWidgetItem("Directory" if entry.is_dir else "File"))
-            self.table.setItem(row, 3, QTableWidgetItem(_format_time(entry.modified_time)))
+            self.table.setItem(row, 0, _entry_item(entry.name, entry.is_dir))
+            self.table.setItem(row, 1, _entry_item(str(entry.size_bytes), entry.is_dir))
+            self.table.setItem(
+                row,
+                2,
+                _entry_item("Directory" if entry.is_dir else "File", entry.is_dir),
+            )
+            self.table.setItem(row, 3, _entry_item(_format_time(entry.modified_time), entry.is_dir))
         self.clear_selection()
 
     def selected_name(self) -> str | None:
@@ -158,3 +162,9 @@ class FilePanel(QWidget):
 
 def _format_time(value: datetime | None) -> str:
     return value.isoformat(timespec="seconds") if value else ""
+
+
+def _entry_item(text: str, is_dir: bool) -> QTableWidgetItem:
+    item = QTableWidgetItem(text)
+    item.setData(Qt.ItemDataRole.UserRole, is_dir)
+    return item
