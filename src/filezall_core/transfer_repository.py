@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 from pathlib import Path, PurePosixPath
+from typing import Final
 
 from filezall_core.models import (
     ConflictPolicy,
@@ -12,6 +13,9 @@ from filezall_core.models import (
     TransferStatus,
     TransferTask,
 )
+
+
+_UNCHANGED: Final = object()
 
 
 class TransferRepository:
@@ -99,6 +103,16 @@ class TransferRepository:
             ).fetchall()
         return [self._item_from_row(row) for row in rows]
 
+    def list_all_items(self, status: TransferStatus | None = None) -> list[TransferItem]:
+        where_clause = "order by created_at, id"
+        params: tuple[object, ...] = ()
+        if status is not None:
+            where_clause = "where status = ? order by created_at, id"
+            params = (status.value,)
+        with sqlite3.connect(self._database_path) as connection:
+            rows = connection.execute(self._item_select_sql(where_clause), params).fetchall()
+        return [self._item_from_row(row) for row in rows]
+
     def list_recoverable_items(self) -> list[TransferItem]:
         with sqlite3.connect(self._database_path) as connection:
             rows = connection.execute(
@@ -130,6 +144,32 @@ class TransferRepository:
                 where id = ?
                 """,
                 (bytes_transferred, status.value, last_error, item_id),
+            )
+            connection.commit()
+
+    def update_item_state(
+        self,
+        item_id: str,
+        status: TransferStatus,
+        last_error: str | None | object = _UNCHANGED,
+        retry_count: int | None = None,
+    ) -> None:
+        item = self.get_item(item_id)
+        if item is None:
+            return
+        next_error = item.last_error if last_error is _UNCHANGED else last_error
+        next_retry_count = item.retry_count if retry_count is None else retry_count
+        with sqlite3.connect(self._database_path) as connection:
+            connection.execute(
+                """
+                update transfer_items
+                set status = ?,
+                    last_error = ?,
+                    retry_count = ?,
+                    updated_at = current_timestamp
+                where id = ?
+                """,
+                (status.value, next_error, next_retry_count, item_id),
             )
             connection.commit()
 
