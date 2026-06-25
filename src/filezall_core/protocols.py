@@ -11,11 +11,7 @@ class RemoteConnectionError(RuntimeError):
 
 
 class RemoteFileClient(TypingProtocol):
-    """M2-minimal remote file interface.
-
-    Later protocol milestones add stat, mkdir, delete, rename, move, and resume
-    capability without changing the desktop workflow boundary.
-    """
+    """Remote file interface used by sessions and resumable transfer runners."""
 
     def connect(self, site: SiteProfile, password: str | None = None) -> None:
         ...
@@ -35,6 +31,32 @@ class RemoteFileClient(TypingProtocol):
     def download_file(self, remote_path: PurePosixPath, local_path: Path) -> None:
         ...
 
+    def remote_size(self, path: PurePosixPath) -> int | None:
+        ...
+
+    def upload_file_range(
+        self,
+        local_path: Path,
+        remote_path: PurePosixPath,
+        offset: int,
+    ) -> None:
+        ...
+
+    def download_file_range(
+        self,
+        remote_path: PurePosixPath,
+        local_path: Path,
+        offset: int,
+    ) -> None:
+        ...
+
+    def rename(
+        self,
+        source_path: PurePosixPath,
+        destination_path: PurePosixPath,
+    ) -> None:
+        ...
+
 
 class FakeRemoteClient:
     def __init__(
@@ -48,6 +70,10 @@ class FakeRemoteClient:
         self.password: str | None = None
         self.uploads: list[tuple[Path, PurePosixPath]] = []
         self.downloads: list[tuple[PurePosixPath, Path]] = []
+        self.remote_sizes: dict[PurePosixPath, int] = {}
+        self.range_uploads: list[tuple[Path, PurePosixPath, int]] = []
+        self.range_downloads: list[tuple[PurePosixPath, Path, int]] = []
+        self.renames: list[tuple[PurePosixPath, PurePosixPath]] = []
         self.closed = False
 
     def connect(self, site: SiteProfile, password: str | None = None) -> None:
@@ -68,3 +94,29 @@ class FakeRemoteClient:
 
     def download_file(self, remote_path: PurePosixPath, local_path: Path) -> None:
         self.downloads.append((remote_path, local_path))
+
+    def remote_size(self, path: PurePosixPath) -> int | None:
+        return self.remote_sizes.get(path)
+
+    def upload_file_range(
+        self,
+        local_path: Path,
+        remote_path: PurePosixPath,
+        offset: int,
+    ) -> None:
+        self.range_uploads.append((local_path, remote_path, offset))
+
+    def download_file_range(
+        self,
+        remote_path: PurePosixPath,
+        local_path: Path,
+        offset: int,
+    ) -> None:
+        self.range_downloads.append((remote_path, local_path, offset))
+
+    def rename(
+        self,
+        source_path: PurePosixPath,
+        destination_path: PurePosixPath,
+    ) -> None:
+        self.renames.append((source_path, destination_path))
