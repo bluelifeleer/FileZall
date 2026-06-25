@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,11 +26,24 @@ def test_packaging_files_contain_platform_build_commands() -> None:
 
     assert "filezall_desktop.app" in spec
     assert "pyinstaller" in windows_build
+    assert ".venv" in windows_build
+    assert "-m PyInstaller" in windows_build
     assert "Inno Setup" in inno
     assert "create-dmg" in macos_build
     assert "notarization" in readme
     assert "code signing" in readme
     assert "docs/agent-deployment.md" in readme
+
+
+def test_windows_inno_app_id_is_valid_guid() -> None:
+    inno = (ROOT / "packaging/windows/FileZall.iss").read_text(encoding="utf-8")
+    match = re.search(r"^AppId=\{\{(?P<guid>[0-9A-Fa-f-]{36})\}$", inno, re.MULTILINE)
+
+    assert match is not None
+    assert re.fullmatch(
+        r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}",
+        match.group("guid"),
+    )
 
 
 def test_agent_deployment_docs_cover_install_tunnel_and_health_check() -> None:

@@ -6,7 +6,7 @@
 #define MyAppExeName "FileZall.exe"
 
 [Setup]
-AppId={{6B34A8A8-A175-4C5C-9D5A-FILEZALL0001}
+AppId={{6B34A8A8-A175-4C5C-9D5A-F11E2A110001}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
