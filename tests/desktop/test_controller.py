@@ -9,7 +9,7 @@ from filezall_core.models import (
     SiteProfile,
     TransferStatus,
 )
-from filezall_core.agent_deployment import AgentInstallResult
+from filezall_core.agent_deployment import AgentDetectionResult, AgentInstallResult
 from filezall_core.resource_models import (
     CpuStats,
     MemoryStats,
@@ -64,9 +64,11 @@ class FakeWindow:
 class FakeSession:
     def __init__(self) -> None:
         self.current_remote_path = PurePosixPath("/home/deploy")
+        self.client = self
         self.uploads = []
         self.downloads = []
         self.list_calls = []
+        self.captures = []
         self.fail_list = False
         self.disconnect_calls = 0
 
@@ -93,6 +95,10 @@ class FakeSession:
         if self.fail_list:
             raise RuntimeError("connection lost")
         return []
+
+    def capture(self, command: str) -> str:
+        self.captures.append(command)
+        return "{}"
 
     def disconnect(self) -> None:
         self.disconnect_calls += 1
@@ -223,6 +229,7 @@ class FakeAgentInstallService:
         self.detail_calls = []
         self.installed_checks = []
         self.installed = False
+        self.detect_result = None
         self.expected_snapshot = ResourceSnapshot(
             cpu=CpuStats(percent=33.3),
             memory=MemoryStats(total_bytes=2000, used_bytes=1000, available_bytes=1000),
@@ -260,12 +267,23 @@ class FakeAgentInstallService:
             progress_callback("Agent detection: test progress")
         return self.installed
 
-    def resource_snapshot(self, site, password):
-        self.resource_calls.append((site, password))
+    def detect_agent_installation(self, site, password, progress_callback=None):
+        self.installed_checks.append((site, password))
+        if progress_callback is not None:
+            progress_callback("Agent detection: test progress")
+        if self.detect_result is not None:
+            return self.detect_result
+        return AgentDetectionResult(
+            installed=self.installed,
+            commands_run=1 if self.installed else 0,
+        )
+
+    def resource_snapshot(self, site, password, runner=None):
+        self.resource_calls.append((site, password, runner))
         return self.expected_snapshot
 
-    def process_detail(self, site, pid, password):
-        self.detail_calls.append((site, pid, password))
+    def process_detail(self, site, pid, password, runner=None):
+        self.detail_calls.append((site, pid, password, runner))
         return self.detail
 
 
@@ -590,6 +608,39 @@ def test_controller_detects_agent_installation_after_connecting() -> None:
     assert window.agent_statuses == [None, True]
 
 
+def test_controller_uses_detected_agent_token_for_resource_monitoring() -> None:
+    window = FakeWindow()
+    service = FakeAgentInstallService(AgentInstallResult(success=True, commands_run=8))
+    service.detect_result = AgentDetectionResult(
+        installed=True,
+        commands_run=1,
+        agent_token_ref="site-1:agent-token",
+    )
+    session = FakeSession()
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: session,
+        agent_install_service=service,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+
+    assert controller._connected_site.agent_enabled is True
+    assert controller._connected_site.agent_token_ref == "site-1:agent-token"
+    assert service.resource_calls == [(controller._connected_site, "secret", session)]
+    assert window.resource_snapshot == service.expected_snapshot
+
+
 def test_controller_skips_agent_detection_for_ftp_connection() -> None:
     window = FakeWindow()
     service = FakeAgentInstallService(AgentInstallResult(success=True, commands_run=8))
@@ -747,9 +798,11 @@ def test_controller_refreshes_resources_through_installed_agent_when_no_monitor_
     controller.refresh_resources()
     controller.show_process_detail(456)
 
-    assert service.resource_calls == [(controller._connected_site, "secret")]
+    assert service.resource_calls == [(controller._connected_site, "secret", controller._session.client)]
     assert window.resource_snapshot == service.expected_snapshot
-    assert service.detail_calls == [(controller._connected_site, 456, "secret")]
+    assert service.detail_calls == [
+        (controller._connected_site, 456, "secret", controller._session.client)
+    ]
     assert window.process_detail == service.detail
 
 

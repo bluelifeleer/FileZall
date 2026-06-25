@@ -208,10 +208,16 @@ class MainWindowController:
 
     def refresh_resources(self) -> None:
         if self._resource_monitor_service is None and self._can_read_agent_resources():
-            snapshot = self._agent_install_service.resource_snapshot(
-                self._require_connected_site(),
-                self._connected_secret,
-            )
+            try:
+                snapshot = self._agent_install_service.resource_snapshot(
+                    self._require_connected_site(),
+                    self._connected_secret,
+                    runner=self._connected_agent_runner(),
+                )
+            except Exception as exc:
+                self._window.show_status(f"Agent resource refresh failed: {exc}")
+                self._log(f"Agent resource refresh failed: {exc}")
+                return
             self._window.set_resource_snapshot(snapshot)
             self._window.show_status("Agent resource snapshot refreshed")
             return
@@ -229,6 +235,7 @@ class MainWindowController:
                 self._require_connected_site(),
                 pid,
                 self._connected_secret,
+                runner=self._connected_agent_runner(),
             )
             self._window.set_process_detail(detail)
             self._window.show_status(f"Loaded Agent process detail {pid}")
@@ -335,24 +342,58 @@ class MainWindowController:
             self._window.set_agent_status(None)
         self._log("Agent detection started")
         try:
-            installed = self._agent_install_service.is_agent_installed(
-                site,
-                password,
-                progress_callback=lambda message: self._log(message),
-            )
+            agent_token_ref = None
+            if hasattr(self._agent_install_service, "detect_agent_installation"):
+                result = self._agent_install_service.detect_agent_installation(
+                    site,
+                    password,
+                    progress_callback=lambda message: self._log(message),
+                )
+                installed = result.installed
+                agent_token_ref = result.agent_token_ref
+            else:
+                installed = self._agent_install_service.is_agent_installed(
+                    site,
+                    password,
+                    progress_callback=lambda message: self._log(message),
+                )
         except Exception as exc:
             self._log(f"Agent detection failed: {exc}")
             if hasattr(self._window, "set_agent_status"):
                 self._window.set_agent_status(False)
             return
+        if installed and agent_token_ref is not None:
+            self._mark_connected_site_agent_enabled_ref(agent_token_ref)
+            self.refresh_resources()
         if hasattr(self._window, "set_agent_status"):
             self._window.set_agent_status(installed)
-        self._log("Agent service installed" if installed else "Agent service not installed")
+        if installed and agent_token_ref is None:
+            self._log("Agent service installed but Agent token is not available")
+            self._window.show_status("Agent installed, but install/update is required to enable monitoring")
+        else:
+            self._log("Agent service installed" if installed else "Agent service not installed")
+
+    def _mark_connected_site_agent_enabled_ref(self, agent_token_ref: str) -> None:
+        if self._connected_site is None:
+            return
+        self._connected_site = replace(
+            self._connected_site,
+            agent_enabled=True,
+            agent_token_ref=agent_token_ref,
+        )
 
     def _require_session(self) -> RemoteSession:
         if self._session is None:
             raise RuntimeError("Remote session is not connected")
         return self._session
+
+    def _connected_agent_runner(self):
+        if self._session is None:
+            return None
+        client = getattr(self._session, "client", None)
+        if client is not None and hasattr(client, "capture"):
+            return client
+        return None
 
     def _can_read_agent_resources(self) -> bool:
         return (

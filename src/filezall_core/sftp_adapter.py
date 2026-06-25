@@ -119,6 +119,26 @@ class SftpAdapter:
     ) -> None:
         self._require_sftp().rename(str(source_path), str(destination_path))
 
+    def capture(self, command: str) -> str:
+        stdout, _stderr = self._exec(command)
+        return stdout.read().decode("utf-8", errors="replace")
+
+    def _exec(self, command: str):
+        ssh = self._require_ssh()
+        _stdin, stdout, stderr = ssh.exec_command(command)
+        exit_status = stdout.channel.recv_exit_status()
+        if exit_status != 0:
+            error = stderr.read().decode("utf-8", errors="replace").strip()
+            raise RemoteConnectionError(
+                error or f"Remote command failed with exit status {exit_status}: {command}"
+            )
+        return stdout, stderr
+
+    def _require_ssh(self):
+        if self._ssh is None:
+            raise RemoteConnectionError("SSH client is not connected")
+        return self._ssh
+
     def _require_sftp(self):
         if self._sftp is None:
             raise RemoteConnectionError("SFTP client is not connected")

@@ -298,6 +298,40 @@ def test_agent_deployment_service_detects_installed_agent_service() -> None:
     assert "Agent detection: service installed" in messages
 
 
+def test_agent_deployment_service_imports_detected_agent_token() -> None:
+    runner = FakeRunner()
+    runner.capture_payloads["cat /opt/filezall-agent/agent.env"] = (
+        "FILEZALL_AGENT_TOKEN=stored-token\n"
+        "FILEZALL_AGENT_HOST=127.0.0.1\n"
+    )
+    credentials = FakeCredentials()
+    repository = FakeRepository()
+    service = AgentDeploymentService(
+        package_builder=lambda: Path("unused.tar.gz"),
+        runner_factory=lambda site, password: runner,
+        credential_service=credentials,
+        site_repository=repository,
+        token_factory=lambda: "generated-token",
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    result = service.detect_agent_installation(site, password="secret")
+
+    assert result.installed is True
+    assert result.agent_token_ref == "site-1:agent-token"
+    assert credentials.saved == [("site-1", "agent-token", "stored-token")]
+    assert repository.saved[-1].agent_enabled is True
+    assert repository.saved[-1].agent_token_ref == "site-1:agent-token"
+
+
 def test_agent_deployment_service_reports_agent_service_missing() -> None:
     class MissingAgentRunner(FakeRunner):
         def run(self, command: str) -> None:
