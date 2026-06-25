@@ -11,6 +11,7 @@ def test_packaging_files_exist() -> None:
         "packaging/windows/FileZall.iss",
         "packaging/macos/build.sh",
         "packaging/README.md",
+        "docs/agent-deployment.md",
     ]:
         assert (ROOT / relative_path).exists()
 
@@ -28,3 +29,14 @@ def test_packaging_files_contain_platform_build_commands() -> None:
     assert "create-dmg" in macos_build
     assert "notarization" in readme
     assert "code signing" in readme
+    assert "docs/agent-deployment.md" in readme
+
+
+def test_agent_deployment_docs_cover_install_tunnel_and_health_check() -> None:
+    guide = (ROOT / "docs/agent-deployment.md").read_text(encoding="utf-8")
+
+    assert "FILEZALL_AGENT_TOKEN" in guide
+    assert "filezall-agent" in guide
+    assert "systemctl" in guide
+    assert "ssh -L" in guide
+    assert "health" in guide

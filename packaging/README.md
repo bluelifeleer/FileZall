@@ -25,3 +25,7 @@ The script runs `pyinstaller` and uses `create-dmg` when available.
 ## Release Notes
 
 Production distribution still needs platform code signing. Windows builds should be signed with an Authenticode certificate. macOS builds require code signing and notarization before public distribution.
+
+## Linux Agent
+
+Build and deployment notes for the optional Linux Agent are in `docs/agent-deployment.md`.

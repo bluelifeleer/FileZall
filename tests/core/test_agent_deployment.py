@@ -35,4 +35,29 @@ def test_agent_installer_uploads_package_and_runs_install_commands(tmp_path: Pat
         "systemctl is-active --quiet filezall-agent",
     ]
     assert result.success is True
+    assert result.verified is False
     assert result.commands_run == len(runner.commands)
+
+
+def test_agent_installer_marks_install_verified_when_health_check_passes(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    installer = AgentInstaller(runner, health_check=lambda: True)
+    package = tmp_path / "filezall-agent.tar.gz"
+    package.write_bytes(b"agent")
+
+    result = installer.install_or_update(package, token="secret-token")
+
+    assert result.success is True
+    assert result.verified is True
+
+
+def test_agent_installer_reports_failure_when_health_check_fails(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    installer = AgentInstaller(runner, health_check=lambda: False)
+    package = tmp_path / "filezall-agent.tar.gz"
+    package.write_bytes(b"agent")
+
+    result = installer.install_or_update(package, token="secret-token")
+
+    assert result.success is False
+    assert result.verified is False
