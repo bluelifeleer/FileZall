@@ -21,9 +21,10 @@ dev = [
 
 [project.scripts]
 filezall = "filezall_desktop.app:main"
+filezall-agent = "filezall_agent.server:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "agent"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
