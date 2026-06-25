@@ -964,8 +964,7 @@ class MainWindow(QMainWindow):
         self.connection_bar.ssh_key_path_edit.setText(str(site.ssh_key_path or ""))
         self.local_panel.path_edit.setText(str(site.default_local_path or ""))
         self.remote_panel.path_edit.setText(str(site.default_remote_path))
-        secret = self._site_secret_lookup(site) if self._site_secret_lookup else None
-        self.connection_bar.secret_edit.setText(secret or "")
+        self.connection_bar.secret_edit.clear()
 
     def _site_from_fields(self) -> SiteProfile:
         host = self.connection_bar.host_edit.text().strip()

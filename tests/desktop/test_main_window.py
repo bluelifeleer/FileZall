@@ -1127,9 +1127,14 @@ def test_main_window_connects_selected_saved_site_with_stored_credential_ref(qtb
     assert password is None
 
 
-def test_saved_site_autofills_quick_connect_fields_with_secret(qtbot, tmp_path) -> None:
+def test_saved_site_autofills_quick_connect_fields_without_reading_secret(qtbot, tmp_path) -> None:
     class SavedController(FakeController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.secret_lookup_count = 0
+
         def secret_for_site(self, site):
+            self.secret_lookup_count += 1
             return "remembered-secret"
 
     controller = SavedController()
@@ -1157,7 +1162,8 @@ def test_saved_site_autofills_quick_connect_fields_with_secret(qtbot, tmp_path) 
     assert window.connection_bar.username_edit.text() == "deploy"
     assert window.connection_bar.protocol_selector.currentText() == "FTP"
     assert window.connection_bar.auth_mode_selector.currentText() == "Password"
-    assert window.connection_bar.secret_edit.text() == "remembered-secret"
+    assert window.connection_bar.secret_edit.text() == ""
+    assert controller.secret_lookup_count == 0
     assert window.local_panel.path_edit.text() == str(tmp_path)
     assert window.remote_panel.path_edit.text() == "/var/www"
 
