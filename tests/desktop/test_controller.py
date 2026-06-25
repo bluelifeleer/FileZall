@@ -79,15 +79,16 @@ class FakeRepository:
 
 
 class FakeCredentials:
-    def __init__(self) -> None:
+    def __init__(self, secrets=None) -> None:
         self.saved = []
+        self.secrets = secrets or {}
 
     def save_secret(self, site_id: str, purpose: str, secret: str) -> str:
         self.saved.append((site_id, purpose, secret))
         return f"{site_id}:{purpose}"
 
     def get_secret(self, ref):
-        return None
+        return self.secrets.get(ref)
 
 
 class FakeQueue:
@@ -189,7 +190,7 @@ def test_controller_loads_saved_sites_into_window() -> None:
         username="deploy",
         auth_mode=AuthMode.PASSWORD,
     )
-    window.set_site_profiles = lambda sites: setattr(window, "sites", sites)
+    window.set_site_profiles = lambda sites, secret_lookup=None: setattr(window, "sites", sites)
     controller = MainWindowController(
         window=window,
         local_lister=lambda path: [],
@@ -200,6 +201,35 @@ def test_controller_loads_saved_sites_into_window() -> None:
     controller.load_saved_sites()
 
     assert window.sites == [site]
+
+
+def test_controller_loads_saved_sites_with_secret_lookup() -> None:
+    window = FakeWindow()
+    captured = {}
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+        credential_ref="site-1:password",
+    )
+    window.set_site_profiles = lambda sites, secret_lookup=None: captured.update(
+        {"sites": sites, "secret": secret_lookup(sites[0]) if secret_lookup else None}
+    )
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: FakeSession(),
+        site_repository=FakeRepository([site]),
+        credential_service=FakeCredentials({"site-1:password": "remembered-secret"}),
+    )
+
+    controller.load_saved_sites()
+
+    assert captured == {"sites": [site], "secret": "remembered-secret"}
 
 
 def test_controller_connects_remote_and_transfers_one_file(tmp_path: Path) -> None:

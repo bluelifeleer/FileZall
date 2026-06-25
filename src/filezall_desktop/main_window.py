@@ -44,6 +44,8 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self.log_service = TransferLogService()
+        self.site_profiles = []
+        self._site_secret_lookup = None
         self._local_directory_chooser = local_directory_chooser or _choose_local_directory
         self._agent_install_confirmer = agent_install_confirmer or _confirm_agent_install
         self._remember_secret_confirmer = remember_secret_confirmer
@@ -57,7 +59,8 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_central_layout()
         self.setStatusBar(QStatusBar(self))
-        self.connection_state_label = QLabel("Idle", self)
+        self.connection_state_label = QLabel("", self)
+        self.connection_state_label.setFixedSize(12, 12)
         self.statusBar().addPermanentWidget(self.connection_state_label)
         self._set_connection_state("Idle", "grey")
         self.statusBar().showMessage("Ready")
@@ -138,6 +141,10 @@ class MainWindow(QMainWindow):
         self.log_view = QPlainTextEdit(transfer_widget)
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(1000)
+        self.transfer_splitter = QSplitter(Qt.Orientation.Vertical, transfer_widget)
+        self.transfer_splitter.addWidget(self.transfer_table)
+        self.transfer_splitter.addWidget(self.log_view)
+        self.transfer_splitter.setSizes([130, 80])
         transfer_actions = QHBoxLayout()
         self.pause_transfer_button = QPushButton("Pause", root)
         self.resume_transfer_button = QPushButton("Resume", root)
@@ -153,9 +160,8 @@ class MainWindow(QMainWindow):
 
         transfer_layout.addLayout(transfer_actions, stretch=0)
         transfer_layout.addWidget(self.monitoring_status_label, stretch=0)
-        transfer_layout.addWidget(self.transfer_table, stretch=1)
         transfer_layout.addWidget(QLabel("Transfer Logs", transfer_widget), stretch=0)
-        transfer_layout.addWidget(self.log_view, stretch=1)
+        transfer_layout.addWidget(self.transfer_splitter, stretch=1)
 
         resource_widget = QWidget(self.main_splitter)
         resource_layout = QVBoxLayout(resource_widget)
@@ -268,15 +274,22 @@ class MainWindow(QMainWindow):
             f"status: {detail.status} | threads: {detail.thread_count} | {detail.command_line}"
         )
 
-    def set_site_profiles(self, sites) -> None:
+    def set_site_profiles(self, sites, secret_lookup=None) -> None:
         self.site_profiles = list(sites)
+        self._site_secret_lookup = secret_lookup or getattr(self.controller, "secret_for_site", None)
         self.connection_bar.site_selector.clear()
         self.connection_bar.site_selector.addItem("Quick Connect")
         for site in self.site_profiles:
             self.connection_bar.site_selector.addItem(site.name, site.id)
+        if self.site_profiles:
+            self.connection_bar.site_selector.setCurrentIndex(1)
+            self._populate_connection_fields(self.site_profiles[0])
 
     def _connect_signals(self) -> None:
         self.connection_bar.connect_button.clicked.connect(self._handle_connect_clicked)
+        self.connection_bar.site_selector.currentIndexChanged.connect(
+            self._handle_site_selection_changed
+        )
         self.connection_bar.install_agent_button.clicked.connect(self._handle_install_agent_clicked)
         self.local_panel.path_button.clicked.connect(self._handle_local_path_button_clicked)
         self.remote_panel.path_button.clicked.connect(self._handle_remote_path_button_clicked)
@@ -451,8 +464,34 @@ class MainWindow(QMainWindow):
             self.controller.show_process_detail(pid)
 
     def _set_connection_state(self, text: str, color: str) -> None:
-        self.connection_state_label.setText(text)
-        self.connection_state_label.setStyleSheet(f"color: {color}; font-weight: 600;")
+        self.connection_state_label.setText("")
+        self.connection_state_label.setToolTip(text)
+        self.connection_state_label.setStyleSheet(
+            "border-radius: 6px; "
+            f"background-color: {color}; "
+            f"border: 1px solid {color};"
+        )
+
+    def _handle_site_selection_changed(self, index: int) -> None:
+        if index <= 0:
+            return
+        site_index = index - 1
+        if site_index < len(self.site_profiles):
+            self._populate_connection_fields(self.site_profiles[site_index])
+
+    def _populate_connection_fields(self, site: SiteProfile) -> None:
+        self.connection_bar.host_edit.setText(site.host)
+        self.connection_bar.port_edit.setText(str(site.port))
+        self.connection_bar.username_edit.setText(site.username)
+        self.connection_bar.protocol_selector.setCurrentText(site.protocol.name)
+        self.connection_bar.auth_mode_selector.setCurrentText(
+            "SSH Key" if site.auth_mode == AuthMode.SSH_KEY else "Password"
+        )
+        self.connection_bar.ssh_key_path_edit.setText(str(site.ssh_key_path or ""))
+        self.local_panel.path_edit.setText(str(site.default_local_path or ""))
+        self.remote_panel.path_edit.setText(str(site.default_remote_path))
+        secret = self._site_secret_lookup(site) if self._site_secret_lookup else None
+        self.connection_bar.secret_edit.setText(secret or "")
 
     def _site_from_fields(self) -> SiteProfile:
         host = self.connection_bar.host_edit.text().strip()
