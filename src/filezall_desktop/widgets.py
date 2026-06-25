@@ -269,7 +269,7 @@ class FilePanel(QWidget):
 
     def set_placeholder_row(self, text: str) -> None:
         self.table.setRowCount(1)
-        self.table.setItem(0, 0, _entry_item(text, False))
+        self.table.setItem(0, 0, _entry_item(text, False, show_icon=True))
         self.table.setItem(0, 1, _entry_item("", False))
         self.table.setItem(0, 2, _entry_item("", False))
         self.table.setItem(0, 3, _entry_item("", False))
@@ -278,7 +278,7 @@ class FilePanel(QWidget):
         self.table.setRowCount(len(entries) + 1)
         self._set_row(0, "..", "", self._parent_label, "", is_dir=True, row_kind="parent")
         for row, entry in enumerate(entries, start=1):
-            self.table.setItem(row, 0, _entry_item(entry.name, entry.is_dir))
+            self.table.setItem(row, 0, _entry_item(entry.name, entry.is_dir, show_icon=True))
             self.table.setItem(row, 1, _entry_item(str(entry.size_bytes), entry.is_dir))
             self.table.setItem(
                 row,
@@ -340,7 +340,7 @@ class FilePanel(QWidget):
         is_dir: bool,
         row_kind: str,
     ) -> None:
-        self.table.setItem(row, 0, _entry_item(name, is_dir, row_kind))
+        self.table.setItem(row, 0, _entry_item(name, is_dir, row_kind, show_icon=True))
         self.table.setItem(row, 1, _entry_item(size, is_dir, row_kind))
         self.table.setItem(row, 2, _entry_item(kind, is_dir, row_kind))
         self.table.setItem(row, 3, _entry_item(modified, is_dir, row_kind))
@@ -353,9 +353,15 @@ def _format_time(value: datetime | None) -> str:
 _ROW_KIND_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
-def _entry_item(text: str, is_dir: bool, row_kind: str = "entry") -> QTableWidgetItem:
+def _entry_item(
+    text: str,
+    is_dir: bool,
+    row_kind: str = "entry",
+    *,
+    show_icon: bool = False,
+) -> QTableWidgetItem:
     item = QTableWidgetItem(text)
-    if text:
+    if show_icon and text:
         icon = _entry_icon(text, is_dir, row_kind)
         if not icon.isNull():
             item.setIcon(icon)

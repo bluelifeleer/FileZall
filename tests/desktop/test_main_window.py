@@ -288,6 +288,9 @@ def test_file_panel_shows_icons_for_parent_directories_and_file_suffixes(qtbot) 
     assert not window.local_panel.table.item(1, 0).icon().isNull()
     assert not window.local_panel.table.item(2, 0).icon().isNull()
     assert not window.local_panel.table.item(3, 0).icon().isNull()
+    for row in range(window.local_panel.table.rowCount()):
+        for column in range(1, window.local_panel.table.columnCount()):
+            assert window.local_panel.table.item(row, column).icon().isNull()
 
 
 def test_file_panel_ctrl_a_and_drag_style_multiselect_batch_actions(qtbot, tmp_path) -> None:
