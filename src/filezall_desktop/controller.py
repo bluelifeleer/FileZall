@@ -4,10 +4,10 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
 
+from filezall_core.client_factory import create_remote_client
 from filezall_core.local_files import list_local_directory
 from filezall_core.models import AuthMode, SiteProfile
 from filezall_core.session import RemoteSession
-from filezall_core.sftp_adapter import SftpAdapter
 
 
 class MainWindowController:
@@ -23,7 +23,7 @@ class MainWindowController:
         self._window = window
         self._local_lister = local_lister
         self._session_factory = session_factory or (
-            lambda site: RemoteSession(site=site, client=SftpAdapter())
+            lambda site: RemoteSession(site=site, client=create_remote_client(site.protocol))
         )
         self._site_repository = site_repository
         self._credential_service = credential_service
