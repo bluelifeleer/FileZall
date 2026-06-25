@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ftplib
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
@@ -65,10 +66,24 @@ class FtpAdapter:
         local_path: Path,
         remote_path: PurePosixPath,
         offset: int,
+        progress_callback: Callable[[int], None] | None = None,
     ) -> None:
+        bytes_transferred = offset
+
+        def on_chunk(chunk: bytes) -> None:
+            nonlocal bytes_transferred
+            bytes_transferred += len(chunk)
+            if progress_callback is not None:
+                progress_callback(bytes_transferred)
+
         with local_path.open("rb") as file:
             file.seek(offset)
-            self._require_client().storbinary(f"STOR {remote_path}", file, rest=offset)
+            self._require_client().storbinary(
+                f"STOR {remote_path}",
+                file,
+                callback=on_chunk,
+                rest=offset,
+            )
 
     def download_file_range(
         self,

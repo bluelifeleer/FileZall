@@ -57,11 +57,20 @@ class TransferQueue:
                     retry_count=item.retry_count + 1,
                 )
 
-    def run_next(self, server_id: str) -> TransferItem | None:
+    def run_next(
+        self,
+        server_id: str,
+        client: RemoteFileClient | None = None,
+        progress_callback: Callable[[TransferItem], None] | None = None,
+    ) -> TransferItem | None:
         for item in self.repository.list_all_items(status=TransferStatus.PENDING):
             if item.server_id == server_id:
-                client = self._client_factory(server_id)
-                return self._runner.run_item(item, client)
+                transfer_client = client or self._client_factory(server_id)
+                return self._runner.run_item(
+                    item,
+                    transfer_client,
+                    progress_callback=progress_callback,
+                )
         return None
 
     def recover_pending(self) -> list[TransferItem]:

@@ -3,11 +3,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
+from uuid import uuid4
 
 from filezall_core.capabilities import resource_monitoring_message
 from filezall_core.client_factory import create_remote_client
 from filezall_core.local_files import list_local_directory
-from filezall_core.models import AuthMode, Direction, SiteProfile
+from filezall_core.models import AuthMode, ConflictPolicy, Direction, SiteProfile, TransferTask
 from filezall_core.resource_monitor import ResourceMonitoringUnavailable
 from filezall_core.session import RemoteSession
 
@@ -104,6 +105,9 @@ class MainWindowController:
         return True
 
     def upload_file(self, local_path: Path, remote_path: PurePosixPath) -> None:
+        if self._queue_service is not None and self._connected_site is not None:
+            self._queue_upload_file(local_path, remote_path)
+            return
         self._require_session().upload_file(local_path, remote_path)
         self._window.show_status(f"Uploaded {local_path.name}")
         self._log(f"Uploaded {local_path} to {remote_path}")
@@ -126,6 +130,54 @@ class MainWindowController:
     ) -> None:
         self._window.show_status(f"Queued {direction.value} {source_path}")
         self._log(f"Queued {direction.value} {source_path} -> {destination_path}")
+
+    def _queue_upload_file(self, local_path: Path, remote_path: PurePosixPath) -> None:
+        site = self._require_connected_site()
+        task = TransferTask(
+            id=f"task-{uuid4()}",
+            server_id=site.id,
+            direction=Direction.UPLOAD,
+            source_path=local_path.parent,
+            destination_path=remote_path.parent,
+            protocol=site.protocol,
+            conflict_policy=ConflictPolicy.OVERWRITE,
+        )
+        item = task.create_item(
+            item_id=f"item-{uuid4()}",
+            relative_path=PurePosixPath(local_path.name),
+            size_bytes=local_path.stat().st_size,
+        )
+        queue = self._require_queue()
+        queue.add_task(task, [item])
+        self._publish_transfer_items(site.id)
+        self._window.show_status(f"Queued upload {local_path.name}")
+        self._log(f"Queued upload {local_path} -> {remote_path}")
+        session = self._require_session()
+        client = getattr(session, "client", None)
+        if client is None:
+            queue.run_next(
+                site.id,
+                progress_callback=lambda _item: self._publish_transfer_items(site.id),
+            )
+        else:
+            queue.run_next(
+                site.id,
+                client=client,
+                progress_callback=lambda _item: self._publish_transfer_items(site.id),
+            )
+        self._publish_transfer_items(site.id)
+        self._window.show_status(f"Uploaded {local_path.name}")
+        self._log(f"Uploaded {local_path} to {remote_path}")
+
+    def _publish_transfer_items(self, server_id: str | None = None) -> None:
+        if not hasattr(self._window, "set_transfer_items"):
+            return
+        if self._queue_service is None:
+            self._window.set_transfer_items([])
+            return
+        self._window.set_transfer_items(
+            self._queue_service.list_items(server_id=server_id),
+        )
 
     def create_directory(self, path: Path | PurePosixPath, remote: bool) -> None:
         location = "remote" if remote else "local"

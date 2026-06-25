@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import stat
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
@@ -86,12 +87,17 @@ class SftpAdapter:
         local_path: Path,
         remote_path: PurePosixPath,
         offset: int,
+        progress_callback: Callable[[int], None] | None = None,
     ) -> None:
+        bytes_transferred = offset
         with local_path.open("rb") as local_file:
             local_file.seek(offset)
             with self._require_sftp().open(str(remote_path), "ab") as remote_file:
                 while chunk := local_file.read(1024 * 1024):
                     remote_file.write(chunk)
+                    bytes_transferred += len(chunk)
+                    if progress_callback is not None:
+                        progress_callback(bytes_transferred)
 
     def download_file_range(
         self,

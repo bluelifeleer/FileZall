@@ -2,7 +2,14 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
-from filezall_core.models import ConflictPolicy, Direction, Protocol, TransferItem, TransferTask
+from filezall_core.models import (
+    ConflictPolicy,
+    Direction,
+    Protocol,
+    TransferItem,
+    TransferStatus,
+    TransferTask,
+)
 from filezall_core.protocols import FakeRemoteClient
 from filezall_core.storage import initialize_database
 from filezall_core.transfer_repository import TransferRepository
@@ -121,6 +128,38 @@ def test_transfer_runner_uses_agent_http_remote_client_for_upload(tmp_path: Path
     ]
 
 
+def test_transfer_runner_reports_upload_chunk_progress(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    task = TransferTask(
+        id="task-1",
+        server_id="site-1",
+        direction=Direction.UPLOAD,
+        source_path=tmp_path,
+        destination_path=PurePosixPath("/home/deploy"),
+        protocol=Protocol.SFTP,
+        conflict_policy=ConflictPolicy.OVERWRITE,
+    )
+    item = task.create_item("item-1", PurePosixPath("app.zip"), size_bytes=6)
+    local_file = tmp_path / "app.zip"
+    local_file.write_bytes(b"abcdef")
+    repository.save_task(task, [item])
+    progress_updates = []
+
+    result = TransferRunner(repository).run_item(
+        item,
+        ProgressingRemoteClient(),
+        progress_callback=progress_updates.append,
+    )
+
+    assert result.status == TransferStatus.COMPLETED
+    assert any(
+        update.bytes_transferred == 4 and update.status == TransferStatus.RUNNING
+        for update in progress_updates
+    )
+    assert progress_updates[-1].bytes_transferred == 6
+    assert progress_updates[-1].status == TransferStatus.COMPLETED
+
+
 class FailingRemoteClient(FakeRemoteClient):
     def __init__(self) -> None:
         super().__init__(entries={}, home=PurePosixPath("/home/deploy"))
@@ -130,8 +169,25 @@ class FailingRemoteClient(FakeRemoteClient):
         local_path: Path,
         remote_path: PurePosixPath,
         offset: int,
+        progress_callback=None,
     ) -> None:
         raise RuntimeError("network down")
+
+
+class ProgressingRemoteClient(FakeRemoteClient):
+    def __init__(self) -> None:
+        super().__init__(entries={}, home=PurePosixPath("/home/deploy"))
+
+    def upload_file_range(
+        self,
+        local_path: Path,
+        remote_path: PurePosixPath,
+        offset: int,
+        progress_callback=None,
+    ) -> None:
+        if progress_callback is not None:
+            progress_callback(4)
+        super().upload_file_range(local_path, remote_path, offset)
 
 
 def _repository(tmp_path: Path) -> TransferRepository:

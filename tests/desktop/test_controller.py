@@ -1,6 +1,14 @@
+from dataclasses import replace
 from pathlib import Path, PurePosixPath
 
-from filezall_core.models import AuthMode, LocalFileEntry, Protocol, RemoteFileEntry, SiteProfile
+from filezall_core.models import (
+    AuthMode,
+    LocalFileEntry,
+    Protocol,
+    RemoteFileEntry,
+    SiteProfile,
+    TransferStatus,
+)
 from filezall_core.agent_deployment import AgentInstallResult
 from filezall_core.resource_models import (
     CpuStats,
@@ -22,6 +30,7 @@ class FakeWindow:
         self.resource_snapshot = None
         self.process_detail = None
         self.statuses: list[str] = []
+        self.transfer_item_snapshots = []
 
     def set_local_entries(self, entries):
         self.local_entries = entries
@@ -43,6 +52,9 @@ class FakeWindow:
 
     def set_process_detail(self, detail) -> None:
         self.process_detail = detail
+
+    def set_transfer_items(self, items) -> None:
+        self.transfer_item_snapshots.append(list(items))
 
 
 class FakeSession:
@@ -113,6 +125,9 @@ class FakeQueue:
         self.resumed = []
         self.canceled = []
         self.retried = []
+        self.saved_tasks = []
+        self.saved_items = []
+        self.items = []
 
     def pause_task(self, task_id: str) -> None:
         self.paused.append(task_id)
@@ -125,6 +140,37 @@ class FakeQueue:
 
     def retry_failed(self, task_id: str) -> None:
         self.retried.append(task_id)
+
+    def add_task(self, task, items) -> None:
+        self.saved_tasks.append(task)
+        self.saved_items.append(list(items))
+        self.items.extend(items)
+
+    def list_items(self, status=None, server_id=None):
+        items = self.items
+        if status is not None:
+            items = [item for item in items if item.status is status]
+        if server_id is not None:
+            items = [item for item in items if item.server_id == server_id]
+        return items
+
+    def run_next(self, server_id: str, client=None, progress_callback=None):
+        for index, item in enumerate(self.items):
+            if item.server_id == server_id and item.status is TransferStatus.PENDING:
+                running = replace(item, status=TransferStatus.RUNNING)
+                self.items[index] = running
+                if progress_callback is not None:
+                    progress_callback(running)
+                completed = replace(
+                    item,
+                    bytes_transferred=item.size_bytes,
+                    status=TransferStatus.COMPLETED,
+                )
+                self.items[index] = completed
+                if progress_callback is not None:
+                    progress_callback(completed)
+                return completed
+        return None
 
 
 class FakeResourceMonitor:
@@ -324,6 +370,50 @@ def test_controller_connects_remote_and_transfers_one_file(tmp_path: Path) -> No
     assert session.password == "secret"
     assert session.uploads == [(tmp_path / "local.txt", PurePosixPath("/home/deploy/local.txt"))]
     assert session.downloads == [(PurePosixPath("/home/deploy/app.log"), tmp_path / "app.log")]
+
+
+def test_controller_upload_file_adds_pending_item_and_updates_transfer_list(
+    tmp_path: Path,
+) -> None:
+    window = FakeWindow()
+    session = FakeSession()
+    queue = FakeQueue()
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: session,
+        queue_service=queue,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+        default_remote_path=PurePosixPath("/home/deploy"),
+    )
+    local_file = tmp_path / "local.txt"
+    local_file.write_bytes(b"queued")
+
+    controller.connect(site, password="secret")
+    controller.upload_file(local_file, PurePosixPath("/home/deploy/local.txt"))
+
+    assert session.uploads == []
+    assert queue.saved_tasks[0].source_path == tmp_path
+    assert queue.saved_tasks[0].destination_path == PurePosixPath("/home/deploy")
+    pending = window.transfer_item_snapshots[0][0]
+    running = window.transfer_item_snapshots[1][0]
+    completed = window.transfer_item_snapshots[-1][0]
+    assert pending.source_path == local_file
+    assert pending.destination_path == PurePosixPath("/home/deploy/local.txt")
+    assert pending.size_bytes == 6
+    assert pending.status is TransferStatus.PENDING
+    assert pending.bytes_transferred == 0
+    assert running.status is TransferStatus.RUNNING
+    assert completed.status is TransferStatus.COMPLETED
+    assert completed.bytes_transferred == 6
 
 
 def test_controller_heartbeat_checks_current_remote_directory() -> None:

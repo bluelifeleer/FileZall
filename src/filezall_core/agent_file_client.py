@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from urllib import parse, request
@@ -73,15 +74,20 @@ class AgentHttpFileClient:
         local_path: Path,
         remote_path: PurePosixPath,
         offset: int,
+        progress_callback: Callable[[int], None] | None = None,
     ) -> None:
         transfer_id = _transfer_id(remote_path)
         total_size = local_path.stat().st_size
+        bytes_transferred = offset
         with local_path.open("rb") as file:
             file.seek(offset)
             chunk_index = offset // self._chunk_size
             while data := file.read(self._chunk_size):
                 self._transfer.upload_chunk(str(remote_path), transfer_id, chunk_index, data)
                 chunk_index += 1
+                bytes_transferred += len(data)
+                if progress_callback is not None:
+                    progress_callback(bytes_transferred)
         self._transfer.merge(transfer_id, str(remote_path), total_size)
 
     def download_file_range(

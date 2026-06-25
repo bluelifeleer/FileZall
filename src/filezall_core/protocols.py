@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Protocol as TypingProtocol
 
@@ -39,6 +40,7 @@ class RemoteFileClient(TypingProtocol):
         local_path: Path,
         remote_path: PurePosixPath,
         offset: int,
+        progress_callback: Callable[[int], None] | None = None,
     ) -> None:
         ...
 
@@ -103,8 +105,11 @@ class FakeRemoteClient:
         local_path: Path,
         remote_path: PurePosixPath,
         offset: int,
+        progress_callback: Callable[[int], None] | None = None,
     ) -> None:
         self.range_uploads.append((local_path, remote_path, offset))
+        if progress_callback is not None:
+            progress_callback(local_path.stat().st_size)
 
     def download_file_range(
         self,
