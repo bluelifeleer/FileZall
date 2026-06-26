@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QPoint, QRect, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QActionGroup, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -99,10 +99,21 @@ class RemoteDirectoryWorker(QObject):
 
 
 class ResourceUsageChart(QWidget):
+    _SERIES = [
+        ("cpu", "CPU", QColor("#38bdf8")),
+        ("memory", "MEM", QColor("#22c55e")),
+        ("disk", "DISK", QColor("#f59e0b")),
+        ("network_rx", "RX", QColor("#a78bfa")),
+        ("network_tx", "TX", QColor("#fb7185")),
+    ]
+
     def __init__(self, parent=None, max_points: int = 60) -> None:
         super().__init__(parent)
         self.max_points = max_points
         self.history: list[dict[str, float]] = []
+        self.hovered_index: int | None = None
+        self.pinned_index: int | None = None
+        self.setMouseTracking(True)
         self.setMinimumWidth(260)
         self.setMinimumHeight(160)
 
@@ -120,50 +131,176 @@ class ResourceUsageChart(QWidget):
                 "cpu": round(float(snapshot.cpu.percent), 1),
                 "memory": round(memory_percent, 1),
                 "disk": round(disk_percent, 1),
+                "network_rx": float(snapshot.network.rx_bytes_per_sec),
+                "network_tx": float(snapshot.network.tx_bytes_per_sec),
             }
         )
         if len(self.history) > self.max_points:
             self.history = self.history[-self.max_points :]
+            self._trim_selection()
         self.update()
+
+    def series_keys(self) -> list[str]:
+        return [key for key, _label, _color in self._SERIES]
+
+    def active_index(self) -> int | None:
+        if self.pinned_index is not None:
+            return self.pinned_index
+        return self.hovered_index
+
+    def detail_text(self) -> str:
+        index = self.active_index()
+        if index is None or not (0 <= index < len(self.history)):
+            return ""
+        row = self.history[index]
+        return (
+            f"Sample {index + 1}/{len(self.history)}  "
+            f"CPU {row['cpu']:.1f}%  "
+            f"MEM {row['memory']:.1f}%  "
+            f"DISK {row['disk']:.1f}%  "
+            f"RX {_human_bytes(row['network_rx'])}/s  "
+            f"TX {_human_bytes(row['network_tx'])}/s"
+        )
+
+    def sample_point(self, index: int) -> QPoint:
+        rect = self._plot_rect()
+        if not self.history:
+            return rect.center()
+        bounded_index = max(0, min(index, len(self.history) - 1))
+        width = max(rect.width(), 1)
+        x = rect.left() + width * bounded_index / max(len(self.history) - 1, 1)
+        return QPoint(int(x), rect.center().y())
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = self.rect().adjusted(12, 12, -12, -20)
+        rect = self._plot_rect()
         painter.fillRect(self.rect(), QColor(0, 0, 0, 0))
         painter.setPen(QPen(QColor("#64748b"), 1))
         painter.drawRect(rect)
         if not self.history:
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "Waiting for resource data")
             return
-        series = {
-            "cpu": QColor("#2563eb"),
-            "memory": QColor("#16a34a"),
-            "disk": QColor("#f59e0b"),
-        }
-        for name, color in series.items():
+        self._draw_grid(painter, rect)
+        for name, _label, color in self._SERIES:
             self._draw_series(painter, rect, name, color)
+        self._draw_active_sample(painter, rect)
         legend_x = rect.left()
-        for name, color in series.items():
+        for name, label, color in self._SERIES:
             painter.setPen(QPen(color, 2))
             painter.drawLine(legend_x, rect.bottom() + 12, legend_x + 14, rect.bottom() + 12)
             painter.setPen(QPen(QColor("#64748b"), 1))
-            painter.drawText(legend_x + 18, rect.bottom() + 16, name.upper())
-            legend_x += 80
+            painter.drawText(legend_x + 18, rect.bottom() + 16, label)
+            legend_x += 58
+        self._draw_detail_panel(painter, rect)
 
-    def _draw_series(self, painter: QPainter, rect, key: str, color: QColor) -> None:
+    def mouseMoveEvent(self, event) -> None:
+        self.hovered_index = self._nearest_index(self._event_point(event))
+        self.update()
+        super().mouseMoveEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            clicked_index = self._nearest_index(self._event_point(event))
+            if clicked_index is not None:
+                self.pinned_index = None if self.pinned_index == clicked_index else clicked_index
+                self.update()
+        super().mousePressEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self.hovered_index = None
+        if self.pinned_index is None:
+            self.update()
+        super().leaveEvent(event)
+
+    def _plot_rect(self) -> QRect:
+        return self.rect().adjusted(12, 12, -12, -42)
+
+    def _draw_grid(self, painter: QPainter, rect: QRect) -> None:
+        painter.setPen(QPen(QColor("#263548"), 1))
+        for step in range(1, 4):
+            y = rect.top() + rect.height() * step / 4
+            painter.drawLine(rect.left(), int(y), rect.right(), int(y))
+
+    def _draw_series(self, painter: QPainter, rect: QRect, key: str, color: QColor) -> None:
         if len(self.history) < 2:
             return
         painter.setPen(QPen(color, 2))
-        points = []
+        points = self._series_points(rect, key)
+        for start, end in zip(points, points[1:]):
+            painter.drawLine(start, end)
+
+    def _draw_active_sample(self, painter: QPainter, rect: QRect) -> None:
+        index = self.active_index()
+        if index is None or not (0 <= index < len(self.history)):
+            return
+        x = self.sample_point(index).x()
+        painter.setPen(QPen(QColor("#94a3b8"), 1, Qt.PenStyle.DashLine))
+        painter.drawLine(x, rect.top(), x, rect.bottom())
+        for key, _label, color in self._SERIES:
+            points = self._series_points(rect, key)
+            if index >= len(points):
+                continue
+            painter.setPen(QPen(color, 2))
+            painter.setBrush(color)
+            painter.drawEllipse(points[index], 3, 3)
+
+    def _draw_detail_panel(self, painter: QPainter, rect: QRect) -> None:
+        text = self.detail_text()
+        if not text:
+            return
+        panel = QRect(rect.left() + 8, rect.top() + 8, min(rect.width() - 16, 360), 28)
+        painter.setPen(QPen(QColor("#334155"), 1))
+        painter.setBrush(QColor("#0f172a"))
+        painter.drawRoundedRect(panel, 4, 4)
+        painter.setPen(QPen(QColor("#dbeafe"), 1))
+        painter.drawText(panel.adjusted(8, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter, text)
+
+    def _series_points(self, rect: QRect, key: str) -> list[QPoint]:
+        points: list[QPoint] = []
         width = max(rect.width(), 1)
         height = max(rect.height(), 1)
+        scale = self._scale_for_key(key)
         for index, row in enumerate(self.history):
             x = rect.left() + width * index / max(len(self.history) - 1, 1)
-            y = rect.bottom() - height * max(0.0, min(row[key], 100.0)) / 100.0
-            points.append((int(x), int(y)))
-        for start, end in zip(points, points[1:]):
-            painter.drawLine(start[0], start[1], end[0], end[1])
+            value = self._normalized_value(row[key], scale)
+            y = rect.bottom() - height * value
+            points.append(QPoint(int(x), int(y)))
+        return points
+
+    def _scale_for_key(self, key: str) -> float:
+        if key.startswith("network_"):
+            return max(
+                1.0,
+                max((row["network_rx"] for row in self.history), default=0.0),
+                max((row["network_tx"] for row in self.history), default=0.0),
+            )
+        return 100.0
+
+    def _normalized_value(self, value: float, scale: float) -> float:
+        return max(0.0, min(float(value), scale)) / max(scale, 1.0)
+
+    def _nearest_index(self, point: QPoint) -> int | None:
+        if not self.history:
+            return None
+        rect = self._plot_rect()
+        if point.x() <= rect.left():
+            return 0
+        if point.x() >= rect.right():
+            return len(self.history) - 1
+        distance = rect.width() / max(len(self.history) - 1, 1)
+        return max(0, min(round((point.x() - rect.left()) / max(distance, 1)), len(self.history) - 1))
+
+    def _trim_selection(self) -> None:
+        if self.hovered_index is not None and self.hovered_index >= len(self.history):
+            self.hovered_index = None
+        if self.pinned_index is not None and self.pinned_index >= len(self.history):
+            self.pinned_index = None
+
+    def _event_point(self, event) -> QPoint:
+        if hasattr(event, "position"):
+            return event.position().toPoint()
+        return event.pos()
 
 
 class MainWindow(QMainWindow):
@@ -192,6 +329,7 @@ class MainWindow(QMainWindow):
         self._new_session_factory = new_session_factory
         self._should_confirm_remember_secret = controller is None
         self._heartbeat_failed_logged = False
+        self._agent_installed: bool | None = False
         self._connection_workers = []
         self._active_connection = None
         self._connection_running = False
@@ -378,7 +516,7 @@ class MainWindow(QMainWindow):
         )
         self.connection_bar.connect_button.setText(self._text("connection.connect"))
         self.connection_bar.disconnect_button.setText(self._text("connection.disconnect"))
-        self.connection_bar.install_agent_button.setText(self._text("connection.install_agent"))
+        self._refresh_agent_action_text()
 
         if self.connection_bar.site_selector.count():
             self.connection_bar.site_selector.setItemText(0, self._text("site.quick"))
@@ -626,6 +764,8 @@ class MainWindow(QMainWindow):
             self.resource_uninstall_agent_button.hide()
 
     def set_agent_status(self, installed: bool | None) -> None:
+        self._agent_installed = installed
+        self._refresh_agent_action_text()
         if installed is None:
             self.agent_status_label.setText("Checking Agent...")
             self.resource_install_agent_button.show()
@@ -915,13 +1055,14 @@ class MainWindow(QMainWindow):
             window.show()
 
     def _handle_install_agent_clicked(self) -> None:
-        self.append_log("Agent install requested")
-        if not self._agent_install_confirmer(self):
-            self.append_log("Agent install canceled")
+        label = "update" if self._agent_installed is True else "install"
+        self.append_log(f"Agent {label} requested")
+        if not self._confirm_agent_action(label):
+            self.append_log(f"Agent {label} canceled")
             return
-        self.append_log("Agent install confirmed")
+        self.append_log(f"Agent {label} confirmed")
         self._start_agent_action(
-            label="install",
+            label=label,
             action=self._run_agent_install,
             complete=self._complete_agent_install,
         )
@@ -987,7 +1128,7 @@ class MainWindow(QMainWindow):
             self.append_log(f"Agent {label} completion failed: {exc}")
             self.show_status(str(exc))
         self.append_log(f"Agent {label} command finished")
-        if label == "install":
+        if label in {"install", "update"}:
             self._handle_resource_refresh_tick()
         self._set_agent_action_enabled(True)
         self._cleanup_agent_worker()
@@ -995,11 +1136,12 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _fail_agent_action(self, error: str) -> None:
         label = self._active_agent_action[0] if self._active_agent_action else "install"
-        message = (
-            f"Agent installation failed: {error}"
-            if label == "install"
-            else f"Agent uninstall failed: {error}"
-        )
+        if label == "install":
+            message = f"Agent installation failed: {error}"
+        elif label == "update":
+            message = f"Agent update failed: {error}"
+        else:
+            message = f"Agent uninstall failed: {error}"
         self.append_log(message)
         self.show_status(message)
         self._set_agent_action_enabled(True)
@@ -1021,6 +1163,22 @@ class MainWindow(QMainWindow):
         self.connection_bar.install_agent_button.setEnabled(enabled)
         self.resource_install_agent_button.setEnabled(enabled)
         self.resource_uninstall_agent_button.setEnabled(enabled)
+
+    def _refresh_agent_action_text(self) -> None:
+        if not hasattr(self, "connection_bar"):
+            return
+        key = (
+            "connection.update_agent"
+            if self._agent_installed is True
+            else "connection.install_agent"
+        )
+        self.connection_bar.install_agent_button.setText(self._text(key))
+
+    def _confirm_agent_action(self, label: str) -> bool:
+        try:
+            return self._agent_install_confirmer(self, label)
+        except TypeError:
+            return self._agent_install_confirmer(self)
 
     def _handle_local_refresh_clicked(self) -> None:
         self.local_panel.clear_selection()
@@ -1474,12 +1632,19 @@ def _choose_log_file(parent) -> str:
     return path
 
 
-def _confirm_agent_install(parent) -> bool:
+def _confirm_agent_install(parent, action: str = "install") -> bool:
+    title = "Update FileZall Agent" if action == "update" else "Install FileZall Agent"
+    message = (
+        "FileZall Agent is already installed on the connected server. "
+        "Update it and restart the Agent service?"
+        if action == "update"
+        else "Install and start FileZall Agent on the connected server?"
+    )
     return (
         QMessageBox.question(
             parent,
-            "Install FileZall Agent",
-            "Install and start FileZall Agent on the connected server?",
+            title,
+            message,
         )
         == QMessageBox.StandardButton.Yes
     )

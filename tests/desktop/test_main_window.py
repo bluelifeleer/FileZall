@@ -2,10 +2,11 @@ import time
 from pathlib import Path, PurePosixPath
 from datetime import UTC, datetime
 
-from filezall_desktop.main_window import MainWindow
+from filezall_desktop.main_window import MainWindow, ResourceUsageChart
 from filezall_desktop.theme import hover_color_for_theme
-from PySide6.QtCore import Qt, QThread
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QSplitter, QTableWidgetSelectionRange
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QThread
+from PySide6.QtGui import QMouseEvent
+from PySide6.QtWidgets import QApplication, QAbstractItemView, QHeaderView, QSplitter, QTableWidgetSelectionRange
 
 from filezall_core.models import (
     AuthMode,
@@ -30,6 +31,21 @@ from filezall_core.resource_models import (
 
 def _use_english(window: MainWindow) -> None:
     window.english_language_action.trigger()
+
+
+def _send_chart_mouse_move(chart: ResourceUsageChart, point: QPoint) -> None:
+    event_point = QPointF(point)
+    QApplication.sendEvent(
+        chart,
+        QMouseEvent(
+            QEvent.Type.MouseMove,
+            event_point,
+            event_point,
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
 
 
 class FakeController:
@@ -332,6 +348,44 @@ def test_main_window_logs_agent_install_steps(qtbot) -> None:
     assert "Agent install requested" in logs
     assert "Agent install confirmed" in logs
     assert "Agent install command finished" in logs
+
+
+def test_main_window_updates_top_agent_button_when_agent_is_installed(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    _use_english(window)
+
+    window.set_agent_status(True)
+
+    assert window.connection_bar.install_agent_button.text() == "Update Agent"
+
+    window.set_agent_status(False)
+
+    assert window.connection_bar.install_agent_button.text() == "Install Agent"
+
+
+def test_main_window_confirms_and_logs_agent_update_when_installed(qtbot) -> None:
+    controller = FakeController()
+    confirmation_actions = []
+    window = MainWindow(
+        controller=controller,
+        agent_install_confirmer=lambda _parent, action: confirmation_actions.append(action) or True,
+    )
+    qtbot.addWidget(window)
+    window.set_agent_status(True)
+
+    qtbot.mouseClick(window.connection_bar.install_agent_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(
+        lambda: "Agent update command finished" in window.log_view.toPlainText(),
+        timeout=3000,
+    )
+    logs = window.log_view.toPlainText()
+    assert confirmation_actions == ["update"]
+    assert controller.agent_installs == 1
+    assert "Agent update requested" in logs
+    assert "Agent update confirmed" in logs
+    assert "Agent update command finished" in logs
 
 
 def test_main_window_runs_agent_install_in_background_and_logs_progress(qtbot) -> None:
@@ -1549,18 +1603,63 @@ def test_resource_snapshot_updates_usage_chart_history(qtbot) -> None:
                 cpu=CpuStats(percent=10 + index),
                 memory=MemoryStats(total_bytes=100, used_bytes=20 + index, available_bytes=80 - index),
                 disks=[DiskUsage(mount="/", total_bytes=200, used_bytes=50 + index, available_bytes=150 - index)],
-                network=NetworkStats(rx_bytes_per_sec=0, tx_bytes_per_sec=0),
+                network=NetworkStats(
+                    rx_bytes_per_sec=(index + 1) * 1024,
+                    tx_bytes_per_sec=(index + 1) * 2048,
+                ),
                 processes=[],
             )
         )
 
     assert window.resource_chart.history == [
-        {"cpu": 10.0, "memory": 20.0, "disk": 25.0},
-        {"cpu": 11.0, "memory": 21.0, "disk": 25.5},
-        {"cpu": 12.0, "memory": 22.0, "disk": 26.0},
+        {"cpu": 10.0, "memory": 20.0, "disk": 25.0, "network_rx": 1024.0, "network_tx": 2048.0},
+        {"cpu": 11.0, "memory": 21.0, "disk": 25.5, "network_rx": 2048.0, "network_tx": 4096.0},
+        {"cpu": 12.0, "memory": 22.0, "disk": 26.0, "network_rx": 3072.0, "network_tx": 6144.0},
     ]
     assert window.resource_content_splitter.widget(0) is window.process_table
     assert window.resource_content_splitter.widget(1) is window.resource_chart
+
+
+def test_resource_usage_chart_exposes_network_series_and_sample_interaction(qtbot) -> None:
+    chart = ResourceUsageChart(max_points=10)
+    chart.resize(420, 220)
+    qtbot.addWidget(chart)
+    chart.show()
+    qtbot.waitExposed(chart)
+
+    for index in range(3):
+        chart.add_snapshot(
+            ResourceSnapshot(
+                cpu=CpuStats(percent=10 + index * 20),
+                memory=MemoryStats(total_bytes=100, used_bytes=20 + index * 20, available_bytes=80 - index * 20),
+                disks=[DiskUsage(mount="/", total_bytes=100, used_bytes=30 + index * 20, available_bytes=70 - index * 20)],
+                network=NetworkStats(
+                    rx_bytes_per_sec=(index + 1) * 1024,
+                    tx_bytes_per_sec=(index + 1) * 2048,
+                ),
+                processes=[],
+            )
+        )
+
+    assert chart.series_keys() == ["cpu", "memory", "disk", "network_rx", "network_tx"]
+
+    middle_point = chart.sample_point(1)
+    _send_chart_mouse_move(chart, middle_point)
+
+    assert chart.hovered_index == 1
+    assert chart.active_index() == 1
+    assert "RX 2.0 KB/s" in chart.detail_text()
+    assert "TX 4.0 KB/s" in chart.detail_text()
+
+    qtbot.mouseClick(chart, Qt.MouseButton.LeftButton, pos=middle_point)
+    sample_two_point = chart.sample_point(2)
+    _send_chart_mouse_move(chart, sample_two_point)
+
+    assert chart.pinned_index == 1
+    assert chart.active_index() == 1
+
+    qtbot.mouseClick(chart, Qt.MouseButton.LeftButton, pos=middle_point)
+    assert chart.pinned_index is None
 
 
 def test_resource_buttons_have_distinct_visual_roles(qtbot) -> None:
