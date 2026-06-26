@@ -1083,6 +1083,28 @@ def test_main_window_redacts_sensitive_values_from_logs_and_export(qtbot, tmp_pa
     assert "Authorization: Bearer <redacted>" in exported_logs
 
 
+def test_main_window_filters_log_categories(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    window.append_log("Connected to Production")
+    window.append_log("Agent install confirmed")
+    window.append_log("Resource snapshot refreshed")
+    window.append_log("Connection failed: bad password")
+
+    window.log_viewer.set_category_filter("agent")
+    assert "Agent install confirmed" in window.log_view.toPlainText()
+    assert "Connected to Production" not in window.log_view.toPlainText()
+
+    window.log_viewer.set_category_filter("error")
+    assert "Connection failed: bad password" in window.log_view.toPlainText()
+    assert "Resource snapshot refreshed" not in window.log_view.toPlainText()
+
+    window.log_viewer.set_category_filter("all")
+    assert "Connected to Production" in window.log_view.toPlainText()
+    assert "Resource snapshot refreshed" in window.log_view.toPlainText()
+
+
 def test_main_window_exports_diagnostic_package(qtbot, tmp_path) -> None:
     diagnostic_path = tmp_path / "diagnostics.zip"
     logs_dir = tmp_path / "runtime-logs"

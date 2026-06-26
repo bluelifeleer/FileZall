@@ -3,35 +3,70 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-import re
 
-
-_SENSITIVE_PATTERNS = [
-    re.compile(r"(?i)\b(password|passphrase|token|secret)=([^\s,;]+)"),
-    re.compile(r"(?i)\b(FILEZALL_AGENT_TOKEN)=([^\s,;]+)"),
-    re.compile(r"(?i)(Authorization:\s*Bearer\s+)([^\s,;]+)"),
-]
+from filezall_core.redaction import redact_sensitive
 
 
 @dataclass(frozen=True)
-class LogEntry:
-    created_at: datetime
+class LogRecord:
+    timestamp: datetime
+    category: str
+    level: str
     message: str
 
+    @property
+    def created_at(self) -> datetime:
+        return self.timestamp
+
     def format(self) -> str:
-        return f"{self.created_at.isoformat(timespec='seconds')} {self.message}"
+        return (
+            f"{self.timestamp.isoformat(timespec='seconds')} "
+            f"[{self.category}] [{self.level}] {self.message}"
+        )
+
+
+LogEntry = LogRecord
 
 
 class TransferLogService:
     def __init__(self) -> None:
-        self._entries: list[LogEntry] = []
+        self._entries: list[LogRecord] = []
 
-    def append(self, message: str) -> LogEntry:
-        entry = LogEntry(datetime.now(UTC), redact_sensitive_text(message))
+    def append(
+        self,
+        message: str,
+        *,
+        category: str = "transfer",
+        level: str = "info",
+    ) -> LogRecord:
+        entry = LogRecord(
+            timestamp=datetime.now(UTC),
+            category=category,
+            level=level,
+            message=redact_sensitive(message),
+        )
         self._entries.append(entry)
         return entry
 
-    def entries(self) -> list[LogEntry]:
+    def append_connection(self, message: str, *, level: str = "info") -> LogRecord:
+        return self.append(message, category="connection", level=level)
+
+    def append_transfer(self, message: str, *, level: str = "info") -> LogRecord:
+        return self.append(message, category="transfer", level=level)
+
+    def append_agent(self, message: str, *, level: str = "info") -> LogRecord:
+        return self.append(message, category="agent", level=level)
+
+    def append_resource(self, message: str, *, level: str = "info") -> LogRecord:
+        return self.append(message, category="resource", level=level)
+
+    def append_error(self, message: str) -> LogRecord:
+        return self.append(message, category="error", level="error")
+
+    def records(self) -> list[LogRecord]:
+        return list(self._entries)
+
+    def entries(self) -> list[LogRecord]:
         return list(self._entries)
 
     def export(self, path: Path) -> None:
@@ -43,13 +78,4 @@ class TransferLogService:
 
 
 def redact_sensitive_text(text: str) -> str:
-    redacted = text
-    for pattern in _SENSITIVE_PATTERNS:
-        redacted = pattern.sub(_redact_match, redacted)
-    return redacted
-
-
-def _redact_match(match: re.Match[str]) -> str:
-    if match.group(1).lower().startswith("authorization"):
-        return f"{match.group(1)}<redacted>"
-    return f"{match.group(1)}=<redacted>"
+    return redact_sensitive(text)

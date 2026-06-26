@@ -9,6 +9,7 @@ from pathlib import Path
 
 from filezall_core import __version__
 from filezall_core.log_service import TransferLogService
+from filezall_core.redaction import redact_sensitive
 
 
 class DiagnosticPackageBuilder:
@@ -21,8 +22,9 @@ class DiagnosticPackageBuilder:
         with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("manifest.json", json.dumps(self._manifest(), indent=2))
             archive.writestr("logs/session.log", self._session_log_text())
+            archive.writestr("logs/session-records.json", self._session_records_json())
             for log_path in self._runtime_log_paths():
-                archive.write(log_path, f"logs/{log_path.name}")
+                archive.writestr(f"logs/{log_path.name}", self._runtime_log_text(log_path))
         return path
 
     def _manifest(self) -> dict[str, str]:
@@ -38,6 +40,18 @@ class DiagnosticPackageBuilder:
         entries = self._log_service.entries()
         return "\n".join(entry.format() for entry in entries) + ("\n" if entries else "")
 
+    def _session_records_json(self) -> str:
+        records = [
+            {
+                "timestamp": record.timestamp.isoformat(timespec="seconds"),
+                "category": record.category,
+                "level": record.level,
+                "message": record.message,
+            }
+            for record in self._log_service.records()
+        ]
+        return json.dumps(records, indent=2)
+
     def _runtime_log_paths(self) -> list[Path]:
         if self._logs_dir is None or not self._logs_dir.exists():
             return []
@@ -46,3 +60,6 @@ class DiagnosticPackageBuilder:
             for path in sorted(self._logs_dir.glob("*.log"))
             if path.is_file()
         ]
+
+    def _runtime_log_text(self, path: Path) -> str:
+        return redact_sensitive(path.read_text(encoding="utf-8", errors="replace"))

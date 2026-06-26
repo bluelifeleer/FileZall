@@ -56,6 +56,7 @@ from filezall_desktop.i18n import (
     ZH_CN_LANGUAGE,
     t,
 )
+from filezall_desktop.log_viewer import LogViewer
 from filezall_desktop.onboarding import GettingStartedDialog
 from filezall_desktop.site_manager import SiteManagerDialog
 from filezall_desktop.theme import (
@@ -805,9 +806,12 @@ class MainWindow(QMainWindow):
         self.transfer_table.setHorizontalHeaderLabels(
             _transfer_headers()
         )
-        self.log_view = QPlainTextEdit(transfer_widget)
-        self.log_view.setReadOnly(True)
-        self.log_view.setMaximumBlockCount(1000)
+        self.log_viewer = LogViewer(
+            transfer_widget,
+            export_logs_callback=self._export_logs,
+            export_diagnostics_callback=self._export_diagnostics,
+        )
+        self.log_view = self.log_viewer
         self.transfer_splitter = QSplitter(Qt.Orientation.Vertical, transfer_widget)
         self.transfer_splitter.addWidget(self.transfer_table)
         self.transfer_splitter.addWidget(self.log_view)
@@ -963,9 +967,21 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(message)
 
     @Slot(str)
-    def append_log(self, message: str) -> None:
-        entry = self.log_service.append(message)
-        self.log_view.appendPlainText(entry.format())
+    def append_log(
+        self,
+        message: str,
+        *,
+        category: str | None = None,
+        level: str | None = None,
+    ) -> None:
+        resolved_category = category or _log_category_for_message(message)
+        resolved_level = level or ("error" if resolved_category == "error" else "info")
+        entry = self.log_service.append(
+            message,
+            category=resolved_category,
+            level=resolved_level,
+        )
+        self.log_viewer.add_record(entry)
 
     def _export_logs(self) -> None:
         selected = self._log_file_chooser(self)
@@ -2142,6 +2158,25 @@ def _transfer_summary_text(items: list[TransferItem]) -> str:
         f"{task_id}: {len(task_items)} files, "
         f"{completed_bytes} / {total_bytes} bytes, current {_path_name(current.destination_path)}"
     )
+
+
+def _log_category_for_message(message: str) -> str:
+    lower = message.lower()
+    if "failed" in lower or "failure" in lower or "error" in lower:
+        return "error"
+    if lower.startswith("agent ") or " agent " in lower:
+        return "agent"
+    if lower.startswith("resource ") or lower.startswith("heartbeat "):
+        return "resource"
+    if (
+        lower.startswith("connect")
+        or lower.startswith("disconnect")
+        or lower.startswith("connected")
+        or lower.startswith("site ")
+        or lower.startswith("remote directory")
+    ):
+        return "connection"
+    return "transfer"
 
 
 def _disk_text(snapshot: ResourceSnapshot, *, mount: str = "All disks") -> str:
