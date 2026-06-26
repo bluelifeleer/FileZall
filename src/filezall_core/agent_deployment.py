@@ -118,6 +118,31 @@ class AgentInstaller:
             self._progress_callback(message)
 
 
+def classify_agent_error(error: str) -> str:
+    lowered = error.lower()
+    if "sudo" in lowered or "permission denied" in lowered or "not in the sudoers" in lowered:
+        return (
+            "Permission denied while managing FileZall Agent. Connect as a sudo-capable user "
+            "or configure passwordless sudo for Agent install commands."
+        )
+    if "systemd" in lowered or "systemctl: command not found" in lowered:
+        return (
+            "This server does not appear to support systemd. FileZall Agent currently requires "
+            "a systemd-based Linux host."
+        )
+    if "address already in use" in lowered or "errno 98" in lowered or "port 8765" in lowered:
+        return (
+            "FileZall Agent port 8765 is already in use. Stop the conflicting service or "
+            "reinstall Agent after freeing the port."
+        )
+    if "health check failed" in lowered or "health endpoint" in lowered:
+        return (
+            "FileZall Agent service started, but the health endpoint did not respond. Check "
+            "firewall rules, localhost access, and filezall-agent service logs."
+        )
+    return error
+
+
 class ParamikoAgentDeployRunner:
     def __init__(self, site: SiteProfile, password: str | None = None, paramiko_module=paramiko) -> None:
         self._site = site

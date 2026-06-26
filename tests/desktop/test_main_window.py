@@ -428,12 +428,16 @@ def test_main_window_logs_agent_install_failure_from_background(qtbot) -> None:
 
     qtbot.mouseClick(window.connection_bar.install_agent_button, Qt.MouseButton.LeftButton)
 
+    expected_message = (
+        "Permission denied while managing FileZall Agent. Connect as a sudo-capable user "
+        "or configure passwordless sudo for Agent install commands."
+    )
     qtbot.waitUntil(
-        lambda: "Agent installation failed: sudo password required"
-        in window.log_view.toPlainText(),
+        lambda: f"Agent installation failed: {expected_message}" in window.log_view.toPlainText(),
         timeout=3000,
     )
 
+    assert f"Background operation failed [agent install]: {expected_message}" in window.log_view.toPlainText()
     assert window.connection_bar.install_agent_button.isEnabled()
 
 
@@ -864,6 +868,17 @@ def test_main_window_displays_agent_version_when_available(qtbot) -> None:
     window.set_agent_status(True, version="0.1.0")
 
     assert window.agent_status_label.text() == "Agent installed v0.1.0"
+
+
+def test_main_window_marks_outdated_agent_as_update_available(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    window.set_agent_status(True, version="0.0.9")
+
+    assert window.agent_status_label.text() == "Agent update available v0.0.9 -> v0.1.0"
+    assert not window.resource_install_agent_button.isHidden()
+    assert not window.resource_uninstall_agent_button.isHidden()
 
 
 def test_main_window_local_path_button_chooses_and_loads_directory(qtbot, tmp_path) -> None:

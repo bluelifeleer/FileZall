@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from filezall_core import __version__
 from filezall_core.app_paths import resolve_app_paths
+from filezall_core.agent_deployment import classify_agent_error
 from filezall_core.diagnostics import DiagnosticPackageBuilder
 from filezall_core.log_service import TransferLogService
 from filezall_core.models import AuthMode, Direction, Protocol, SiteProfile, TransferItem
@@ -337,6 +338,7 @@ class MainWindow(QMainWindow):
         self._heartbeat_failed_logged = False
         self._agent_installed: bool | None = False
         self._agent_version: str | None = None
+        self._agent_update_available = False
         self._connection_workers = []
         self._active_connection = None
         self._connection_running = False
@@ -790,18 +792,33 @@ class MainWindow(QMainWindow):
             self._agent_version = version
         elif installed is not True:
             self._agent_version = None
+        self._agent_update_available = (
+            installed is True
+            and self._agent_version is not None
+            and _version_is_older(self._agent_version, __version__)
+        )
         self._refresh_agent_action_text()
         if installed is None:
             self.agent_status_label.setText("Checking Agent...")
             self.resource_install_agent_button.show()
             self.resource_uninstall_agent_button.hide()
         elif installed:
+            if self._agent_update_available:
+                self.agent_status_label.setText(
+                    f"Agent update available v{self._agent_version} -> v{__version__}"
+                )
+                self.resource_install_agent_button.setText(self._text("resource.update_agent"))
+                self.resource_install_agent_button.show()
+                self.resource_uninstall_agent_button.show()
+                return
             suffix = f" v{self._agent_version}" if self._agent_version else ""
             self.agent_status_label.setText(f"Agent installed{suffix}")
+            self.resource_install_agent_button.setText(self._text("resource.install_agent"))
             self.resource_install_agent_button.hide()
             self.resource_uninstall_agent_button.show()
         else:
             self.agent_status_label.setText("Agent not installed")
+            self.resource_install_agent_button.setText(self._text("resource.install_agent"))
             self.resource_install_agent_button.show()
             self.resource_uninstall_agent_button.show()
 
@@ -1168,13 +1185,14 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _fail_agent_action(self, error: str) -> None:
         label = self._active_agent_action[0] if self._active_agent_action else "install"
-        self._append_background_failure(f"agent {label}", error)
+        classified_error = classify_agent_error(error)
+        self._append_background_failure(f"agent {label}", classified_error)
         if label == "install":
-            message = f"Agent installation failed: {error}"
+            message = f"Agent installation failed: {classified_error}"
         elif label == "update":
-            message = f"Agent update failed: {error}"
+            message = f"Agent update failed: {classified_error}"
         else:
-            message = f"Agent uninstall failed: {error}"
+            message = f"Agent uninstall failed: {classified_error}"
         self.append_log(message)
         self.show_status(message)
         self._set_agent_action_enabled(True)
@@ -1696,6 +1714,24 @@ def _connection_state_key(text: str) -> str:
     if lowered.startswith("checking"):
         return "checking"
     return lowered.replace(" ", "_")
+
+
+def _version_is_older(current: str, target: str) -> bool:
+    current_parts = _version_parts(current)
+    target_parts = _version_parts(target)
+    if current_parts is None or target_parts is None:
+        return False
+    width = max(len(current_parts), len(target_parts))
+    current_parts += [0] * (width - len(current_parts))
+    target_parts += [0] * (width - len(target_parts))
+    return current_parts < target_parts
+
+
+def _version_parts(value: str) -> list[int] | None:
+    try:
+        return [int(part) for part in value.split(".")]
+    except ValueError:
+        return None
 
 
 def _confirm_agent_install(parent, action: str = "install") -> bool:

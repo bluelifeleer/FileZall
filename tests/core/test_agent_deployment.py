@@ -4,6 +4,7 @@ from filezall_core.agent_deployment import (
     AgentDeploymentService,
     AgentInstaller,
     build_agent_package,
+    classify_agent_error,
 )
 from filezall_core.models import AuthMode, Protocol, SiteProfile
 
@@ -123,6 +124,21 @@ def test_agent_installer_reports_failure_when_health_check_fails(tmp_path: Path)
 
     assert result.success is False
     assert result.verified is False
+
+
+def test_agent_error_classifier_returns_operator_guidance() -> None:
+    assert classify_agent_error("sudo: a password is required") == (
+        "Permission denied while managing FileZall Agent. Connect as a sudo-capable user or configure passwordless sudo for Agent install commands."
+    )
+    assert classify_agent_error("System has not been booted with systemd as init system") == (
+        "This server does not appear to support systemd. FileZall Agent currently requires a systemd-based Linux host."
+    )
+    assert classify_agent_error("OSError: [Errno 98] Address already in use") == (
+        "FileZall Agent port 8765 is already in use. Stop the conflicting service or reinstall Agent after freeing the port."
+    )
+    assert classify_agent_error("Agent install: health check failed") == (
+        "FileZall Agent service started, but the health endpoint did not respond. Check firewall rules, localhost access, and filezall-agent service logs."
+    )
 
 
 def test_agent_installer_uninstalls_systemd_service() -> None:

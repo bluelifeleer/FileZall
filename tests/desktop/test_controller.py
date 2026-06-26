@@ -34,6 +34,7 @@ class FakeWindow:
         self.agent_statuses = []
         self.agent_versions = []
         self.statuses: list[str] = []
+        self.logs: list[str] = []
         self.transfer_item_snapshots = []
 
     def set_local_entries(self, entries):
@@ -47,6 +48,9 @@ class FakeWindow:
 
     def show_status(self, message: str) -> None:
         self.statuses.append(message)
+
+    def append_log(self, message: str) -> None:
+        self.logs.append(message)
 
     def set_monitoring_status(self, message: str) -> None:
         self.monitoring_status = message
@@ -241,6 +245,7 @@ class FakeAgentInstallService:
         self.installed_checks = []
         self.installed = False
         self.detect_result = None
+        self.detect_error = None
         self.expected_snapshot = ResourceSnapshot(
             cpu=CpuStats(percent=33.3),
             memory=MemoryStats(total_bytes=2000, used_bytes=1000, available_bytes=1000),
@@ -282,6 +287,8 @@ class FakeAgentInstallService:
         self.installed_checks.append((site, password))
         if progress_callback is not None:
             progress_callback("Agent detection: test progress")
+        if self.detect_error is not None:
+            raise self.detect_error
         if self.detect_result is not None:
             return self.detect_result
         return AgentDetectionResult(
@@ -700,6 +707,35 @@ def test_controller_skips_agent_detection_for_ftp_connection() -> None:
 
     assert service.installed_checks == []
     assert window.agent_statuses == []
+
+
+def test_controller_classifies_agent_detection_errors() -> None:
+    window = FakeWindow()
+    service = FakeAgentInstallService(AgentInstallResult(success=True, commands_run=8))
+    service.detect_error = RuntimeError("System has not been booted with systemd as init system")
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: FakeSession(),
+        agent_install_service=service,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+
+    assert any(
+        "Agent detection failed: This server does not appear to support systemd" in log
+        for log in window.logs
+    )
+    assert window.agent_statuses == [None, False]
 
 
 def test_controller_delegates_transfer_queue_actions() -> None:

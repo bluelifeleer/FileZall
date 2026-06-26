@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
+from filezall_core.agent_deployment import classify_agent_error
 from filezall_core.capabilities import resource_monitoring_message
 from filezall_core.client_factory import create_remote_client
 from filezall_core.local_files import list_local_directory
@@ -412,7 +413,7 @@ class MainWindowController:
                     progress_callback=logs.append,
                 )
         except Exception as exc:
-            logs.append(f"Agent detection failed: {exc}")
+            logs.append(f"Agent detection failed: {classify_agent_error(str(exc))}")
             result["agent_status"] = False
             result["agent_status_sequence"].append(False)
             return
