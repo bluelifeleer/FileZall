@@ -165,6 +165,25 @@ class ObservingRemoteLoadingController(FakeController):
         super().list_remote_directory(path)
 
 
+class SlowRemoteDataController(FakeController):
+    def __init__(self, delay_seconds: float = 0.3) -> None:
+        super().__init__()
+        self.delay_seconds = delay_seconds
+
+    def load_remote_directory(self, path):
+        time.sleep(self.delay_seconds)
+        entries = [
+            RemoteFileEntry(
+                path=path / "nested",
+                name="nested",
+                is_dir=True,
+                size_bytes=0,
+                modified_time=None,
+            )
+        ]
+        return entries, path, f"Loaded remote directory {path}"
+
+
 def test_main_window_has_filezall_title(qtbot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
@@ -532,10 +551,16 @@ def test_main_window_has_help_menu_actions(qtbot) -> None:
     assert "Help" in menus
     help_actions = {action.text(): action for action in window.help_menu.actions()}
 
-    assert set(help_actions) == {"About FileZall", "Version", "Protocols"}
+    assert set(help_actions) == {
+        "About FileZall",
+        "Version",
+        "Protocols",
+        "Commercial",
+    }
     assert help_actions["About FileZall"].statusTip()
     assert help_actions["Version"].statusTip()
     assert help_actions["Protocols"].statusTip()
+    assert help_actions["Commercial"].statusTip()
 
 
 def test_main_window_has_session_menu_new_session_action(qtbot) -> None:
@@ -716,6 +741,34 @@ def test_remote_directory_navigation_shows_loading_state_while_request_runs(qtbo
     )
     assert window.remote_panel.table.isEnabled()
     assert window.remote_panel.refresh_button.isEnabled()
+
+
+def test_remote_directory_navigation_runs_in_background(qtbot) -> None:
+    controller = SlowRemoteDataController(delay_seconds=0.3)
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.remote_panel.set_entries(
+        [
+            RemoteFileEntry(
+                path=PurePosixPath("/home/deploy/releases"),
+                name="releases",
+                is_dir=True,
+                size_bytes=0,
+                modified_time=None,
+            )
+        ]
+    )
+
+    started_at = time.perf_counter()
+    window.remote_panel.table.cellDoubleClicked.emit(1, 0)
+    elapsed = time.perf_counter() - started_at
+
+    assert elapsed < 0.2
+    assert not window.remote_panel.table.isEnabled()
+    qtbot.waitUntil(lambda: window.remote_panel.name_at(1) == "nested", timeout=3000)
+    assert window.remote_panel.path_edit.text() == "/home/deploy/releases"
+    assert window.remote_panel.table.isEnabled()
 
 
 def test_main_window_double_clicks_directories_to_enter(qtbot, tmp_path) -> None:
@@ -1022,6 +1075,19 @@ def test_resource_refresh_timer_starts_after_successful_connect(qtbot) -> None:
     assert window.resource_refresh_timer.isActive()
 
 
+def test_successful_connect_triggers_immediate_resource_refresh(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.connection_bar.host_edit.setText("example.com")
+    window.connection_bar.username_edit.setText("deploy")
+    window.connection_bar.secret_edit.setText("secret")
+
+    qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: controller.resource_refreshes == 1, timeout=3000)
+
+
 def test_resource_refresh_tick_runs_controller_refresh_in_background(qtbot) -> None:
     controller = FakeController()
     window = MainWindow(controller=controller)
@@ -1031,6 +1097,19 @@ def test_resource_refresh_tick_runs_controller_refresh_in_background(qtbot) -> N
 
     qtbot.waitUntil(lambda: controller.resource_refreshes == 1, timeout=3000)
     assert window._resource_refresh_running is False
+
+
+def test_resource_refresh_success_is_written_to_logs(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+
+    window._handle_resource_refresh_tick()
+
+    qtbot.waitUntil(
+        lambda: "Resource snapshot refreshed" in window.log_view.toPlainText(),
+        timeout=3000,
+    )
 
 
 def test_main_window_can_connect_without_remembering_password(qtbot) -> None:

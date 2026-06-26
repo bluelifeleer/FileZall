@@ -38,6 +38,16 @@ _TRANSLATIONS = {
         "help.about": "About FileZall",
         "help.version": "Version",
         "help.protocols": "Protocols",
+        "help.commercial": "Commercial",
+        "commercial.title": "FileZall Commercial",
+        "commercial.body": (
+            "FileZall is designed for professional file transfer, deployment, "
+            "and server operations. Commercial licensing can include enterprise "
+            "deployment support, private builds, Agent customization, update "
+            "channels, and priority troubleshooting. Contact the FileZall "
+            "maintainer or vendor channel for licensing, support, and partnership "
+            "details."
+        ),
         "logs.export": "Export Logs",
         "site.quick": "Quick Connect",
         "connection.site": "Site",
@@ -101,6 +111,13 @@ _TRANSLATIONS = {
         "help.about": "关于 FileZall",
         "help.version": "版本",
         "help.protocols": "协议",
+        "help.commercial": "商业信息",
+        "commercial.title": "FileZall 商业信息",
+        "commercial.body": (
+            "FileZall 面向专业文件传输、部署和服务器运维场景。商业授权可包含企业部署支持、"
+            "私有构建、Agent 定制、更新通道和优先故障排查。授权、支持和合作信息可通过 "
+            "FileZall 维护者或厂商渠道获取。"
+        ),
         "logs.export": "导出日志",
         "site.quick": "快速连接",
         "connection.site": "站点",

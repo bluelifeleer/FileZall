@@ -82,6 +82,22 @@ class ResourceRefreshWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class RemoteDirectoryWorker(QObject):
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, action: Callable[[], object]) -> None:
+        super().__init__()
+        self._action = action
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            self.succeeded.emit(self._action())
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class MainWindow(QMainWindow):
     def __init__(
         self,
@@ -111,6 +127,8 @@ class MainWindow(QMainWindow):
         self._agent_workers = []
         self._resource_refresh_workers = []
         self._resource_refresh_running = False
+        self._remote_directory_workers = []
+        self._remote_directory_loading = False
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
@@ -165,6 +183,9 @@ class MainWindow(QMainWindow):
         self.protocols_action = self.help_menu.addAction("Protocols")
         self.protocols_action.setStatusTip("Show supported transfer protocols")
         self.protocols_action.triggered.connect(self._show_protocols)
+        self.commercial_action = self.help_menu.addAction("Commercial")
+        self.commercial_action.setStatusTip("Show commercial licensing and support information")
+        self.commercial_action.triggered.connect(self._show_commercial)
 
     def _show_about(self) -> None:
         QMessageBox.information(
@@ -181,6 +202,13 @@ class MainWindow(QMainWindow):
             self,
             "Supported Protocols",
             "SFTP, FTP, FTPS, and FileZall Agent HTTP transfers are supported.",
+        )
+
+    def _show_commercial(self) -> None:
+        QMessageBox.information(
+            self,
+            self._text("commercial.title"),
+            self._text("commercial.body"),
         )
 
     def _build_theme_menu(self) -> None:
@@ -258,6 +286,7 @@ class MainWindow(QMainWindow):
         self.about_action.setText(self._text("help.about"))
         self.version_action.setText(self._text("help.version"))
         self.protocols_action.setText(self._text("help.protocols"))
+        self.commercial_action.setText(self._text("help.commercial"))
 
         self.connection_bar.site_label.setText(self._text("connection.site"))
         self.connection_bar.host_edit.setPlaceholderText(self._text("connection.host"))
@@ -631,6 +660,7 @@ class MainWindow(QMainWindow):
         self._set_connection_state("Connected", "green")
         self.heartbeat_timer.start()
         self.resource_refresh_timer.start()
+        self._handle_resource_refresh_tick()
         self.connection_bar.connect_button.setEnabled(True)
 
     def _handle_disconnect_clicked(self) -> None:
@@ -750,6 +780,8 @@ class MainWindow(QMainWindow):
             self.append_log(f"Agent {label} completion failed: {exc}")
             self.show_status(str(exc))
         self.append_log(f"Agent {label} command finished")
+        if label == "install":
+            self._handle_resource_refresh_tick()
         self._set_agent_action_enabled(True)
         self._cleanup_agent_worker(thread, worker)
 
@@ -846,13 +878,42 @@ class MainWindow(QMainWindow):
         self.controller.load_local_directory(path)
 
     def _load_remote_directory(self, path: PurePosixPath) -> None:
+        if self._remote_directory_loading:
+            self.show_status("Remote directory load already in progress")
+            return
         self.remote_panel.path_edit.add_history(str(path))
         self._set_remote_loading(True, path)
-        QApplication.processEvents()
-        try:
-            self.controller.list_remote_directory(path)
-        finally:
-            self._set_remote_loading(False, path)
+        if not hasattr(self.controller, "load_remote_directory"):
+            try:
+                self.controller.list_remote_directory(path)
+            finally:
+                self._set_remote_loading(False, path)
+            return
+        self._remote_directory_loading = True
+        thread = QThread(self)
+        worker = RemoteDirectoryWorker(lambda: self.controller.load_remote_directory(path))
+        worker.moveToThread(thread)
+        self._remote_directory_workers.append((thread, worker, path))
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(
+            lambda result, thread=thread, worker=worker, path=path: self._finish_remote_directory_load(
+                result,
+                thread,
+                worker,
+                path,
+            )
+        )
+        worker.failed.connect(
+            lambda error, thread=thread, worker=worker, path=path: self._fail_remote_directory_load(
+                error,
+                thread,
+                worker,
+                path,
+            )
+        )
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
 
     def _set_remote_loading(self, loading: bool, path: PurePosixPath) -> None:
         enabled = not loading
@@ -862,6 +923,47 @@ class MainWindow(QMainWindow):
         self.remote_panel.action_button.setEnabled(enabled)
         if loading:
             self.show_status(self._text("status.loading_remote", path=path))
+
+    def _finish_remote_directory_load(
+        self,
+        result,
+        thread: QThread,
+        worker,
+        path: PurePosixPath,
+    ) -> None:
+        entries, loaded_path, status = result
+        self.set_remote_entries(entries, loaded_path)
+        if status:
+            self.show_status(status)
+            self.append_log(status)
+        self._set_remote_loading(False, loaded_path)
+        self._cleanup_remote_directory_worker(thread, worker, path)
+
+    def _fail_remote_directory_load(
+        self,
+        error: str,
+        thread: QThread,
+        worker,
+        path: PurePosixPath,
+    ) -> None:
+        message = f"Remote directory load failed: {error}"
+        self.show_status(message)
+        self.append_log(message)
+        self._set_remote_loading(False, path)
+        self._cleanup_remote_directory_worker(thread, worker, path)
+
+    def _cleanup_remote_directory_worker(
+        self,
+        thread: QThread,
+        worker,
+        path: PurePosixPath,
+    ) -> None:
+        self._remote_directory_loading = False
+        try:
+            self._remote_directory_workers.remove((thread, worker, path))
+        except ValueError:
+            pass
+        thread.quit()
 
     def _handle_upload_clicked(self) -> None:
         local_root = Path(self.local_panel.path_edit.text().strip() or Path.home())
@@ -936,6 +1038,11 @@ class MainWindow(QMainWindow):
     def _handle_resource_refresh_tick(self) -> None:
         if self._resource_refresh_running:
             return
+        if not hasattr(self.controller, "load_resource_snapshot"):
+            self.controller.refresh_resources()
+            self.show_status("Resource snapshot refreshed")
+            self.append_log("Resource snapshot refreshed")
+            return
         self._resource_refresh_running = True
         thread = QThread(self)
         worker = ResourceRefreshWorker(self._resource_refresh_action)
@@ -964,7 +1071,7 @@ class MainWindow(QMainWindow):
         if hasattr(self.controller, "load_resource_snapshot"):
             return self.controller.load_resource_snapshot()
         self.controller.refresh_resources()
-        return None
+        return None, "Resource snapshot refreshed"
 
     def _finish_resource_refresh(self, result, thread: QThread, worker) -> None:
         if isinstance(result, tuple) and len(result) == 2:
@@ -973,10 +1080,13 @@ class MainWindow(QMainWindow):
                 self.set_resource_snapshot(snapshot)
             if status:
                 self.show_status(status)
+                self.append_log(status)
         self._cleanup_resource_refresh(thread, worker)
 
     def _fail_resource_refresh(self, error: str, thread: QThread, worker) -> None:
-        self.show_status(f"Resource refresh failed: {error}")
+        message = f"Resource refresh failed: {error}"
+        self.show_status(message)
+        self.append_log(message)
         self._cleanup_resource_refresh(thread, worker)
 
     def _cleanup_resource_refresh(self, thread: QThread, worker) -> None:

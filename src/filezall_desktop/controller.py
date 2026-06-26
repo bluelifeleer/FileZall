@@ -92,10 +92,14 @@ class MainWindowController:
         self._log("Disconnected")
 
     def list_remote_directory(self, path: PurePosixPath) -> None:
-        entries = self._require_session().list_directory(path)
+        entries, path, status = self.load_remote_directory(path)
         self._window.set_remote_entries(entries, path)
-        self._window.show_status(f"Loaded remote directory {path}")
-        self._log(f"Loaded remote directory {path}")
+        self._window.show_status(status)
+        self._log(status)
+
+    def load_remote_directory(self, path: PurePosixPath):
+        entries = self._require_session().list_directory(path)
+        return entries, path, f"Loaded remote directory {path}"
 
     def heartbeat(self) -> bool:
         try:
