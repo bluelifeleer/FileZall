@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 import os
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 
 class AgentResourceService:
-    def __init__(self, proc_root: Path = Path("/proc")) -> None:
+    def __init__(
+        self,
+        proc_root: Path = Path("/proc"),
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._proc_root = proc_root
+        self._clock = clock
+        self._previous_cpu_stat: str | None = self._read_cpu_stat()
+        self._previous_network_sample: tuple[dict[str, int], float] | None = (
+            self._read_network_sample()
+        )
 
     def resources(self) -> dict:
         processes = self.processes()["processes"]
@@ -14,7 +25,7 @@ class AgentResourceService:
             "cpu": {"percent": self._cpu_percent()},
             "memory": self._memory(),
             "disks": [self._disk_usage(Path("/"))],
-            "network": {"rx_bytes_per_sec": 0, "tx_bytes_per_sec": 0},
+            "network": self._network(),
             "processes": processes,
         }
 
@@ -52,15 +63,52 @@ class AgentResourceService:
         }
 
     def _cpu_percent(self) -> float:
-        stat_path = self._proc_root / "stat"
-        text = _read_text(stat_path)
-        return 0.0 if not text else 0.0
+        current = self._read_cpu_stat()
+        if current is None:
+            return 0.0
+        previous = self._previous_cpu_stat
+        self._previous_cpu_stat = current
+        if previous is None:
+            return 0.0
+        return parse_proc_stat(previous, current)
+
+    def _read_cpu_stat(self) -> str | None:
+        text = _read_text(self._proc_root / "stat")
+        if not text:
+            return None
+        return text.splitlines()[0]
 
     def _memory(self) -> dict:
         meminfo = _read_text(self._proc_root / "meminfo")
         if not meminfo:
             return {"total_bytes": 0, "used_bytes": 0, "available_bytes": 0}
         return parse_meminfo(meminfo)
+
+    def _network(self) -> dict:
+        current_sample = self._read_network_sample()
+        if current_sample is None:
+            return {"rx_bytes_per_sec": 0, "tx_bytes_per_sec": 0}
+        previous_sample = self._previous_network_sample
+        self._previous_network_sample = current_sample
+        if previous_sample is None:
+            return {"rx_bytes_per_sec": 0, "tx_bytes_per_sec": 0}
+        previous, previous_time = previous_sample
+        current, current_time = current_sample
+        elapsed = current_time - previous_time
+        if elapsed <= 0:
+            return {"rx_bytes_per_sec": 0, "tx_bytes_per_sec": 0}
+        rx_delta = max(current["rx_bytes"] - previous["rx_bytes"], 0)
+        tx_delta = max(current["tx_bytes"] - previous["tx_bytes"], 0)
+        return {
+            "rx_bytes_per_sec": int(round(rx_delta / elapsed)),
+            "tx_bytes_per_sec": int(round(tx_delta / elapsed)),
+        }
+
+    def _read_network_sample(self) -> tuple[dict[str, int], float] | None:
+        net_dev = _read_text(self._proc_root / "net" / "dev")
+        if not net_dev:
+            return None
+        return parse_net_dev(net_dev), self._clock()
 
     @staticmethod
     def _disk_usage(path: Path) -> dict:
@@ -110,6 +158,23 @@ def parse_proc_stat(previous: str, current: str) -> float:
     if total_delta <= 0:
         return 0.0
     return round((total_delta - idle_delta) * 100 / total_delta, 1)
+
+
+def parse_net_dev(text: str) -> dict:
+    rx_bytes = 0
+    tx_bytes = 0
+    for line in text.splitlines():
+        if ":" not in line:
+            continue
+        interface, raw_values = line.split(":", 1)
+        if interface.strip() == "lo":
+            continue
+        values = raw_values.split()
+        if len(values) < 16:
+            continue
+        rx_bytes += int(values[0])
+        tx_bytes += int(values[8])
+    return {"rx_bytes": rx_bytes, "tx_bytes": tx_bytes}
 
 
 def _cpu_values(line: str) -> list[int]:

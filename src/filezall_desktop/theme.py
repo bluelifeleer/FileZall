@@ -93,6 +93,56 @@ QPushButton:pressed, QToolButton:pressed {{
     background-color: {colors["accent"]};
     color: #ffffff;
 }}
+QPushButton:disabled, QToolButton:disabled {{
+    background-color: {colors["disabled_bg"]};
+    color: {colors["disabled_text"]};
+    border-color: {colors["border"]};
+}}
+QPushButton[buttonRole="primary"] {{
+    background-color: {colors["primary"]};
+    border-color: {colors["primary"]};
+    color: #ffffff;
+}}
+QPushButton[buttonRole="primary"]:hover {{
+    background-color: {colors["primary_hover"]};
+    border-color: {colors["primary_hover"]};
+}}
+QPushButton[buttonRole="primary"]:pressed {{
+    background-color: {colors["primary_pressed"]};
+}}
+QPushButton[buttonRole="success"] {{
+    background-color: {colors["success"]};
+    border-color: {colors["success"]};
+    color: #ffffff;
+}}
+QPushButton[buttonRole="success"]:hover {{
+    background-color: {colors["success_hover"]};
+    border-color: {colors["success_hover"]};
+}}
+QPushButton[buttonRole="success"]:pressed {{
+    background-color: {colors["success_pressed"]};
+}}
+QPushButton[buttonRole="danger"] {{
+    background-color: {colors["danger"]};
+    border-color: {colors["danger"]};
+    color: #ffffff;
+}}
+QPushButton[buttonRole="danger"]:hover {{
+    background-color: {colors["danger_hover"]};
+    border-color: {colors["danger_hover"]};
+}}
+QPushButton[buttonRole="danger"]:pressed {{
+    background-color: {colors["danger_pressed"]};
+}}
+QPushButton[buttonRole="secondary"] {{
+    background-color: {colors["secondary_bg"]};
+    border-color: {colors["secondary_border"]};
+    color: {colors["text"]};
+}}
+QPushButton[buttonRole="secondary"]:hover {{
+    background-color: {colors["secondary_hover"]};
+    border-color: {colors["accent"]};
+}}
 QToolButton#pathButton {{
     padding: 0px;
 }}
@@ -151,6 +201,20 @@ def _palette(theme_name: str) -> dict[str, str]:
             "header_bg": "#111827",
             "button_bg": "#172033",
             "button_hover": "#1f2a44",
+            "disabled_bg": "#1f2937",
+            "disabled_text": "#6b7280",
+            "primary": "#2563eb",
+            "primary_hover": "#1d4ed8",
+            "primary_pressed": "#1e40af",
+            "success": "#16a34a",
+            "success_hover": "#15803d",
+            "success_pressed": "#166534",
+            "danger": "#dc2626",
+            "danger_hover": "#b91c1c",
+            "danger_pressed": "#991b1b",
+            "secondary_bg": "#172033",
+            "secondary_border": "#3b475c",
+            "secondary_hover": "#1f2a44",
             "hover": "#243244",
             "selected": "#1d4ed8",
             "accent": "#2563eb",
@@ -168,6 +232,20 @@ def _palette(theme_name: str) -> dict[str, str]:
         "header_bg": "#eef2f7",
         "button_bg": "#ffffff",
         "button_hover": "#eef4ff",
+        "disabled_bg": "#e5e7eb",
+        "disabled_text": "#94a3b8",
+        "primary": "#2563eb",
+        "primary_hover": "#1d4ed8",
+        "primary_pressed": "#1e40af",
+        "success": "#16a34a",
+        "success_hover": "#15803d",
+        "success_pressed": "#166534",
+        "danger": "#dc2626",
+        "danger_hover": "#b91c1c",
+        "danger_pressed": "#991b1b",
+        "secondary_bg": "#ffffff",
+        "secondary_border": "#cbd5e1",
+        "secondary_hover": "#eef4ff",
         "hover": "#dbeafe",
         "selected": "#bfdbfe",
         "accent": "#2563eb",

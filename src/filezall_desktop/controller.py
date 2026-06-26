@@ -64,18 +64,54 @@ class MainWindowController:
         password: str | None = None,
         remember_secret: bool = True,
     ) -> None:
+        result = self.connect_for_window(site, password, remember_secret)
+        self._publish_connect_result(result)
+
+    def connect_for_window(
+        self,
+        site: SiteProfile,
+        password: str | None = None,
+        remember_secret: bool = True,
+    ) -> dict:
+        logs: list[str] = []
         site = self._save_site_if_configured(site, password, remember_secret)
         password = password or self._secret_for_site(site)
         self._session = self._session_factory(site)
         self._connected_site = site
         self._connected_secret = password
         entries = self._session.connect_and_list_default(password=password)
-        self._window.set_remote_entries(entries, self._session.current_remote_path)
+        result = {
+            "entries": entries,
+            "remote_path": self._session.current_remote_path,
+            "monitoring_status": resource_monitoring_message(site.protocol),
+            "agent_status": None,
+            "agent_status_sequence": [],
+            "agent_status_message": None,
+            "resource_snapshot": None,
+            "resource_status": None,
+            "status": f"Connected to {site.name}",
+            "logs": logs,
+        }
+        self._detect_agent_installation_for_result(site, password, result, logs)
+        logs.append(f"Connected to {site.name}")
+        return result
+
+    def _publish_connect_result(self, result: dict) -> None:
+        self._window.set_remote_entries(result["entries"], result["remote_path"])
         if hasattr(self._window, "set_monitoring_status"):
-            self._window.set_monitoring_status(resource_monitoring_message(site.protocol))
-        self._detect_agent_installation(site, password)
-        self._window.show_status(f"Connected to {site.name}")
-        self._log(f"Connected to {site.name}")
+            self._window.set_monitoring_status(result["monitoring_status"])
+        agent_status = result.get("agent_status")
+        if hasattr(self._window, "set_agent_status"):
+            for status in result.get("agent_status_sequence", []):
+                self._window.set_agent_status(status)
+            if agent_status is not None and not result.get("agent_status_sequence"):
+                self._window.set_agent_status(agent_status)
+        for message in result.get("logs", []):
+            self._log(message)
+        snapshot = result.get("resource_snapshot")
+        if snapshot is not None:
+            self._window.set_resource_snapshot(snapshot)
+        self._window.show_status(result["status"])
 
     def disconnect(self) -> None:
         session = self._session
@@ -252,14 +288,6 @@ class MainWindowController:
             self._window.set_process_detail(detail)
             self._window.show_status(f"Loaded process detail {pid}")
 
-    def install_agent(self) -> None:
-        if self._agent_install_service is None:
-            self._window.show_status("Agent installation is not configured.")
-            return
-        self.complete_agent_install(
-            self.install_agent_with_progress(lambda message: self._log(message))
-        )
-
     def install_agent_with_progress(self, progress_callback=None):
         if self._agent_install_service is None:
             raise RuntimeError("Agent installation is not configured.")
@@ -281,17 +309,6 @@ class MainWindowController:
         else:
             self._window.show_status("Agent installation failed")
             self._log("Agent installation failed")
-
-    def uninstall_agent(self) -> None:
-        if self._agent_install_service is None or not hasattr(
-            self._agent_install_service,
-            "uninstall",
-        ):
-            self._window.show_status("Agent uninstallation is not configured.")
-            return
-        self.complete_agent_uninstall(
-            self.uninstall_agent_with_progress(lambda message: self._log(message))
-        )
 
     def uninstall_agent_with_progress(self, progress_callback=None):
         if self._agent_install_service is None or not hasattr(
@@ -330,10 +347,37 @@ class MainWindowController:
         )
 
     def _detect_agent_installation(self, site: SiteProfile, password: str | None) -> None:
+        result = {
+            "agent_status": None,
+            "agent_status_sequence": [],
+            "agent_status_message": None,
+            "resource_snapshot": None,
+            "resource_status": None,
+        }
+        logs: list[str] = []
+        self._detect_agent_installation_for_result(site, password, result, logs)
+        for message in logs:
+            self._log(message)
+        if hasattr(self._window, "set_agent_status"):
+            for status in result.get("agent_status_sequence", []):
+                self._window.set_agent_status(status)
+            if result["agent_status"] is not None and not result.get("agent_status_sequence"):
+                self._window.set_agent_status(result["agent_status"])
+        if result["resource_snapshot"] is not None:
+            self._window.set_resource_snapshot(result["resource_snapshot"])
+        if result["agent_status_message"]:
+            self._window.show_status(result["agent_status_message"])
+
+    def _detect_agent_installation_for_result(
+        self,
+        site: SiteProfile,
+        password: str | None,
+        result: dict,
+        logs: list[str],
+    ) -> None:
         if site.protocol is Protocol.AGENT_HTTP:
-            if hasattr(self._window, "set_agent_status"):
-                self._window.set_agent_status(True)
-            self._log("Agent service installed")
+            result["agent_status"] = True
+            logs.append("Agent service installed")
             return
         if site.protocol is not Protocol.SFTP:
             return
@@ -342,40 +386,48 @@ class MainWindowController:
             "is_agent_installed",
         ):
             return
-        if hasattr(self._window, "set_agent_status"):
-            self._window.set_agent_status(None)
-        self._log("Agent detection started")
+        result["agent_status_sequence"].append(None)
+        logs.append("Agent detection started")
         try:
             agent_token_ref = None
             if hasattr(self._agent_install_service, "detect_agent_installation"):
-                result = self._agent_install_service.detect_agent_installation(
+                detection = self._agent_install_service.detect_agent_installation(
                     site,
                     password,
-                    progress_callback=lambda message: self._log(message),
+                    progress_callback=logs.append,
                 )
-                installed = result.installed
-                agent_token_ref = result.agent_token_ref
+                installed = detection.installed
+                agent_token_ref = detection.agent_token_ref
             else:
                 installed = self._agent_install_service.is_agent_installed(
                     site,
                     password,
-                    progress_callback=lambda message: self._log(message),
+                    progress_callback=logs.append,
                 )
         except Exception as exc:
-            self._log(f"Agent detection failed: {exc}")
-            if hasattr(self._window, "set_agent_status"):
-                self._window.set_agent_status(False)
+            logs.append(f"Agent detection failed: {exc}")
+            result["agent_status"] = False
+            result["agent_status_sequence"].append(False)
             return
         if installed and agent_token_ref is not None:
             self._mark_connected_site_agent_enabled_ref(agent_token_ref)
-            self.refresh_resources()
-        if hasattr(self._window, "set_agent_status"):
-            self._window.set_agent_status(installed)
+            try:
+                snapshot, status = self.load_resource_snapshot()
+            except RuntimeError as exc:
+                logs.append(f"Resource refresh failed: {exc}")
+            else:
+                result["resource_snapshot"] = snapshot
+                result["resource_status"] = status
+                logs.append(status)
+        result["agent_status"] = installed
+        result["agent_status_sequence"].append(installed)
         if installed and agent_token_ref is None:
-            self._log("Agent service installed but Agent token is not available")
-            self._window.show_status("Agent installed, but install/update is required to enable monitoring")
+            logs.append("Agent service installed but Agent token is not available")
+            result["agent_status_message"] = (
+                "Agent installed, but install/update is required to enable monitoring"
+            )
         else:
-            self._log("Agent service installed" if installed else "Agent service not installed")
+            logs.append("Agent service installed" if installed else "Agent service not installed")
 
     def _mark_connected_site_agent_enabled_ref(self, agent_token_ref: str) -> None:
         if self._connected_site is None:

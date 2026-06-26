@@ -4,7 +4,7 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QActionGroup
+from PySide6.QtGui import QActionGroup, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -98,6 +98,74 @@ class RemoteDirectoryWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class ResourceUsageChart(QWidget):
+    def __init__(self, parent=None, max_points: int = 60) -> None:
+        super().__init__(parent)
+        self.max_points = max_points
+        self.history: list[dict[str, float]] = []
+        self.setMinimumWidth(260)
+        self.setMinimumHeight(160)
+
+    def add_snapshot(self, snapshot: ResourceSnapshot) -> None:
+        memory_percent = _usage_percent(
+            snapshot.memory.used_bytes,
+            snapshot.memory.total_bytes,
+        )
+        disk_percent = 0.0
+        if snapshot.disks:
+            disk = snapshot.disks[0]
+            disk_percent = _usage_percent(disk.used_bytes, disk.total_bytes)
+        self.history.append(
+            {
+                "cpu": round(float(snapshot.cpu.percent), 1),
+                "memory": round(memory_percent, 1),
+                "disk": round(disk_percent, 1),
+            }
+        )
+        if len(self.history) > self.max_points:
+            self.history = self.history[-self.max_points :]
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = self.rect().adjusted(12, 12, -12, -20)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 0))
+        painter.setPen(QPen(QColor("#64748b"), 1))
+        painter.drawRect(rect)
+        if not self.history:
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "Waiting for resource data")
+            return
+        series = {
+            "cpu": QColor("#2563eb"),
+            "memory": QColor("#16a34a"),
+            "disk": QColor("#f59e0b"),
+        }
+        for name, color in series.items():
+            self._draw_series(painter, rect, name, color)
+        legend_x = rect.left()
+        for name, color in series.items():
+            painter.setPen(QPen(color, 2))
+            painter.drawLine(legend_x, rect.bottom() + 12, legend_x + 14, rect.bottom() + 12)
+            painter.setPen(QPen(QColor("#64748b"), 1))
+            painter.drawText(legend_x + 18, rect.bottom() + 16, name.upper())
+            legend_x += 80
+
+    def _draw_series(self, painter: QPainter, rect, key: str, color: QColor) -> None:
+        if len(self.history) < 2:
+            return
+        painter.setPen(QPen(color, 2))
+        points = []
+        width = max(rect.width(), 1)
+        height = max(rect.height(), 1)
+        for index, row in enumerate(self.history):
+            x = rect.left() + width * index / max(len(self.history) - 1, 1)
+            y = rect.bottom() - height * max(0.0, min(row[key], 100.0)) / 100.0
+            points.append((int(x), int(y)))
+        for start, end in zip(points, points[1:]):
+            painter.drawLine(start[0], start[1], end[0], end[1])
+
+
 class MainWindow(QMainWindow):
     def __init__(
         self,
@@ -124,10 +192,16 @@ class MainWindow(QMainWindow):
         self._new_session_factory = new_session_factory
         self._should_confirm_remember_secret = controller is None
         self._heartbeat_failed_logged = False
+        self._connection_workers = []
+        self._active_connection = None
+        self._connection_running = False
         self._agent_workers = []
+        self._active_agent_action = None
         self._resource_refresh_workers = []
+        self._active_resource_refresh = None
         self._resource_refresh_running = False
         self._remote_directory_workers = []
+        self._active_remote_directory_load = None
         self._remote_directory_loading = False
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
@@ -139,6 +213,7 @@ class MainWindow(QMainWindow):
         self._build_logs_menu()
         self._build_toolbar()
         self._build_central_layout()
+        self._apply_button_roles()
         self._apply_theme(SYSTEM_THEME)
         self._apply_language(SYSTEM_LANGUAGE)
         self.setStatusBar(QStatusBar(self))
@@ -472,10 +547,15 @@ class MainWindow(QMainWindow):
         self.process_table = QTableWidget(0, 5, root)
         self.process_table.setHorizontalHeaderLabels(["PID", "User", "Name", "CPU", "Memory"])
         self.process_detail_label = QLabel("", root)
+        self.resource_chart = ResourceUsageChart(root)
+        self.resource_content_splitter = QSplitter(Qt.Orientation.Horizontal, resource_widget)
+        self.resource_content_splitter.addWidget(self.process_table)
+        self.resource_content_splitter.addWidget(self.resource_chart)
+        self.resource_content_splitter.setSizes([760, 360])
 
         resource_layout.addLayout(resource_actions, stretch=0)
         resource_layout.addLayout(resource_values, stretch=0)
-        resource_layout.addWidget(self.process_table, stretch=1)
+        resource_layout.addWidget(self.resource_content_splitter, stretch=1)
         resource_layout.addWidget(self.process_detail_label, stretch=0)
 
         self.main_splitter.addWidget(self.file_splitter)
@@ -484,6 +564,27 @@ class MainWindow(QMainWindow):
         self.main_splitter.setSizes([420, 190, 190])
         root_layout.addWidget(self.main_splitter)
         self.setCentralWidget(root)
+
+    def _apply_button_roles(self) -> None:
+        role_map = {
+            self.connection_bar.connect_button: "primary",
+            self.connection_bar.disconnect_button: "danger",
+            self.connection_bar.install_agent_button: "success",
+            self.local_panel.refresh_button: "secondary",
+            self.remote_panel.refresh_button: "secondary",
+            self.local_panel.action_button: "primary",
+            self.remote_panel.action_button: "primary",
+            self.pause_transfer_button: "secondary",
+            self.resume_transfer_button: "success",
+            self.cancel_transfer_button: "danger",
+            self.retry_transfer_button: "secondary",
+            self.resource_install_agent_button: "success",
+            self.resource_uninstall_agent_button: "danger",
+            self.resource_refresh_button: "primary",
+            self.process_detail_button: "secondary",
+        }
+        for button, role in role_map.items():
+            button.setProperty("buttonRole", role)
 
     def set_local_entries(self, entries) -> None:
         self.local_panel.set_entries(entries)
@@ -501,6 +602,7 @@ class MainWindow(QMainWindow):
     def show_status(self, message: str) -> None:
         self.statusBar().showMessage(message)
 
+    @Slot(str)
     def append_log(self, message: str) -> None:
         entry = self.log_service.append(message)
         self.log_view.appendPlainText(entry.format())
@@ -551,12 +653,14 @@ class MainWindow(QMainWindow):
     def set_resource_snapshot(self, snapshot: ResourceSnapshot) -> None:
         self.cpu_value_label.setText(f"{snapshot.cpu.percent:.1f}%")
         self.memory_value_label.setText(
-            f"{snapshot.memory.used_bytes} / {snapshot.memory.total_bytes} bytes"
+            f"{_human_bytes(snapshot.memory.used_bytes)} / {_human_bytes(snapshot.memory.total_bytes)}"
         )
         self.disk_value_label.setText(_disk_text(snapshot))
         self.network_value_label.setText(
-            f"RX {snapshot.network.rx_bytes_per_sec} B/s, TX {snapshot.network.tx_bytes_per_sec} B/s"
+            f"RX {_human_bytes(snapshot.network.rx_bytes_per_sec)}/s, "
+            f"TX {_human_bytes(snapshot.network.tx_bytes_per_sec)}/s"
         )
+        self.resource_chart.add_snapshot(snapshot)
         self.process_table.setRowCount(len(snapshot.processes))
         for row, process in enumerate(snapshot.processes):
             pid_cell = QTableWidgetItem(str(process.pid))
@@ -626,6 +730,40 @@ class MainWindow(QMainWindow):
         self.resource_uninstall_agent_button.clicked.connect(self._handle_uninstall_agent_clicked)
         self.process_detail_button.clicked.connect(self._handle_process_detail_clicked)
 
+    def closeEvent(self, event) -> None:
+        self.heartbeat_timer.stop()
+        self.resource_refresh_timer.stop()
+        running_threads = self._running_background_threads()
+        for thread in running_threads:
+            thread.quit()
+            thread.wait(250)
+        still_running = [thread for thread in running_threads if thread.isRunning()]
+        if still_running:
+            self.show_status("Background operation is still running. Close again after it finishes.")
+            self.append_log("Close delayed: background operation is still running")
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+    def _running_background_threads(self) -> list[QThread]:
+        threads: list[QThread] = []
+        active_items = [
+            self._active_connection,
+            self._active_resource_refresh,
+            self._active_remote_directory_load,
+        ]
+        for active in active_items:
+            if active is None:
+                continue
+            thread = active[0]
+            if isinstance(thread, QThread) and thread.isRunning():
+                threads.append(thread)
+        if self._active_agent_action is not None:
+            _label, thread, _worker, _complete = self._active_agent_action
+            if isinstance(thread, QThread) and thread.isRunning():
+                threads.append(thread)
+        return threads
+
     def _handle_connect_clicked(self) -> None:
         site = self._selected_saved_site()
         secret = self._secret_from_fields()
@@ -643,6 +781,9 @@ class MainWindow(QMainWindow):
         )
         self._set_connection_state("Connecting", "goldenrod")
         self.connection_bar.connect_button.setEnabled(False)
+        if hasattr(self.controller, "connect_for_window"):
+            self._start_connection(connect_site, secret, remember_secret)
+            return
         try:
             self.controller.connect(
                 connect_site,
@@ -662,6 +803,88 @@ class MainWindow(QMainWindow):
         self.resource_refresh_timer.start()
         self._handle_resource_refresh_tick()
         self.connection_bar.connect_button.setEnabled(True)
+
+    def _start_connection(
+        self,
+        connect_site: SiteProfile,
+        secret: str | None,
+        remember_secret: bool,
+    ) -> None:
+        if self._connection_running:
+            self.append_log("Connection already in progress")
+            return
+        self._connection_running = True
+        thread = QThread(self)
+        worker = ResourceRefreshWorker(
+            lambda: self.controller.connect_for_window(
+                connect_site,
+                secret,
+                remember_secret=remember_secret,
+            )
+        )
+        worker.moveToThread(thread)
+        self._active_connection = (thread, worker)
+        self._connection_workers.append((thread, worker))
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(self._finish_connection, Qt.ConnectionType.QueuedConnection)
+        worker.failed.connect(self._fail_connection, Qt.ConnectionType.QueuedConnection)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    @Slot(object)
+    def _finish_connection(self, result) -> None:
+        self._publish_connection_result(result)
+        self._heartbeat_failed_logged = False
+        self._set_connection_state("Connected", "green")
+        self.heartbeat_timer.start()
+        self.resource_refresh_timer.start()
+        if not isinstance(result, dict) or result.get("resource_snapshot") is None:
+            self._handle_resource_refresh_tick()
+        self.connection_bar.connect_button.setEnabled(True)
+        self._cleanup_connection_worker()
+
+    @Slot(str)
+    def _fail_connection(self, error: str) -> None:
+        self.append_log(f"Connection failed: {error}")
+        self._set_connection_state("Failed", "red")
+        self.heartbeat_timer.stop()
+        self.resource_refresh_timer.stop()
+        self.connection_bar.connect_button.setEnabled(True)
+        self.show_status(error)
+        self._cleanup_connection_worker()
+
+    def _publish_connection_result(self, result) -> None:
+        if not isinstance(result, dict):
+            return
+        self.set_remote_entries(result["entries"], result["remote_path"])
+        self.set_monitoring_status(result["monitoring_status"])
+        for status in result.get("agent_status_sequence", []):
+            self.set_agent_status(status)
+        agent_status = result.get("agent_status")
+        if agent_status is not None and not result.get("agent_status_sequence"):
+            self.set_agent_status(agent_status)
+        for message in result.get("logs", []):
+            self.append_log(message)
+        snapshot = result.get("resource_snapshot")
+        if snapshot is not None:
+            self.set_resource_snapshot(snapshot)
+        status = result.get("agent_status_message") or result.get("status")
+        if status:
+            self.show_status(status)
+
+    def _cleanup_connection_worker(self) -> None:
+        self._connection_running = False
+        if self._active_connection is None:
+            return
+        thread, worker = self._active_connection
+        self._active_connection = None
+        try:
+            self._connection_workers.remove((thread, worker))
+        except ValueError:
+            pass
+        thread.quit()
+        thread.wait(1000)
 
     def _handle_disconnect_clicked(self) -> None:
         self.append_log("Disconnect requested")
@@ -722,41 +945,28 @@ class MainWindow(QMainWindow):
         action: Callable[[Callable[[str], None]], object],
         complete: Callable[[object], None],
     ) -> None:
+        if self._active_agent_action is not None:
+            self.append_log(f"Agent {label} request ignored: another Agent action is running")
+            return
         self._set_agent_action_enabled(False)
         thread = QThread(self)
         worker = AgentActionWorker(action)
         worker.moveToThread(thread)
+        self._active_agent_action = (label, thread, worker, complete)
         self._agent_workers.append((thread, worker))
         thread.started.connect(worker.run)
-        worker.progress.connect(self.append_log)
-        worker.succeeded.connect(
-            lambda result, label=label, thread=thread, worker=worker, complete=complete: (
-                self._finish_agent_action(label, result, thread, worker, complete)
-            )
-        )
-        worker.failed.connect(
-            lambda error, label=label, thread=thread, worker=worker: self._fail_agent_action(
-                label,
-                error,
-                thread,
-                worker,
-            )
-        )
+        worker.progress.connect(self.append_log, Qt.ConnectionType.QueuedConnection)
+        worker.succeeded.connect(self._finish_agent_action, Qt.ConnectionType.QueuedConnection)
+        worker.failed.connect(self._fail_agent_action, Qt.ConnectionType.QueuedConnection)
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         thread.start()
 
     def _run_agent_install(self, progress: Callable[[str], None]):
-        if hasattr(self.controller, "install_agent_with_progress"):
-            return self.controller.install_agent_with_progress(progress)
-        self.controller.install_agent()
-        return None
+        return self.controller.install_agent_with_progress(progress)
 
     def _run_agent_uninstall(self, progress: Callable[[str], None]):
-        if hasattr(self.controller, "uninstall_agent_with_progress"):
-            return self.controller.uninstall_agent_with_progress(progress)
-        self.controller.uninstall_agent()
-        return None
+        return self.controller.uninstall_agent_with_progress(progress)
 
     def _complete_agent_install(self, result) -> None:
         if hasattr(self.controller, "complete_agent_install") and result is not None:
@@ -766,14 +976,11 @@ class MainWindow(QMainWindow):
         if hasattr(self.controller, "complete_agent_uninstall") and result is not None:
             self.controller.complete_agent_uninstall(result)
 
-    def _finish_agent_action(
-        self,
-        label: str,
-        result,
-        thread: QThread,
-        worker,
-        complete: Callable[[object], None],
-    ) -> None:
+    @Slot(object)
+    def _finish_agent_action(self, result) -> None:
+        if self._active_agent_action is None:
+            return
+        label, _thread, _worker, complete = self._active_agent_action
         try:
             complete(result)
         except Exception as exc:
@@ -783,9 +990,11 @@ class MainWindow(QMainWindow):
         if label == "install":
             self._handle_resource_refresh_tick()
         self._set_agent_action_enabled(True)
-        self._cleanup_agent_worker(thread, worker)
+        self._cleanup_agent_worker()
 
-    def _fail_agent_action(self, label: str, error: str, thread: QThread, worker) -> None:
+    @Slot(str)
+    def _fail_agent_action(self, error: str) -> None:
+        label = self._active_agent_action[0] if self._active_agent_action else "install"
         message = (
             f"Agent installation failed: {error}"
             if label == "install"
@@ -794,14 +1003,19 @@ class MainWindow(QMainWindow):
         self.append_log(message)
         self.show_status(message)
         self._set_agent_action_enabled(True)
-        self._cleanup_agent_worker(thread, worker)
+        self._cleanup_agent_worker()
 
-    def _cleanup_agent_worker(self, thread: QThread, worker) -> None:
+    def _cleanup_agent_worker(self) -> None:
+        if self._active_agent_action is None:
+            return
+        _label, thread, worker, _complete = self._active_agent_action
+        self._active_agent_action = None
         try:
             self._agent_workers.remove((thread, worker))
         except ValueError:
             pass
         thread.quit()
+        thread.wait(1000)
 
     def _set_agent_action_enabled(self, enabled: bool) -> None:
         self.connection_bar.install_agent_button.setEnabled(enabled)
@@ -893,23 +1107,16 @@ class MainWindow(QMainWindow):
         thread = QThread(self)
         worker = RemoteDirectoryWorker(lambda: self.controller.load_remote_directory(path))
         worker.moveToThread(thread)
+        self._active_remote_directory_load = (thread, worker, path)
         self._remote_directory_workers.append((thread, worker, path))
         thread.started.connect(worker.run)
         worker.succeeded.connect(
-            lambda result, thread=thread, worker=worker, path=path: self._finish_remote_directory_load(
-                result,
-                thread,
-                worker,
-                path,
-            )
+            self._finish_remote_directory_load,
+            Qt.ConnectionType.QueuedConnection,
         )
         worker.failed.connect(
-            lambda error, thread=thread, worker=worker, path=path: self._fail_remote_directory_load(
-                error,
-                thread,
-                worker,
-                path,
-            )
+            self._fail_remote_directory_load,
+            Qt.ConnectionType.QueuedConnection,
         )
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
@@ -924,46 +1131,37 @@ class MainWindow(QMainWindow):
         if loading:
             self.show_status(self._text("status.loading_remote", path=path))
 
-    def _finish_remote_directory_load(
-        self,
-        result,
-        thread: QThread,
-        worker,
-        path: PurePosixPath,
-    ) -> None:
+    @Slot(object)
+    def _finish_remote_directory_load(self, result) -> None:
         entries, loaded_path, status = result
         self.set_remote_entries(entries, loaded_path)
         if status:
             self.show_status(status)
             self.append_log(status)
         self._set_remote_loading(False, loaded_path)
-        self._cleanup_remote_directory_worker(thread, worker, path)
+        self._cleanup_remote_directory_worker()
 
-    def _fail_remote_directory_load(
-        self,
-        error: str,
-        thread: QThread,
-        worker,
-        path: PurePosixPath,
-    ) -> None:
+    @Slot(str)
+    def _fail_remote_directory_load(self, error: str) -> None:
         message = f"Remote directory load failed: {error}"
         self.show_status(message)
         self.append_log(message)
+        path = self._active_remote_directory_load[2] if self._active_remote_directory_load else PurePosixPath(".")
         self._set_remote_loading(False, path)
-        self._cleanup_remote_directory_worker(thread, worker, path)
+        self._cleanup_remote_directory_worker()
 
-    def _cleanup_remote_directory_worker(
-        self,
-        thread: QThread,
-        worker,
-        path: PurePosixPath,
-    ) -> None:
+    def _cleanup_remote_directory_worker(self) -> None:
         self._remote_directory_loading = False
+        if self._active_remote_directory_load is None:
+            return
+        thread, worker, path = self._active_remote_directory_load
+        self._active_remote_directory_load = None
         try:
             self._remote_directory_workers.remove((thread, worker, path))
         except ValueError:
             pass
         thread.quit()
+        thread.wait(1000)
 
     def _handle_upload_clicked(self) -> None:
         local_root = Path(self.local_panel.path_edit.text().strip() or Path.home())
@@ -1047,22 +1245,11 @@ class MainWindow(QMainWindow):
         thread = QThread(self)
         worker = ResourceRefreshWorker(self._resource_refresh_action)
         worker.moveToThread(thread)
+        self._active_resource_refresh = (thread, worker)
         self._resource_refresh_workers.append((thread, worker))
         thread.started.connect(worker.run)
-        worker.succeeded.connect(
-            lambda result, thread=thread, worker=worker: self._finish_resource_refresh(
-                result,
-                thread,
-                worker,
-            )
-        )
-        worker.failed.connect(
-            lambda error, thread=thread, worker=worker: self._fail_resource_refresh(
-                error,
-                thread,
-                worker,
-            )
-        )
+        worker.succeeded.connect(self._finish_resource_refresh, Qt.ConnectionType.QueuedConnection)
+        worker.failed.connect(self._fail_resource_refresh, Qt.ConnectionType.QueuedConnection)
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         thread.start()
@@ -1073,7 +1260,8 @@ class MainWindow(QMainWindow):
         self.controller.refresh_resources()
         return None, "Resource snapshot refreshed"
 
-    def _finish_resource_refresh(self, result, thread: QThread, worker) -> None:
+    @Slot(object)
+    def _finish_resource_refresh(self, result) -> None:
         if isinstance(result, tuple) and len(result) == 2:
             snapshot, status = result
             if snapshot is not None:
@@ -1081,21 +1269,27 @@ class MainWindow(QMainWindow):
             if status:
                 self.show_status(status)
                 self.append_log(status)
-        self._cleanup_resource_refresh(thread, worker)
+        self._cleanup_resource_refresh()
 
-    def _fail_resource_refresh(self, error: str, thread: QThread, worker) -> None:
+    @Slot(str)
+    def _fail_resource_refresh(self, error: str) -> None:
         message = f"Resource refresh failed: {error}"
         self.show_status(message)
         self.append_log(message)
-        self._cleanup_resource_refresh(thread, worker)
+        self._cleanup_resource_refresh()
 
-    def _cleanup_resource_refresh(self, thread: QThread, worker) -> None:
+    def _cleanup_resource_refresh(self) -> None:
         self._resource_refresh_running = False
+        if self._active_resource_refresh is None:
+            return
+        thread, worker = self._active_resource_refresh
+        self._active_resource_refresh = None
         try:
             self._resource_refresh_workers.remove((thread, worker))
         except ValueError:
             pass
         thread.quit()
+        thread.wait(1000)
 
     def _handle_heartbeat_tick(self) -> None:
         self._blink_connection_state("goldenrod")
@@ -1237,7 +1431,24 @@ def _disk_text(snapshot: ResourceSnapshot) -> str:
     if not snapshot.disks:
         return ""
     disk = snapshot.disks[0]
-    return f"{disk.mount}: {disk.used_bytes} / {disk.total_bytes} bytes"
+    return f"{disk.mount}: {_human_bytes(disk.used_bytes)} / {_human_bytes(disk.total_bytes)}"
+
+
+def _usage_percent(used: int, total: int) -> float:
+    if total <= 0:
+        return 0.0
+    return used * 100 / total
+
+
+def _human_bytes(value: int | float) -> str:
+    size = float(value)
+    units = ["B", "KB", "MB", "GB", "TB"]
+    for unit in units:
+        if abs(size) < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(size)} B"
+            return f"{size:.1f} {unit}"
+        size /= 1024
 
 
 def _protocol_from_label(label: str) -> Protocol:

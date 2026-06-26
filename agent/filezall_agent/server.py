@@ -11,9 +11,12 @@ from filezall_agent.files import AgentFileService
 from filezall_agent.resources import AgentResourceService
 
 
-def create_server(config: AgentConfig) -> ThreadingHTTPServer:
+def create_server(
+    config: AgentConfig,
+    resource_service: AgentResourceService | None = None,
+) -> ThreadingHTTPServer:
     file_service = AgentFileService(config)
-    resource_service = AgentResourceService()
+    resource_service = resource_service or AgentResourceService()
 
     class AgentHandler(BaseHTTPRequestHandler):
         server_version = "FileZallAgent/0.1"

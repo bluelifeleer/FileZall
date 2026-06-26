@@ -791,7 +791,8 @@ def test_controller_installs_agent_for_connected_site() -> None:
     )
 
     controller.connect(site, password="secret")
-    controller.install_agent()
+    result = controller.install_agent_with_progress()
+    controller.complete_agent_install(result)
 
     assert service.calls == [(site, "secret")]
     assert window.statuses[-1] == "Agent installed and verified"
@@ -824,7 +825,8 @@ def test_controller_refreshes_resources_through_installed_agent_when_no_monitor_
     )
 
     controller.connect(site, password="secret")
-    controller.install_agent()
+    result = controller.install_agent_with_progress()
+    controller.complete_agent_install(result)
     controller.refresh_resources()
     controller.show_process_detail(456)
 
@@ -856,7 +858,22 @@ def test_controller_uninstalls_agent_for_connected_site() -> None:
     )
 
     controller.connect(site, password="secret")
-    controller.uninstall_agent()
+    result = controller.uninstall_agent_with_progress()
+    controller.complete_agent_uninstall(result)
 
     assert service.uninstall_calls == [(site, "secret")]
     assert window.statuses[-1] == "Agent uninstalled"
+
+
+def test_controller_does_not_expose_sync_agent_action_wrappers() -> None:
+    controller = MainWindowController(
+        window=FakeWindow(),
+        local_lister=lambda path: [],
+        session_factory=lambda site: FakeSession(),
+        agent_install_service=FakeAgentInstallService(
+            AgentInstallResult(success=True, commands_run=1, verified=True)
+        ),
+    )
+
+    assert not hasattr(controller, "install_agent")
+    assert not hasattr(controller, "uninstall_agent")

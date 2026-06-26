@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import PurePath
 
-from PySide6.QtCore import QModelIndex, QRect, Qt, Signal
+from PySide6.QtCore import QModelIndex, QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -227,12 +227,15 @@ class FilePanel(QWidget):
         self.refresh_button = QPushButton("Refresh", self)
         self.action_button = QPushButton(action_label, self)
         self.table = HoverRowTableWidget(0, 4, self)
+        self.table.setIconSize(QSize(22, 22))
         self.table.setItemDelegate(HoverRowDelegate(self.table))
         self.table.setHorizontalHeaderLabels(["Name", "Size", "Type", "Modified"])
-        self.table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.ResizeToContents
-        )
-        self.table.horizontalHeader().setStretchLastSection(True)
+        header_view = self.table.horizontalHeader()
+        header_view.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header_view.resizeSection(0, 220)
+        header_view.resizeSection(1, 90)
+        header_view.resizeSection(2, 110)
+        header_view.setStretchLastSection(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -304,28 +307,39 @@ class FilePanel(QWidget):
         self.context_menu.exec(self.table.viewport().mapToGlobal(position))
 
     def set_placeholder_row(self, text: str) -> None:
+        self.table.setUpdatesEnabled(False)
         self.table.setRowCount(1)
         self.table.setItem(0, 0, _entry_item(text, False, show_icon=True))
         self.table.setItem(0, 1, _entry_item("", False))
         self.table.setItem(0, 2, _entry_item("", False))
         self.table.setItem(0, 3, _entry_item("", False))
+        self.table.setUpdatesEnabled(True)
 
     def set_entries(self, entries) -> None:
-        self.table.setRowCount(len(entries) + 1)
-        self._set_row(0, "..", "", self._parent_label, "", is_dir=True, row_kind="parent")
-        for row, entry in enumerate(entries, start=1):
-            self.table.setItem(row, 0, _entry_item(entry.name, entry.is_dir, show_icon=True))
-            self.table.setItem(row, 1, _entry_item(str(entry.size_bytes), entry.is_dir))
-            self.table.setItem(
-                row,
-                2,
-                _entry_item(
-                    self._directory_label if entry.is_dir else self._file_label,
-                    entry.is_dir,
-                ),
-            )
-            self.table.setItem(row, 3, _entry_item(_format_time(entry.modified_time), entry.is_dir))
-        self.clear_selection()
+        self.table.setUpdatesEnabled(False)
+        try:
+            self.table.setRowCount(len(entries) + 1)
+            self._set_row(0, "..", "", self._parent_label, "", is_dir=True, row_kind="parent")
+            for row, entry in enumerate(entries, start=1):
+                self.table.setItem(row, 0, _entry_item(entry.name, entry.is_dir, show_icon=True))
+                self.table.setItem(row, 1, _entry_item(str(entry.size_bytes), entry.is_dir))
+                self.table.setItem(
+                    row,
+                    2,
+                    _entry_item(
+                        self._directory_label if entry.is_dir else self._file_label,
+                        entry.is_dir,
+                    ),
+                )
+                self.table.setItem(
+                    row,
+                    3,
+                    _entry_item(_format_time(entry.modified_time), entry.is_dir),
+                )
+            self.clear_selection()
+        finally:
+            self.table.setUpdatesEnabled(True)
+            self.table.viewport().update()
 
     def selected_name(self) -> str | None:
         names = self.selected_names()
@@ -415,9 +429,7 @@ def _entry_icon(text: str, is_dir: bool, row_kind: str) -> QIcon:
     if is_dir:
         key = "parent-dir" if row_kind == "parent" else "dir"
         if key not in _ICON_CACHE:
-            style = QApplication.style()
-            standard_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirIcon)
-            _ICON_CACHE[key] = standard_icon if not standard_icon.isNull() else _paint_icon("DIR")
+            _ICON_CACHE[key] = _paint_folder_icon(parent=row_kind == "parent")
         return _ICON_CACHE[key]
     suffix = PurePath(text).suffix.lower().lstrip(".")
     label = _suffix_label(suffix)
@@ -455,19 +467,48 @@ def _suffix_color(suffix: str) -> str:
     return "#64748b"
 
 
+def _paint_folder_icon(*, parent: bool = False) -> QIcon:
+    pixmap = QPixmap(32, 32)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor("#f59e0b" if parent else "#3b82f6"))
+    painter.drawRoundedRect(3, 10, 26, 17, 4, 4)
+    painter.setBrush(QColor("#fbbf24" if parent else "#60a5fa"))
+    painter.drawRoundedRect(5, 6, 12, 8, 3, 3)
+    painter.setBrush(QColor(255, 255, 255, 46))
+    painter.drawRoundedRect(6, 13, 20, 5, 2, 2)
+    if parent:
+        painter.setPen(QPen(QColor("#ffffff"), 2))
+        painter.drawLine(17, 19, 12, 19)
+        painter.drawLine(12, 19, 15, 16)
+        painter.drawLine(12, 19, 15, 22)
+    painter.end()
+    return QIcon(pixmap)
+
+
 def _paint_icon(label: str, color: str = "#2563eb") -> QIcon:
-    pixmap = QPixmap(18, 18)
+    pixmap = QPixmap(32, 32)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(QPen(QColor(color), 1))
+    painter.setBrush(QColor("#ffffff"))
+    painter.drawRoundedRect(6, 3, 20, 26, 4, 4)
     painter.setBrush(QColor(color))
-    painter.drawRoundedRect(2, 2, 14, 14, 3, 3)
+    painter.drawRoundedRect(6, 18, 20, 11, 3, 3)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(color).lighter(150))
+    painter.drawPolygon([QPoint(21, 3), QPoint(26, 8), QPoint(21, 8)])
+    painter.setPen(QPen(QColor("#cbd5e1"), 1))
+    painter.drawLine(10, 10, 21, 10)
+    painter.drawLine(10, 14, 21, 14)
     painter.setPen(QColor("#ffffff"))
     font = painter.font()
-    font.setPointSize(5 if len(label) > 2 else 6)
+    font.setPointSize(6 if len(label) > 2 else 7)
     font.setBold(True)
     painter.setFont(font)
-    painter.drawText(QRect(2, 3, 14, 12), Qt.AlignmentFlag.AlignCenter, label[:3])
+    painter.drawText(QRect(6, 18, 20, 10), Qt.AlignmentFlag.AlignCenter, label[:3])
     painter.end()
     return QIcon(pixmap)

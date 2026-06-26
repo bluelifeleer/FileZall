@@ -4,8 +4,8 @@ from datetime import UTC, datetime
 
 from filezall_desktop.main_window import MainWindow
 from filezall_desktop.theme import hover_color_for_theme
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractItemView, QSplitter, QTableWidgetSelectionRange
+from PySide6.QtCore import Qt, QThread
+from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QSplitter, QTableWidgetSelectionRange
 
 from filezall_core.models import (
     AuthMode,
@@ -106,11 +106,19 @@ class FakeController:
     def show_process_detail(self, pid) -> None:
         self.process_details.append(pid)
 
-    def install_agent(self) -> None:
+    def install_agent_with_progress(self, progress=None) -> AgentInstallResult:
         self.agent_installs += 1
+        return AgentInstallResult(success=True, commands_run=1, verified=True)
 
-    def uninstall_agent(self) -> None:
+    def complete_agent_install(self, result: AgentInstallResult) -> None:
+        return None
+
+    def uninstall_agent_with_progress(self, progress=None) -> AgentInstallResult:
         self.agent_uninstalls += 1
+        return AgentInstallResult(success=True, commands_run=1, verified=True)
+
+    def complete_agent_uninstall(self, result: AgentInstallResult) -> None:
+        return None
 
     def secret_for_site(self, site):
         return None
@@ -182,6 +190,64 @@ class SlowRemoteDataController(FakeController):
             )
         ]
         return entries, path, f"Loaded remote directory {path}"
+
+
+class SnapshotController(FakeController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.snapshot = ResourceSnapshot(
+            cpu=CpuStats(percent=42.0),
+            memory=MemoryStats(total_bytes=100, used_bytes=50, available_bytes=50),
+            disks=[DiskUsage(mount="/", total_bytes=200, used_bytes=100, available_bytes=100)],
+            network=NetworkStats(rx_bytes_per_sec=0, tx_bytes_per_sec=0),
+            processes=[],
+        )
+
+    def load_resource_snapshot(self):
+        self.resource_refreshes += 1
+        return self.snapshot, "Resource snapshot refreshed"
+
+
+class AsyncConnectController(FakeController):
+    def connect_for_window(self, site, password=None, remember_secret: bool = True):
+        self.connect_calls.append((site, password, remember_secret))
+        time.sleep(0.05)
+        path = PurePosixPath("/home/deploy")
+        return {
+            "entries": [
+                RemoteFileEntry(
+                    path=path / "app",
+                    name="app",
+                    is_dir=True,
+                    size_bytes=0,
+                    modified_time=None,
+                )
+            ],
+            "remote_path": path,
+            "monitoring_status": "Resource snapshot refreshed",
+            "agent_status": False,
+            "agent_status_sequence": [None, False],
+            "agent_status_message": None,
+            "resource_snapshot": None,
+            "resource_status": None,
+            "status": "Connected to Production",
+            "logs": ["Agent detection started", "Agent service not installed"],
+        }
+
+
+class ThreadRecordingWindow(MainWindow):
+    def __init__(self, *args, **kwargs) -> None:
+        self.resource_snapshot_threads = []
+        self.remote_entries_threads = []
+        super().__init__(*args, **kwargs)
+
+    def set_resource_snapshot(self, snapshot):
+        self.resource_snapshot_threads.append(QThread.currentThread())
+        super().set_resource_snapshot(snapshot)
+
+    def set_remote_entries(self, entries, path):
+        self.remote_entries_threads.append(QThread.currentThread())
+        super().set_remote_entries(entries, path)
 
 
 def test_main_window_has_filezall_title(qtbot) -> None:
@@ -354,6 +420,18 @@ def test_file_panels_use_full_row_selection_for_actions(qtbot) -> None:
     assert window.local_panel.table.item(1, 2).data(Qt.ItemDataRole.UserRole) is True
 
 
+def test_file_panels_use_resizable_columns_without_content_width_scans(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    header = window.local_panel.table.horizontalHeader()
+
+    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Interactive
+    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.Interactive
+    assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.Interactive
+    assert header.stretchLastSection()
+
+
 def test_file_panel_shows_icons_for_parent_directories_and_file_suffixes(qtbot) -> None:
     window = MainWindow(controller=FakeController())
     qtbot.addWidget(window)
@@ -381,6 +459,8 @@ def test_file_panel_shows_icons_for_parent_directories_and_file_suffixes(qtbot) 
     assert not window.local_panel.table.item(1, 0).icon().isNull()
     assert not window.local_panel.table.item(2, 0).icon().isNull()
     assert not window.local_panel.table.item(3, 0).icon().isNull()
+    assert window.local_panel.table.iconSize().width() >= 22
+    assert window.local_panel.table.iconSize().height() >= 22
     for row in range(window.local_panel.table.rowCount()):
         for column in range(1, window.local_panel.table.columnCount()):
             assert window.local_panel.table.item(row, column).icon().isNull()
@@ -771,6 +851,17 @@ def test_remote_directory_navigation_runs_in_background(qtbot) -> None:
     assert window.remote_panel.table.isEnabled()
 
 
+def test_remote_directory_navigation_updates_widgets_on_main_thread(qtbot) -> None:
+    controller = SlowRemoteDataController(delay_seconds=0.01)
+    window = ThreadRecordingWindow(controller=controller)
+    qtbot.addWidget(window)
+
+    window._load_remote_directory(PurePosixPath("/home/deploy/releases"))
+
+    qtbot.waitUntil(lambda: bool(window.remote_entries_threads), timeout=3000)
+    assert window.remote_entries_threads == [window.thread()]
+
+
 def test_main_window_double_clicks_directories_to_enter(qtbot, tmp_path) -> None:
     controller = FakeController()
     window = MainWindow(controller=controller)
@@ -1075,6 +1166,22 @@ def test_resource_refresh_timer_starts_after_successful_connect(qtbot) -> None:
     assert window.resource_refresh_timer.isActive()
 
 
+def test_async_connect_updates_remote_widgets_on_main_thread(qtbot) -> None:
+    controller = AsyncConnectController()
+    window = ThreadRecordingWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.connection_bar.host_edit.setText("example.com")
+    window.connection_bar.username_edit.setText("deploy")
+    window.connection_bar.secret_edit.setText("secret")
+
+    qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: bool(window.remote_entries_threads), timeout=3000)
+    assert window.remote_entries_threads == [window.thread()]
+    assert controller.connect_calls
+    assert window.connection_state_label.toolTip() == "Connected"
+
+
 def test_successful_connect_triggers_immediate_resource_refresh(qtbot) -> None:
     controller = FakeController()
     window = MainWindow(controller=controller)
@@ -1097,6 +1204,17 @@ def test_resource_refresh_tick_runs_controller_refresh_in_background(qtbot) -> N
 
     qtbot.waitUntil(lambda: controller.resource_refreshes == 1, timeout=3000)
     assert window._resource_refresh_running is False
+
+
+def test_resource_refresh_updates_widgets_on_main_thread(qtbot) -> None:
+    controller = SnapshotController()
+    window = ThreadRecordingWindow(controller=controller)
+    qtbot.addWidget(window)
+
+    window._handle_resource_refresh_tick()
+
+    qtbot.waitUntil(lambda: bool(window.resource_snapshot_threads), timeout=3000)
+    assert window.resource_snapshot_threads == [window.thread()]
 
 
 def test_resource_refresh_success_is_written_to_logs(qtbot) -> None:
@@ -1367,9 +1485,20 @@ def test_main_window_renders_resource_snapshot_and_process_detail(qtbot) -> None
     qtbot.addWidget(window)
     snapshot = ResourceSnapshot(
         cpu=CpuStats(percent=12.5),
-        memory=MemoryStats(total_bytes=1000, used_bytes=400, available_bytes=600),
-        disks=[DiskUsage(mount="/", total_bytes=2000, used_bytes=1000, available_bytes=1000)],
-        network=NetworkStats(rx_bytes_per_sec=10, tx_bytes_per_sec=20),
+        memory=MemoryStats(
+            total_bytes=4 * 1024 * 1024 * 1024,
+            used_bytes=1536 * 1024 * 1024,
+            available_bytes=2560 * 1024 * 1024,
+        ),
+        disks=[
+            DiskUsage(
+                mount="/",
+                total_bytes=80 * 1024 * 1024 * 1024,
+                used_bytes=24 * 1024 * 1024 * 1024,
+                available_bytes=56 * 1024 * 1024 * 1024,
+            )
+        ],
+        network=NetworkStats(rx_bytes_per_sec=1536, tx_bytes_per_sec=2 * 1024 * 1024),
         processes=[
             ProcessSummary(
                 pid=123,
@@ -1400,11 +1529,49 @@ def test_main_window_renders_resource_snapshot_and_process_detail(qtbot) -> None
     window.set_process_detail(detail)
 
     assert window.cpu_value_label.text() == "12.5%"
-    assert window.memory_value_label.text() == "400 / 1000 bytes"
-    assert window.disk_value_label.text() == "/: 1000 / 2000 bytes"
-    assert window.network_value_label.text() == "RX 10 B/s, TX 20 B/s"
+    assert window.memory_value_label.text() == "1.5 GB / 4.0 GB"
+    assert window.disk_value_label.text() == "/: 24.0 GB / 80.0 GB"
+    assert window.network_value_label.text() == "RX 1.5 KB/s, TX 2.0 MB/s"
     assert window.process_table.item(0, 0).text() == "123"
     assert controller.resource_refreshes == 1
     assert controller.process_details == [123]
     assert "python app.py" in window.process_detail_label.text()
     assert "threads: 8" in window.process_detail_label.text()
+
+
+def test_resource_snapshot_updates_usage_chart_history(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    for index in range(3):
+        window.set_resource_snapshot(
+            ResourceSnapshot(
+                cpu=CpuStats(percent=10 + index),
+                memory=MemoryStats(total_bytes=100, used_bytes=20 + index, available_bytes=80 - index),
+                disks=[DiskUsage(mount="/", total_bytes=200, used_bytes=50 + index, available_bytes=150 - index)],
+                network=NetworkStats(rx_bytes_per_sec=0, tx_bytes_per_sec=0),
+                processes=[],
+            )
+        )
+
+    assert window.resource_chart.history == [
+        {"cpu": 10.0, "memory": 20.0, "disk": 25.0},
+        {"cpu": 11.0, "memory": 21.0, "disk": 25.5},
+        {"cpu": 12.0, "memory": 22.0, "disk": 26.0},
+    ]
+    assert window.resource_content_splitter.widget(0) is window.process_table
+    assert window.resource_content_splitter.widget(1) is window.resource_chart
+
+
+def test_resource_buttons_have_distinct_visual_roles(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    assert window.resource_refresh_button.property("buttonRole") == "primary"
+    assert window.process_detail_button.property("buttonRole") == "secondary"
+    assert window.resource_install_agent_button.property("buttonRole") == "success"
+    assert window.resource_uninstall_agent_button.property("buttonRole") == "danger"
+    assert window.connection_bar.connect_button.property("buttonRole") == "primary"
+    assert window.connection_bar.disconnect_button.property("buttonRole") == "danger"
+    assert window.local_panel.action_button.property("buttonRole") == "primary"
+    assert window.remote_panel.action_button.property("buttonRole") == "primary"
