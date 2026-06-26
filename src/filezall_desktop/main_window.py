@@ -42,6 +42,7 @@ from filezall_desktop.i18n import (
     t,
 )
 from filezall_desktop.onboarding import GettingStartedDialog
+from filezall_desktop.site_manager import SiteManagerDialog
 from filezall_desktop.theme import (
     DARK_THEME,
     LIGHT_THEME,
@@ -340,6 +341,7 @@ class MainWindow(QMainWindow):
         self._rename_prompt = rename_prompt or _prompt_rename
         self._new_session_factory = new_session_factory
         self._onboarding_settings = onboarding_settings
+        self._site_repository = site_repository or getattr(controller, "_site_repository", None)
         self._should_confirm_remember_secret = controller is None
         self._heartbeat_failed_logged = False
         self._agent_installed: bool | None = False
@@ -358,6 +360,7 @@ class MainWindow(QMainWindow):
         self._active_remote_directory_load = None
         self._remote_directory_loading = False
         self.getting_started_dialog: GettingStartedDialog | None = None
+        self.site_manager_dialog: SiteManagerDialog | None = None
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
@@ -401,6 +404,9 @@ class MainWindow(QMainWindow):
         self.new_session_action = self.session_menu.addAction("New Session")
         self.new_session_action.setStatusTip("Open a new FileZall connection session")
         self.new_session_action.triggered.connect(self._handle_new_session_clicked)
+        self.site_manager_action = self.session_menu.addAction("Site Manager")
+        self.site_manager_action.setStatusTip("Manage saved FileZall sites")
+        self.site_manager_action.triggered.connect(self._show_site_manager)
 
     def _build_help_menu(self) -> None:
         self.help_menu = QMenu("Help", self)
@@ -420,6 +426,17 @@ class MainWindow(QMainWindow):
         self.commercial_action = self.help_menu.addAction("Commercial")
         self.commercial_action.setStatusTip("Show commercial licensing and support information")
         self.commercial_action.triggered.connect(self._show_commercial)
+
+    def _show_site_manager(self) -> None:
+        if self.site_manager_dialog is None:
+            dialog = SiteManagerDialog(self._site_repository, self)
+            dialog.sites_changed.connect(self.controller.load_saved_sites)
+            self.site_manager_dialog = dialog
+        else:
+            self.site_manager_dialog.reload()
+        self.site_manager_dialog.show()
+        self.site_manager_dialog.raise_()
+        self.site_manager_dialog.activateWindow()
 
     def _show_about(self) -> None:
         QMessageBox.information(
@@ -626,6 +643,8 @@ class MainWindow(QMainWindow):
     def _refresh_texts(self) -> None:
         self.session_menu.setTitle(self._text("menu.session"))
         self.new_session_action.setText(self._text("session.new"))
+        self.site_manager_action.setText(self._text("session.site_manager"))
+        self.site_manager_action.setStatusTip(self._text("session.site_manager_tip"))
         self.help_menu.setTitle(self._text("menu.help"))
         self.theme_menu.setTitle(self._text("menu.theme"))
         self.language_menu.setTitle(self._text("menu.language"))

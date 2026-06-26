@@ -164,6 +164,21 @@ class FakeSettings:
             self.dismissed = value
 
 
+class FakeSiteRepository:
+    def __init__(self, sites=None) -> None:
+        self.sites = list(sites or [])
+
+    def list(self):
+        return list(self.sites)
+
+    def save(self, site) -> None:
+        self.sites = [existing for existing in self.sites if existing.id != site.id]
+        self.sites.append(site)
+
+    def delete(self, site_id: str) -> None:
+        self.sites = [site for site in self.sites if site.id != site_id]
+
+
 class ProgressAgentController(FakeController):
     def __init__(self, delay_seconds: float = 0) -> None:
         super().__init__()
@@ -899,6 +914,37 @@ def test_main_window_has_session_menu_new_session_action(qtbot) -> None:
 
     assert opened == ["shown"]
     assert window._session_windows
+
+
+def test_main_window_opens_site_manager(qtbot) -> None:
+    repository = FakeSiteRepository(
+        [
+            SiteProfile(
+                id="prod",
+                name="Production",
+                host="example.com",
+                port=22,
+                protocol=Protocol.SFTP,
+                username="deploy",
+                auth_mode=AuthMode.PASSWORD,
+            )
+        ]
+    )
+    controller = FakeController()
+    window = MainWindow(controller=controller, site_repository=repository)
+    qtbot.addWidget(window)
+    _use_english(window)
+
+    window.site_manager_action.trigger()
+
+    dialog = window.site_manager_dialog
+    qtbot.addWidget(dialog)
+    assert dialog.isVisible()
+    assert dialog.table.rowCount() == 1
+
+    dialog.sites_changed.emit()
+
+    assert controller.loaded_sites is True
 
 
 def test_main_window_has_theme_menu_actions(qtbot) -> None:

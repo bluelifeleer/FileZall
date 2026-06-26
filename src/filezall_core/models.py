@@ -53,6 +53,7 @@ class SiteProfile:
     ssh_key_path: Path | None = None
     agent_enabled: bool = False
     agent_token_ref: str | None = None
+    group_name: str = ""
 
 
 @dataclass(frozen=True)

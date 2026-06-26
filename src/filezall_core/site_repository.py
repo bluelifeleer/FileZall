@@ -17,9 +17,9 @@ class SiteRepository:
                 insert into site_profiles (
                     id, name, host, port, protocol, username, auth_mode,
                     default_local_path, default_remote_path, credential_ref,
-                    ssh_key_path, agent_enabled, agent_token_ref, updated_at
+                    ssh_key_path, agent_enabled, agent_token_ref, group_name, updated_at
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
                 on conflict(id) do update set
                     name = excluded.name,
                     host = excluded.host,
@@ -33,6 +33,7 @@ class SiteRepository:
                     ssh_key_path = excluded.ssh_key_path,
                     agent_enabled = excluded.agent_enabled,
                     agent_token_ref = excluded.agent_token_ref,
+                    group_name = excluded.group_name,
                     updated_at = current_timestamp
                 """,
                 self._to_row(site),
@@ -45,7 +46,7 @@ class SiteRepository:
                 """
                 select id, name, host, port, protocol, username, auth_mode,
                        default_local_path, default_remote_path, credential_ref,
-                       ssh_key_path, agent_enabled, agent_token_ref
+                       ssh_key_path, agent_enabled, agent_token_ref, group_name
                 from site_profiles
                 where id = ?
                 """,
@@ -59,7 +60,7 @@ class SiteRepository:
                 """
                 select id, name, host, port, protocol, username, auth_mode,
                        default_local_path, default_remote_path, credential_ref,
-                       ssh_key_path, agent_enabled, agent_token_ref
+                       ssh_key_path, agent_enabled, agent_token_ref, group_name
                 from site_profiles
                 order by lower(name)
                 """
@@ -87,6 +88,7 @@ class SiteRepository:
             str(site.ssh_key_path) if site.ssh_key_path else None,
             1 if site.agent_enabled else 0,
             site.agent_token_ref,
+            site.group_name,
         )
 
     @staticmethod
@@ -105,4 +107,5 @@ class SiteRepository:
             ssh_key_path=Path(str(row[10])) if row[10] else None,
             agent_enabled=bool(row[11]),
             agent_token_ref=str(row[12]) if row[12] else None,
+            group_name=str(row[13]) if row[13] else "",
         )

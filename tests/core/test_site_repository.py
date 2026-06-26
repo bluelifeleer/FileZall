@@ -59,6 +59,26 @@ def test_site_repository_lists_profiles_ordered_by_name(tmp_path: Path) -> None:
     assert [site.name for site in repository.list()] == ["Alpha", "Beta"]
 
 
+def test_site_repository_persists_group_name(tmp_path: Path) -> None:
+    database = tmp_path / "filezall.sqlite3"
+    initialize_database(database)
+    repository = SiteRepository(database)
+    site = SiteProfile(
+        id="site-1",
+        name="Production API",
+        host="api.example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+        group_name="Production",
+    )
+
+    repository.save(site)
+
+    assert repository.list()[0].group_name == "Production"
+
+
 def test_site_repository_deletes_profile(tmp_path: Path) -> None:
     database = tmp_path / "filezall.sqlite3"
     initialize_database(database)

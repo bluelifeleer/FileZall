@@ -38,6 +38,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             ssh_key_path text,
             agent_enabled integer not null default 0,
             agent_token_ref text,
+            group_name text not null default '',
             created_at text not null default current_timestamp,
             updated_at text not null default current_timestamp
         );
@@ -83,6 +84,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         );
         """
     )
+    _ensure_column(connection, "site_profiles", "group_name", "text not null default ''")
 
 
 def _record_schema_version(connection: sqlite3.Connection) -> None:
@@ -94,3 +96,17 @@ def _record_schema_version(connection: sqlite3.Connection) -> None:
             "insert into schema_version(version) values (?)",
             (SCHEMA_VERSION,),
         )
+
+
+def _ensure_column(
+    connection: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    definition: str,
+) -> None:
+    columns = {
+        str(row[1])
+        for row in connection.execute(f"pragma table_info({table_name})").fetchall()
+    }
+    if column_name not in columns:
+        connection.execute(f"alter table {table_name} add column {column_name} {definition}")
