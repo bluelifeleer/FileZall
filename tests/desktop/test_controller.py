@@ -32,6 +32,7 @@ class FakeWindow:
         self.resource_snapshot = None
         self.process_detail = None
         self.agent_statuses = []
+        self.agent_versions = []
         self.statuses: list[str] = []
         self.transfer_item_snapshots = []
 
@@ -52,6 +53,9 @@ class FakeWindow:
 
     def set_agent_status(self, installed: bool | None) -> None:
         self.agent_statuses.append(installed)
+
+    def set_agent_version(self, version: str | None) -> None:
+        self.agent_versions.append(version)
 
     def set_resource_snapshot(self, snapshot) -> None:
         self.resource_snapshot = snapshot
@@ -645,6 +649,7 @@ def test_controller_uses_detected_agent_token_for_resource_monitoring() -> None:
         installed=True,
         commands_run=1,
         agent_token_ref="site-1:agent-token",
+        agent_version="0.1.0",
     )
     session = FakeSession()
     controller = MainWindowController(
@@ -669,6 +674,7 @@ def test_controller_uses_detected_agent_token_for_resource_monitoring() -> None:
     assert controller._connected_site.agent_token_ref == "site-1:agent-token"
     assert service.resource_calls == [(controller._connected_site, "secret", session)]
     assert window.resource_snapshot == service.expected_snapshot
+    assert window.agent_versions == ["0.1.0"]
 
 
 def test_controller_skips_agent_detection_for_ftp_connection() -> None:

@@ -19,7 +19,7 @@ class FakeOpener:
         self.requests.append((request, timeout))
         path = request.full_url.removeprefix("http://127.0.0.1:8765")
         payloads = {
-            "/health": {"ok": True},
+            "/health": {"ok": True, "version": "0.1.0", "api_version": 1},
             "/resources": {
                 "cpu": {"percent": 12.5},
                 "memory": {"total_bytes": 1000, "used_bytes": 400, "available_bytes": 600},
@@ -68,6 +68,8 @@ def test_agent_client_checks_health_and_sends_token() -> None:
     client = AgentHttpClient("http://127.0.0.1:8765", token="secret-token", opener=opener)
 
     assert client.health() is True
+    assert client.health_info().version == "0.1.0"
+    assert client.health_info().api_version == 1
 
     request, timeout = opener.requests[0]
     assert timeout == 10

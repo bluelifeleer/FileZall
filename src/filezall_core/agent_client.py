@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 from urllib import request
 
@@ -13,6 +14,13 @@ from filezall_core.resource_models import (
     ProcessSummary,
     ResourceSnapshot,
 )
+
+
+@dataclass(frozen=True)
+class AgentHealth:
+    ok: bool
+    version: str | None = None
+    api_version: int | None = None
 
 
 class AgentHttpClient:
@@ -29,7 +37,16 @@ class AgentHttpClient:
         self._timeout = timeout
 
     def health(self) -> bool:
-        return bool(self._get_json("/health").get("ok"))
+        return self.health_info().ok
+
+    def health_info(self) -> AgentHealth:
+        payload = self._get_json("/health")
+        api_version = payload.get("api_version")
+        return AgentHealth(
+            ok=bool(payload.get("ok")),
+            version=str(payload["version"]) if payload.get("version") else None,
+            api_version=int(api_version) if api_version is not None else None,
+        )
 
     def resource_snapshot(self) -> ResourceSnapshot:
         return _snapshot_from_json(self._get_json("/resources"))

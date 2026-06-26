@@ -29,7 +29,10 @@ def test_agent_http_server_serves_files_chunks_and_resources(tmp_path: Path) -> 
         deploy_dir.mkdir(parents=True)
         (deploy_dir / "app.txt").write_bytes(b"hello")
 
-        assert _json(base_url, "/health") == {"ok": True}
+        health = _json(base_url, "/health")
+        assert health["ok"] is True
+        assert health["version"] == "0.1.0"
+        assert health["api_version"] == 1
         assert _json(base_url, "/files/size?path=%2Fhome%2Fdeploy%2Fapp.txt") == {
             "exists": True,
             "size": 5,

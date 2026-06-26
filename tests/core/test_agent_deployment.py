@@ -37,7 +37,9 @@ class FakeCredentials:
 
     def save_secret(self, site_id: str, purpose: str, secret: str) -> str:
         self.saved.append((site_id, purpose, secret))
-        return f"{site_id}:{purpose}"
+        ref = f"{site_id}:{purpose}"
+        self.secrets[ref] = secret
+        return ref
 
     def delete_secret(self, ref: str | None) -> None:
         self.deleted.append(ref)
@@ -304,6 +306,9 @@ def test_agent_deployment_service_imports_detected_agent_token() -> None:
         "FILEZALL_AGENT_TOKEN=stored-token\n"
         "FILEZALL_AGENT_HOST=127.0.0.1\n"
     )
+    runner.capture_payloads[
+        AgentDeploymentService.agent_get_command("stored-token", "/health")
+    ] = '{"ok":true,"version":"0.1.0","api_version":1}'
     credentials = FakeCredentials()
     repository = FakeRepository()
     service = AgentDeploymentService(
@@ -327,6 +332,7 @@ def test_agent_deployment_service_imports_detected_agent_token() -> None:
 
     assert result.installed is True
     assert result.agent_token_ref == "site-1:agent-token"
+    assert result.agent_version == "0.1.0"
     assert credentials.saved == [("site-1", "agent-token", "stored-token")]
     assert repository.saved[-1].agent_enabled is True
     assert repository.saved[-1].agent_token_ref == "site-1:agent-token"

@@ -9,6 +9,7 @@ from urllib import parse
 from filezall_agent.config import AgentConfig
 from filezall_agent.files import AgentFileService
 from filezall_agent.resources import AgentResourceService
+from filezall_agent import __version__
 
 
 def create_server(
@@ -69,7 +70,7 @@ def _handle_get(
 ) -> None:
     path, query = route
     if path == "/health":
-        _write_json(handler, {"ok": True})
+        _write_json(handler, {"ok": True, "version": __version__, "api_version": 1})
     elif path == "/resources":
         _write_json(handler, resource_service.resources())
     elif path == "/processes":

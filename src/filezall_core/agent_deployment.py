@@ -44,6 +44,7 @@ class AgentDetectionResult:
     installed: bool
     commands_run: int
     agent_token_ref: str | None = None
+    agent_version: str | None = None
 
 
 class AgentInstaller:
@@ -287,6 +288,11 @@ class AgentDeploymentService:
             runner,
             progress_callback=progress_callback,
         )
+        agent_version = self._agent_version_from_health(
+            runner,
+            token_ref,
+            progress_callback=progress_callback,
+        )
         runner.close()
         if token_ref is not None:
             self._site_repository.save(
@@ -299,6 +305,7 @@ class AgentDeploymentService:
             installed=True,
             commands_run=commands_run,
             agent_token_ref=token_ref,
+            agent_version=agent_version,
         )
 
     def _saved_or_imported_agent_token(
@@ -317,6 +324,27 @@ class AgentDeploymentService:
         if not token:
             return None
         return self._credential_service.save_secret(site.id, "agent-token", token)
+
+    def _agent_version_from_health(
+        self,
+        runner: AgentDeployRunner,
+        token_ref: str | None,
+        progress_callback: Callable[[str], None] | None = None,
+    ) -> str | None:
+        token = self._credential_service.get_secret(token_ref)
+        if not token:
+            return None
+        _progress(progress_callback, "Agent detection: reading Agent health")
+        try:
+            payload = json.loads(runner.capture(self.agent_get_command(token, "/health")))
+        except Exception:
+            _progress(progress_callback, "Agent detection: Agent health unavailable")
+            return None
+        version = payload.get("version")
+        if version:
+            _progress(progress_callback, f"Agent detection: Agent version {version}")
+            return str(version)
+        return None
 
     def resource_snapshot(
         self,

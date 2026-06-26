@@ -25,6 +25,8 @@ from PySide6.QtWidgets import (
 )
 
 from filezall_core import __version__
+from filezall_core.app_paths import resolve_app_paths
+from filezall_core.diagnostics import DiagnosticPackageBuilder
 from filezall_core.log_service import TransferLogService
 from filezall_core.models import AuthMode, Direction, Protocol, SiteProfile, TransferItem
 from filezall_core.resource_models import ProcessDetail, ResourceSnapshot
@@ -314,6 +316,8 @@ class MainWindow(QMainWindow):
         agent_install_confirmer=None,
         remember_secret_confirmer=None,
         log_file_chooser=None,
+        diagnostic_file_chooser=None,
+        diagnostics_logs_dir=None,
         new_session_factory=None,
         agent_install_service=None,
     ) -> None:
@@ -326,10 +330,13 @@ class MainWindow(QMainWindow):
         self._agent_install_confirmer = agent_install_confirmer or _confirm_agent_install
         self._remember_secret_confirmer = remember_secret_confirmer
         self._log_file_chooser = log_file_chooser or _choose_log_file
+        self._diagnostic_file_chooser = diagnostic_file_chooser or _choose_diagnostic_file
+        self._diagnostics_logs_dir = Path(diagnostics_logs_dir) if diagnostics_logs_dir else resolve_app_paths().logs
         self._new_session_factory = new_session_factory
         self._should_confirm_remember_secret = controller is None
         self._heartbeat_failed_logged = False
         self._agent_installed: bool | None = False
+        self._agent_version: str | None = None
         self._connection_workers = []
         self._active_connection = None
         self._connection_running = False
@@ -495,6 +502,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "logs_menu"):
             self.logs_menu.setTitle(self._text("menu.logs"))
             self.export_logs_action.setText(self._text("logs.export"))
+            self.export_diagnostics_action.setText(self._text("logs.export_diagnostics"))
 
         self.about_action.setText(self._text("help.about"))
         self.version_action.setText(self._text("help.version"))
@@ -590,6 +598,9 @@ class MainWindow(QMainWindow):
         self.export_logs_action = self.logs_menu.addAction("Export Logs")
         self.export_logs_action.setStatusTip("Export FileZall transfer and connection logs")
         self.export_logs_action.triggered.connect(self._export_logs)
+        self.export_diagnostics_action = self.logs_menu.addAction("Export Diagnostics")
+        self.export_diagnostics_action.setStatusTip("Export FileZall diagnostics package")
+        self.export_diagnostics_action.triggered.connect(self._export_diagnostics)
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Connection")
@@ -752,6 +763,16 @@ class MainWindow(QMainWindow):
         self.log_service.export(Path(selected))
         self.show_status(f"Exported logs to {selected}")
 
+    def _export_diagnostics(self) -> None:
+        selected = self._diagnostic_file_chooser(self)
+        if not selected:
+            return
+        DiagnosticPackageBuilder(
+            log_service=self.log_service,
+            logs_dir=self._diagnostics_logs_dir,
+        ).build(Path(selected))
+        self.show_status(f"Exported diagnostics to {selected}")
+
     def set_monitoring_status(self, message: str) -> None:
         self.monitoring_status_label.setText(message)
         if "Agent" in message:
@@ -763,21 +784,31 @@ class MainWindow(QMainWindow):
             self.resource_install_agent_button.hide()
             self.resource_uninstall_agent_button.hide()
 
-    def set_agent_status(self, installed: bool | None) -> None:
+    def set_agent_status(self, installed: bool | None, version: str | None = None) -> None:
         self._agent_installed = installed
+        if version is not None:
+            self._agent_version = version
+        elif installed is not True:
+            self._agent_version = None
         self._refresh_agent_action_text()
         if installed is None:
             self.agent_status_label.setText("Checking Agent...")
             self.resource_install_agent_button.show()
             self.resource_uninstall_agent_button.hide()
         elif installed:
-            self.agent_status_label.setText("Agent installed")
+            suffix = f" v{self._agent_version}" if self._agent_version else ""
+            self.agent_status_label.setText(f"Agent installed{suffix}")
             self.resource_install_agent_button.hide()
             self.resource_uninstall_agent_button.show()
         else:
             self.agent_status_label.setText("Agent not installed")
             self.resource_install_agent_button.show()
             self.resource_uninstall_agent_button.show()
+
+    def set_agent_version(self, version: str | None) -> None:
+        self._agent_version = version
+        if self._agent_installed is True:
+            self.set_agent_status(True, version=version)
 
     def set_transfer_items(self, items: list[TransferItem]) -> None:
         self.transfer_table.setRowCount(len(items))
@@ -1628,6 +1659,16 @@ def _choose_log_file(parent) -> str:
         "Export FileZall Logs",
         "filezall.log",
         "Log Files (*.log);;Text Files (*.txt);;All Files (*)",
+    )
+    return path
+
+
+def _choose_diagnostic_file(parent) -> str:
+    path, _selected_filter = QFileDialog.getSaveFileName(
+        parent,
+        "Export FileZall Diagnostics",
+        "filezall-diagnostics.zip",
+        "Zip Files (*.zip);;All Files (*)",
     )
     return path
 

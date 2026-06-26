@@ -87,6 +87,7 @@ class MainWindowController:
             "agent_status": None,
             "agent_status_sequence": [],
             "agent_status_message": None,
+            "agent_version": None,
             "resource_snapshot": None,
             "resource_status": None,
             "status": f"Connected to {site.name}",
@@ -106,6 +107,8 @@ class MainWindowController:
                 self._window.set_agent_status(status)
             if agent_status is not None and not result.get("agent_status_sequence"):
                 self._window.set_agent_status(agent_status)
+        if result.get("agent_version") and hasattr(self._window, "set_agent_version"):
+            self._window.set_agent_version(result["agent_version"])
         for message in result.get("logs", []):
             self._log(message)
         snapshot = result.get("resource_snapshot")
@@ -351,6 +354,7 @@ class MainWindowController:
             "agent_status": None,
             "agent_status_sequence": [],
             "agent_status_message": None,
+            "agent_version": None,
             "resource_snapshot": None,
             "resource_status": None,
         }
@@ -363,6 +367,8 @@ class MainWindowController:
                 self._window.set_agent_status(status)
             if result["agent_status"] is not None and not result.get("agent_status_sequence"):
                 self._window.set_agent_status(result["agent_status"])
+        if result.get("agent_version") and hasattr(self._window, "set_agent_version"):
+            self._window.set_agent_version(result["agent_version"])
         if result["resource_snapshot"] is not None:
             self._window.set_resource_snapshot(result["resource_snapshot"])
         if result["agent_status_message"]:
@@ -398,6 +404,7 @@ class MainWindowController:
                 )
                 installed = detection.installed
                 agent_token_ref = detection.agent_token_ref
+                result["agent_version"] = getattr(detection, "agent_version", None)
             else:
                 installed = self._agent_install_service.is_agent_installed(
                     site,

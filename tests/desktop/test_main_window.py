@@ -1,4 +1,5 @@
 import time
+import zipfile
 from pathlib import Path, PurePosixPath
 from datetime import UTC, datetime
 
@@ -808,6 +809,55 @@ def test_main_window_displays_and_exports_logs(qtbot, tmp_path) -> None:
 
     assert "Uploaded app.txt" in window.log_view.toPlainText()
     assert "Uploaded app.txt" in export_path.read_text(encoding="utf-8")
+
+
+def test_main_window_redacts_sensitive_values_from_logs_and_export(qtbot, tmp_path) -> None:
+    export_path = tmp_path / "filezall.log"
+    window = MainWindow(
+        controller=FakeController(),
+        log_file_chooser=lambda _parent: str(export_path),
+    )
+    qtbot.addWidget(window)
+
+    window.append_log("Connected password=secret token=abc Authorization: Bearer raw-token")
+    window.export_logs_action.trigger()
+
+    visible_logs = window.log_view.toPlainText()
+    exported_logs = export_path.read_text(encoding="utf-8")
+    assert "secret" not in visible_logs
+    assert "raw-token" not in visible_logs
+    assert "password=<redacted>" in visible_logs
+    assert "token=<redacted>" in exported_logs
+    assert "Authorization: Bearer <redacted>" in exported_logs
+
+
+def test_main_window_exports_diagnostic_package(qtbot, tmp_path) -> None:
+    diagnostic_path = tmp_path / "diagnostics.zip"
+    logs_dir = tmp_path / "runtime-logs"
+    logs_dir.mkdir()
+    (logs_dir / "filezall-runtime.log").write_text("runtime trace\n", encoding="utf-8")
+    window = MainWindow(
+        controller=FakeController(),
+        diagnostic_file_chooser=lambda _parent: str(diagnostic_path),
+        diagnostics_logs_dir=logs_dir,
+    )
+    qtbot.addWidget(window)
+
+    window.append_log("Uploaded app.txt")
+    window.export_diagnostics_action.trigger()
+
+    with zipfile.ZipFile(diagnostic_path) as archive:
+        assert "Uploaded app.txt" in archive.read("logs/session.log").decode("utf-8")
+        assert "runtime trace" in archive.read("logs/filezall-runtime.log").decode("utf-8")
+
+
+def test_main_window_displays_agent_version_when_available(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    window.set_agent_status(True, version="0.1.0")
+
+    assert window.agent_status_label.text() == "Agent installed v0.1.0"
 
 
 def test_main_window_local_path_button_chooses_and_loads_directory(qtbot, tmp_path) -> None:

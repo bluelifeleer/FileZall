@@ -49,6 +49,7 @@ _TRANSLATIONS = {
             "details."
         ),
         "logs.export": "Export Logs",
+        "logs.export_diagnostics": "Export Diagnostics",
         "site.quick": "Quick Connect",
         "connection.site": "Site",
         "connection.host": "Host",
@@ -120,6 +121,7 @@ _TRANSLATIONS = {
             "FileZall 维护者或厂商渠道获取。"
         ),
         "logs.export": "导出日志",
+        "logs.export_diagnostics": "导出诊断包",
         "site.quick": "快速连接",
         "connection.site": "站点",
         "connection.host": "主机",
