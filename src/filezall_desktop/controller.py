@@ -8,7 +8,7 @@ from uuid import uuid4
 from filezall_core.capabilities import resource_monitoring_message
 from filezall_core.client_factory import create_remote_client
 from filezall_core.local_files import list_local_directory
-from filezall_core.models import AuthMode, ConflictPolicy, Direction, SiteProfile, TransferTask
+from filezall_core.models import AuthMode, ConflictPolicy, Direction, Protocol, SiteProfile, TransferTask
 from filezall_core.resource_monitor import ResourceMonitoringUnavailable
 from filezall_core.session import RemoteSession
 
@@ -73,6 +73,7 @@ class MainWindowController:
         self._window.set_remote_entries(entries, self._session.current_remote_path)
         if hasattr(self._window, "set_monitoring_status"):
             self._window.set_monitoring_status(resource_monitoring_message(site.protocol))
+        self._detect_agent_installation(site, password)
         self._window.show_status(f"Connected to {site.name}")
         self._log(f"Connected to {site.name}")
 
@@ -219,6 +220,7 @@ class MainWindowController:
             snapshot = self._agent_install_service.resource_snapshot(
                 self._require_connected_site(),
                 self._connected_secret,
+                runner=self._connected_agent_runner(),
             )
             return snapshot, "Agent resource snapshot refreshed"
         try:
@@ -233,6 +235,7 @@ class MainWindowController:
                 self._require_connected_site(),
                 pid,
                 self._connected_secret,
+                runner=self._connected_agent_runner(),
             )
             self._window.set_process_detail(detail)
             self._window.show_status(f"Loaded Agent process detail {pid}")
@@ -322,10 +325,75 @@ class MainWindowController:
             or self._connected_site.agent_token_ref,
         )
 
+    def _detect_agent_installation(self, site: SiteProfile, password: str | None) -> None:
+        if site.protocol is Protocol.AGENT_HTTP:
+            if hasattr(self._window, "set_agent_status"):
+                self._window.set_agent_status(True)
+            self._log("Agent service installed")
+            return
+        if site.protocol is not Protocol.SFTP:
+            return
+        if self._agent_install_service is None or not hasattr(
+            self._agent_install_service,
+            "is_agent_installed",
+        ):
+            return
+        if hasattr(self._window, "set_agent_status"):
+            self._window.set_agent_status(None)
+        self._log("Agent detection started")
+        try:
+            agent_token_ref = None
+            if hasattr(self._agent_install_service, "detect_agent_installation"):
+                result = self._agent_install_service.detect_agent_installation(
+                    site,
+                    password,
+                    progress_callback=lambda message: self._log(message),
+                )
+                installed = result.installed
+                agent_token_ref = result.agent_token_ref
+            else:
+                installed = self._agent_install_service.is_agent_installed(
+                    site,
+                    password,
+                    progress_callback=lambda message: self._log(message),
+                )
+        except Exception as exc:
+            self._log(f"Agent detection failed: {exc}")
+            if hasattr(self._window, "set_agent_status"):
+                self._window.set_agent_status(False)
+            return
+        if installed and agent_token_ref is not None:
+            self._mark_connected_site_agent_enabled_ref(agent_token_ref)
+            self.refresh_resources()
+        if hasattr(self._window, "set_agent_status"):
+            self._window.set_agent_status(installed)
+        if installed and agent_token_ref is None:
+            self._log("Agent service installed but Agent token is not available")
+            self._window.show_status("Agent installed, but install/update is required to enable monitoring")
+        else:
+            self._log("Agent service installed" if installed else "Agent service not installed")
+
+    def _mark_connected_site_agent_enabled_ref(self, agent_token_ref: str) -> None:
+        if self._connected_site is None:
+            return
+        self._connected_site = replace(
+            self._connected_site,
+            agent_enabled=True,
+            agent_token_ref=agent_token_ref,
+        )
+
     def _require_session(self) -> RemoteSession:
         if self._session is None:
             raise RuntimeError("Remote session is not connected")
         return self._session
+
+    def _connected_agent_runner(self):
+        if self._session is None:
+            return None
+        client = getattr(self._session, "client", None)
+        if client is not None and hasattr(client, "capture"):
+            return client
+        return None
 
     def _can_read_agent_resources(self) -> bool:
         return (
@@ -370,7 +438,13 @@ class MainWindowController:
     def _secret_for_site(self, site: SiteProfile) -> str | None:
         if self._credential_service is None:
             return None
-        return self._credential_service.get_secret(site.credential_ref)
+        try:
+            return self._credential_service.get_secret(site.credential_ref)
+        except Exception as exc:
+            raise RuntimeError(
+                "Could not read the saved password from macOS Keychain. "
+                "Enter the server password manually in the password field and connect again."
+            ) from exc
 
     def _log(self, message: str) -> None:
         if hasattr(self._window, "append_log"):

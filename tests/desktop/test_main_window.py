@@ -1077,6 +1077,22 @@ def test_main_window_displays_monitoring_status(qtbot) -> None:
     assert not window.resource_install_agent_button.isHidden()
 
 
+def test_main_window_displays_detected_agent_status(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    window.set_monitoring_status("Resource monitoring requires SSH or FileZall Agent.")
+
+    window.set_agent_status(None)
+    assert window.agent_status_label.text() == "Checking Agent..."
+    assert not window.resource_install_agent_button.isHidden()
+    assert window.resource_uninstall_agent_button.isHidden()
+
+    window.set_agent_status(True)
+    assert window.agent_status_label.text() == "Agent installed"
+    assert window.resource_install_agent_button.isHidden()
+    assert not window.resource_uninstall_agent_button.isHidden()
+
+
 def test_resource_agent_install_button_uses_confirmed_install_flow(qtbot) -> None:
     controller = FakeController()
     window = MainWindow(
@@ -1137,9 +1153,40 @@ def test_main_window_connects_selected_saved_site_with_stored_credential_ref(qtb
     assert password is None
 
 
-def test_saved_site_autofills_quick_connect_fields_with_secret(qtbot, tmp_path) -> None:
+def test_main_window_connects_saved_site_with_manual_secret_without_remembering(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    saved_site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+        credential_ref="site-1:password",
+    )
+    window.set_site_profiles([saved_site])
+    window.connection_bar.site_selector.setCurrentIndex(1)
+    window.connection_bar.secret_edit.setText("manual-secret")
+
+    qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
+
+    site, password, remember_secret = controller.connect_calls[0]
+    assert site == saved_site
+    assert password == "manual-secret"
+    assert remember_secret is False
+
+
+def test_saved_site_autofills_quick_connect_fields_without_reading_secret(qtbot, tmp_path) -> None:
     class SavedController(FakeController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.secret_lookup_count = 0
+
         def secret_for_site(self, site):
+            self.secret_lookup_count += 1
             return "remembered-secret"
 
     controller = SavedController()
@@ -1167,7 +1214,8 @@ def test_saved_site_autofills_quick_connect_fields_with_secret(qtbot, tmp_path) 
     assert window.connection_bar.username_edit.text() == "deploy"
     assert window.connection_bar.protocol_selector.currentText() == "FTP"
     assert window.connection_bar.auth_mode_selector.currentText() == "Password"
-    assert window.connection_bar.secret_edit.text() == "remembered-secret"
+    assert window.connection_bar.secret_edit.text() == ""
+    assert controller.secret_lookup_count == 0
     assert window.local_panel.path_edit.text() == str(tmp_path)
     assert window.remote_panel.path_edit.text() == "/var/www"
 

@@ -22,6 +22,20 @@ bash packaging/macos/build.sh
 
 The script runs `pyinstaller` and uses `create-dmg` when available.
 
+For versioned release artifacts, signing, notarization, and checksums, run:
+
+```bash
+bash packaging/macos/release.sh
+```
+
+Set `FILEZALL_MACOS_CODESIGN_IDENTITY` and `FILEZALL_MACOS_NOTARIZE=1` for a
+production Developer ID notarized release.
+
+## Release Automation
+
+See `docs/release.md` for the full macOS and Windows signing, notarization,
+checksum, and publication workflow.
+
 ## Release Notes
 
 Production distribution still needs platform code signing. Windows builds should be signed with an Authenticode certificate. macOS builds require code signing and notarization before public distribution.

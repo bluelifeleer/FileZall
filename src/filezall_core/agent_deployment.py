@@ -39,6 +39,13 @@ class AgentInstallResult:
     agent_token_ref: str | None = None
 
 
+@dataclass(frozen=True)
+class AgentDetectionResult:
+    installed: bool
+    commands_run: int
+    agent_token_ref: str | None = None
+
+
 class AgentInstaller:
     def __init__(
         self,
@@ -241,26 +248,112 @@ class AgentDeploymentService:
             )
         return result
 
-    def resource_snapshot(self, site: SiteProfile, password: str | None = None) -> ResourceSnapshot:
-        return _snapshot_from_json(self._agent_get_json(site, password, "/resources"))
+    def is_agent_installed(
+        self,
+        site: SiteProfile,
+        password: str | None = None,
+        progress_callback: Callable[[str], None] | None = None,
+    ) -> bool:
+        return self.detect_agent_installation(
+            site,
+            password,
+            progress_callback=progress_callback,
+        ).installed
+
+    def detect_agent_installation(
+        self,
+        site: SiteProfile,
+        password: str | None = None,
+        progress_callback: Callable[[str], None] | None = None,
+    ) -> AgentDetectionResult:
+        _progress(progress_callback, "Agent detection: opening SSH session")
+        runner = self._runner_factory(site, password)
+        commands_run = 0
+        try:
+            _progress(progress_callback, "Agent detection: checking installed service")
+            runner.run(
+                "test -d /opt/filezall-agent "
+                "-o -f /etc/systemd/system/filezall-agent.service "
+                "-o -f /lib/systemd/system/filezall-agent.service"
+            )
+            commands_run += 1
+        except Exception:
+            _progress(progress_callback, "Agent detection: service not installed")
+            runner.close()
+            return AgentDetectionResult(installed=False, commands_run=commands_run)
+        _progress(progress_callback, "Agent detection: service installed")
+        token_ref = self._saved_or_imported_agent_token(
+            site,
+            runner,
+            progress_callback=progress_callback,
+        )
+        runner.close()
+        if token_ref is not None:
+            self._site_repository.save(
+                _replace_agent_state(site, enabled=True, token_ref=token_ref),
+            )
+            _progress(progress_callback, "Agent detection: saved Agent token")
+        else:
+            _progress(progress_callback, "Agent detection: Agent token not available")
+        return AgentDetectionResult(
+            installed=True,
+            commands_run=commands_run,
+            agent_token_ref=token_ref,
+        )
+
+    def _saved_or_imported_agent_token(
+        self,
+        site: SiteProfile,
+        runner: AgentDeployRunner,
+        progress_callback: Callable[[str], None] | None = None,
+    ) -> str | None:
+        if site.agent_token_ref and self._credential_service.get_secret(site.agent_token_ref):
+            return site.agent_token_ref
+        _progress(progress_callback, "Agent detection: reading Agent token")
+        try:
+            token = _token_from_env(runner.capture("cat /opt/filezall-agent/agent.env"))
+        except Exception:
+            return None
+        if not token:
+            return None
+        return self._credential_service.save_secret(site.id, "agent-token", token)
+
+    def resource_snapshot(
+        self,
+        site: SiteProfile,
+        password: str | None = None,
+        runner: AgentDeployRunner | None = None,
+    ) -> ResourceSnapshot:
+        return _snapshot_from_json(self._agent_get_json(site, password, "/resources", runner=runner))
 
     def process_detail(
         self,
         site: SiteProfile,
         pid: int,
         password: str | None = None,
+        runner: AgentDeployRunner | None = None,
     ) -> ProcessDetail:
-        return _process_detail_from_json(self._agent_get_json(site, password, f"/processes/{pid}"))
+        return _process_detail_from_json(
+            self._agent_get_json(site, password, f"/processes/{pid}", runner=runner)
+        )
 
-    def _agent_get_json(self, site: SiteProfile, password: str | None, path: str) -> dict:
+    def _agent_get_json(
+        self,
+        site: SiteProfile,
+        password: str | None,
+        path: str,
+        runner: AgentDeployRunner | None = None,
+    ) -> dict:
         token = self._credential_service.get_secret(site.agent_token_ref)
         if not token:
             raise RuntimeError("Agent token is not available for this site")
-        runner = self._runner_factory(site, password)
+        owns_runner = runner is None
+        runner = runner or self._runner_factory(site, password)
         try:
             return json.loads(runner.capture(self.agent_get_command(token, path)))
         finally:
-            runner.close()
+            if owns_runner:
+                runner.close()
 
     @staticmethod
     def agent_get_command(token: str, path: str) -> str:
@@ -326,6 +419,15 @@ def _agent_get_code(token: str, path: str) -> str:
 
 def _single_quote(value: str) -> str:
     return "'" + value.replace("'", "'\\''") + "'"
+
+
+def _token_from_env(content: str) -> str | None:
+    for line in content.splitlines():
+        key, separator, value = line.partition("=")
+        if key.strip() == "FILEZALL_AGENT_TOKEN" and separator:
+            token = value.strip().strip("'\"")
+            return token or None
+    return None
 
 
 def _replace_agent_state(site: SiteProfile, *, enabled: bool, token_ref: str | None) -> SiteProfile:

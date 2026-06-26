@@ -1,11 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+
 from PyInstaller.utils.hooks import collect_submodules
 
 
 block_cipher = None
 icon_dir = "../src/filezall_desktop/assets/icons"
 agent_dir = "../agent"
+app_version = os.environ.get("FILEZALL_VERSION", "0.1.0")
+codesign_identity = os.environ.get("FILEZALL_MACOS_CODESIGN_IDENTITY") or None
+entitlements_file = os.environ.get("FILEZALL_MACOS_ENTITLEMENTS") or None
 
 # Entry module: filezall_desktop.app
 
@@ -46,8 +51,8 @@ exe = EXE(
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
+    codesign_identity=codesign_identity,
+    entitlements_file=entitlements_file,
 )
 
 coll = COLLECT(
@@ -66,4 +71,10 @@ app = BUNDLE(
     name="FileZall.app",
     icon=f"{icon_dir}/filezall.icns",
     bundle_identifier="com.filezall.desktop",
+    info_plist={
+        "CFBundleDisplayName": "FileZall",
+        "CFBundleShortVersionString": app_version,
+        "CFBundleVersion": app_version,
+        "NSHighResolutionCapable": True,
+    },
 )

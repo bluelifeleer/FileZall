@@ -486,13 +486,27 @@ class MainWindow(QMainWindow):
     def set_monitoring_status(self, message: str) -> None:
         self.monitoring_status_label.setText(message)
         if "Agent" in message:
-            self.agent_status_label.setText("Agent not installed")
+            self.set_agent_status(False)
             self.resource_install_agent_button.show()
             self.resource_uninstall_agent_button.show()
         else:
             self.agent_status_label.setText("")
             self.resource_install_agent_button.hide()
             self.resource_uninstall_agent_button.hide()
+
+    def set_agent_status(self, installed: bool | None) -> None:
+        if installed is None:
+            self.agent_status_label.setText("Checking Agent...")
+            self.resource_install_agent_button.show()
+            self.resource_uninstall_agent_button.hide()
+        elif installed:
+            self.agent_status_label.setText("Agent installed")
+            self.resource_install_agent_button.hide()
+            self.resource_uninstall_agent_button.show()
+        else:
+            self.agent_status_label.setText("Agent not installed")
+            self.resource_install_agent_button.show()
+            self.resource_uninstall_agent_button.show()
 
     def set_transfer_items(self, items: list[TransferItem]) -> None:
         self.transfer_table.setRowCount(len(items))
@@ -585,8 +599,10 @@ class MainWindow(QMainWindow):
 
     def _handle_connect_clicked(self) -> None:
         site = self._selected_saved_site()
-        secret = None if site else self._secret_from_fields()
+        secret = self._secret_from_fields()
         remember_secret = True
+        if site and secret:
+            remember_secret = False
         if not site and secret:
             if self._remember_secret_confirmer is not None:
                 remember_secret = self._remember_secret_confirmer(self)
@@ -1027,8 +1043,7 @@ class MainWindow(QMainWindow):
         self.connection_bar.ssh_key_path_edit.setText(str(site.ssh_key_path or ""))
         self.local_panel.path_edit.setText(str(site.default_local_path or ""))
         self.remote_panel.path_edit.setText(str(site.default_remote_path))
-        secret = self._site_secret_lookup(site) if self._site_secret_lookup else None
-        self.connection_bar.secret_edit.setText(secret or "")
+        self.connection_bar.secret_edit.clear()
 
     def _site_from_fields(self) -> SiteProfile:
         host = self.connection_bar.host_edit.text().strip()

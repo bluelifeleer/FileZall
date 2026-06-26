@@ -70,6 +70,10 @@ class FakeSSHClient:
         self.connect_kwargs = None
         self.sftp = FakeSftpClient()
         self.closed = False
+        self.exec_commands = []
+        self.exec_status = 0
+        self.exec_stdout = b"{}"
+        self.exec_stderr = b""
 
     def set_missing_host_key_policy(self, policy) -> None:
         self.policy = policy
@@ -79,6 +83,17 @@ class FakeSSHClient:
 
     def open_sftp(self) -> FakeSftpClient:
         return self.sftp
+
+    def exec_command(self, command: str):
+        self.exec_commands.append(command)
+        stdout = NonClosingBytesIO(self.exec_stdout)
+        stderr = NonClosingBytesIO(self.exec_stderr)
+        stdout.channel = type(
+            "Channel",
+            (),
+            {"recv_exit_status": lambda _self: self.exec_status},
+        )()
+        return None, stdout, stderr
 
     def close(self) -> None:
         self.closed = True
@@ -130,7 +145,7 @@ def test_sftp_adapter_connects_with_ssh_key_and_passphrase() -> None:
 
     adapter.connect(site, password="key-passphrase")
 
-    assert fake_paramiko.client.connect_kwargs["key_filename"] == "C:\\keys\\deploy.pem"
+    assert fake_paramiko.client.connect_kwargs["key_filename"] == str(Path("C:/keys/deploy.pem"))
     assert fake_paramiko.client.connect_kwargs["passphrase"] == "key-passphrase"
     assert "password" not in fake_paramiko.client.connect_kwargs
 
@@ -240,3 +255,16 @@ def test_sftp_adapter_renames_remote_path() -> None:
     assert fake_paramiko.client.sftp.renames == [
         ("/home/deploy/.filezall.app.zip.part", "/home/deploy/app.zip")
     ]
+
+
+def test_sftp_adapter_captures_command_output_over_existing_ssh() -> None:
+    fake_paramiko = FakeParamiko()
+    fake_paramiko.client.exec_stdout = b'{"ok": true}'
+    adapter = SftpAdapter(paramiko_module=fake_paramiko)
+    adapter._ssh = fake_paramiko.client
+    adapter._sftp = fake_paramiko.client.sftp
+
+    output = adapter.capture("python3 -c 'print(1)'")
+
+    assert output == '{"ok": true}'
+    assert fake_paramiko.client.exec_commands == ["python3 -c 'print(1)'"]
