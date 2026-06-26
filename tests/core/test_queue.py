@@ -4,6 +4,7 @@ from filezall_core.models import ConflictPolicy, Direction, Protocol, TransferSt
 from filezall_core.protocols import FakeRemoteClient
 from filezall_core.queue import TransferQueue
 from filezall_core.storage import initialize_database
+from filezall_core.transfer_settings import TransferSettings
 from filezall_core.transfer_repository import TransferRepository
 from filezall_core.transfer_runner import TransferRunner
 
@@ -73,6 +74,25 @@ def test_transfer_queue_runs_next_pending_item_for_server(tmp_path: Path) -> Non
     assert queue.list_items()[0].status == TransferStatus.COMPLETED
 
 
+def test_queue_records_transfer_metrics(tmp_path: Path) -> None:
+    queue, _client = _queue(tmp_path)
+    task = _upload_task(tmp_path)
+    local_file = tmp_path / "app.zip"
+    local_file.write_bytes(b"abcdef")
+    item = task.create_item("item-1", PurePosixPath("app.zip"), size_bytes=6)
+    queue.add_task(task, [item])
+
+    queue.run_next("site-1")
+
+    updated = queue.list_items()[0]
+    assert updated.started_at is not None
+    assert updated.updated_at is not None
+    assert updated.bytes_per_second >= 0
+    assert updated.remaining_seconds == 0
+    assert updated.retry_count == 0
+    assert updated.failure_reason is None
+
+
 def test_transfer_queue_recovers_unfinished_items_after_restart(tmp_path: Path) -> None:
     queue, _client = _queue(tmp_path)
     task = _upload_task(tmp_path)
@@ -104,7 +124,57 @@ def test_transfer_queue_lists_items_for_one_server(tmp_path: Path) -> None:
     assert queue.list_items(server_id="site-1") == [item_1]
 
 
-def _queue(tmp_path: Path) -> tuple[TransferQueue, FakeRemoteClient]:
+def test_queue_respects_concurrency_limit(tmp_path: Path) -> None:
+    queue, client = _queue(
+        tmp_path,
+        settings=TransferSettings(max_concurrent=0, bytes_per_second_limit=2048),
+    )
+    task = _upload_task(tmp_path)
+    local_file = tmp_path / "app.zip"
+    local_file.write_bytes(b"abcdef")
+    item = task.create_item("item-1", PurePosixPath("app.zip"), size_bytes=6)
+    queue.add_task(task, [item])
+
+    result = queue.run_next("site-1")
+
+    assert result is None
+    assert client.range_uploads == []
+    assert queue.settings.bytes_per_second_limit == 2048
+
+
+def test_queue_records_retry_state_and_failure_reason(tmp_path: Path) -> None:
+    database = tmp_path / "filezall.sqlite3"
+    initialize_database(database)
+    repository = TransferRepository(database)
+
+    class FailingClient(FakeRemoteClient):
+        def upload_file_range(self, *args, **kwargs) -> None:
+            raise RuntimeError("network down")
+
+    queue = TransferQueue(
+        repository=repository,
+        runner=TransferRunner(repository),
+        client_factory=lambda _server_id: FailingClient(entries={}, home=PurePosixPath("/home/deploy")),
+    )
+    task = _upload_task(tmp_path)
+    local_file = tmp_path / "app.zip"
+    local_file.write_bytes(b"abcdef")
+    item = task.create_item("item-1", PurePosixPath("app.zip"), size_bytes=6)
+    queue.add_task(task, [item])
+
+    result = queue.run_next("site-1")
+
+    assert result is not None
+    assert result.status is TransferStatus.FAILED
+    assert result.retry_count == 3
+    assert result.failure_reason == "network down"
+    assert result.last_error == "network down"
+
+
+def _queue(
+    tmp_path: Path,
+    settings=None,
+) -> tuple[TransferQueue, FakeRemoteClient]:
     database = tmp_path / "filezall.sqlite3"
     initialize_database(database)
     repository = TransferRepository(database)
@@ -113,6 +183,7 @@ def _queue(tmp_path: Path) -> tuple[TransferQueue, FakeRemoteClient]:
         repository=repository,
         runner=TransferRunner(repository),
         client_factory=lambda _server_id: client,
+        settings=settings,
     )
     return queue, client
 

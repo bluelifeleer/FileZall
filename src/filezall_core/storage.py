@@ -72,6 +72,10 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             status text not null,
             retry_count integer not null default 0,
             last_error text,
+            started_at text,
+            bytes_per_second real not null default 0,
+            remaining_seconds real,
+            failure_reason text,
             protocol text not null,
             created_at text not null default current_timestamp,
             updated_at text not null default current_timestamp
@@ -85,6 +89,10 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         """
     )
     _ensure_column(connection, "site_profiles", "group_name", "text not null default ''")
+    _ensure_column(connection, "transfer_items", "started_at", "text")
+    _ensure_column(connection, "transfer_items", "bytes_per_second", "real not null default 0")
+    _ensure_column(connection, "transfer_items", "remaining_seconds", "real")
+    _ensure_column(connection, "transfer_items", "failure_reason", "text")
 
 
 def _record_schema_version(connection: sqlite3.Connection) -> None:

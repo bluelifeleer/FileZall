@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSpinBox,
     QSplitter,
     QStatusBar,
     QTableWidget,
@@ -40,6 +41,7 @@ from filezall_core.models import (
     TransferStatus,
 )
 from filezall_core.resource_models import ProcessDetail, ResourceSnapshot
+from filezall_core.transfer_settings import TransferSettings
 from filezall_desktop.assets import app_icon
 from filezall_desktop.conflict_dialog import choose_conflict_policy
 from filezall_desktop.controller import MainWindowController, classify_connection_error
@@ -370,6 +372,7 @@ class MainWindow(QMainWindow):
         self._remote_directory_workers = []
         self._active_remote_directory_load = None
         self._remote_directory_loading = False
+        self.transfer_settings = TransferSettings()
         self.getting_started_dialog: GettingStartedDialog | None = None
         self.site_manager_dialog: SiteManagerDialog | None = None
         self.setWindowTitle("FileZall")
@@ -731,9 +734,11 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, "transfer_table"):
             self.transfer_table.setHorizontalHeaderLabels(
-                ["Server", "Direction", "File", "Progress", "Status"]
+                _transfer_headers()
             )
             self.transfer_center_label.setText(self._text("transfer.center"))
+            self.transfer_concurrency_label.setText(self._text("transfer.concurrency"))
+            self.transfer_limit_label.setText(self._text("transfer.limit_kbps"))
             self.transfer_logs_label.setText(self._text("transfer.logs"))
             self.pause_transfer_button.setText(self._text("transfer.pause"))
             self.resume_transfer_button.setText(self._text("transfer.resume"))
@@ -791,9 +796,9 @@ class MainWindow(QMainWindow):
 
         transfer_widget = QWidget(self.main_splitter)
         transfer_layout = QVBoxLayout(transfer_widget)
-        self.transfer_table = QTableWidget(0, 5, transfer_widget)
+        self.transfer_table = QTableWidget(0, 9, transfer_widget)
         self.transfer_table.setHorizontalHeaderLabels(
-            ["Server", "Direction", "File", "Progress", "Status"]
+            _transfer_headers()
         )
         self.log_view = QPlainTextEdit(transfer_widget)
         self.log_view.setReadOnly(True)
@@ -808,7 +813,19 @@ class MainWindow(QMainWindow):
         self.cancel_transfer_button = QPushButton("Cancel", root)
         self.retry_transfer_button = QPushButton("Retry", root)
         self.transfer_center_label = QLabel("Transfer Center", root)
+        self.transfer_concurrency_label = QLabel("Concurrency", root)
+        self.transfer_concurrency_spin = QSpinBox(root)
+        self.transfer_concurrency_spin.setRange(1, 16)
+        self.transfer_concurrency_spin.setValue(self.transfer_settings.max_concurrent)
+        self.transfer_limit_label = QLabel("Limit KB/s", root)
+        self.transfer_limit_spin = QSpinBox(root)
+        self.transfer_limit_spin.setRange(0, 1024 * 1024)
+        self.transfer_limit_spin.setValue(0)
         transfer_actions.addWidget(self.transfer_center_label)
+        transfer_actions.addWidget(self.transfer_concurrency_label)
+        transfer_actions.addWidget(self.transfer_concurrency_spin)
+        transfer_actions.addWidget(self.transfer_limit_label)
+        transfer_actions.addWidget(self.transfer_limit_spin)
         transfer_actions.addStretch(1)
         transfer_actions.addWidget(self.pause_transfer_button)
         transfer_actions.addWidget(self.resume_transfer_button)
@@ -1002,7 +1019,12 @@ class MainWindow(QMainWindow):
             self.transfer_table.setItem(row, 1, QTableWidgetItem(item.direction.value))
             self.transfer_table.setItem(row, 2, QTableWidgetItem(_path_name(item.destination_path)))
             self.transfer_table.setItem(row, 3, QTableWidgetItem(_progress_text(item)))
-            self.transfer_table.setItem(row, 4, QTableWidgetItem(item.status.value))
+            self.transfer_table.setItem(row, 4, QTableWidgetItem(_speed_text(item)))
+            self.transfer_table.setItem(row, 5, QTableWidgetItem(_remaining_text(item)))
+            self.transfer_table.setItem(row, 6, QTableWidgetItem(str(item.retry_count)))
+            self.transfer_table.setItem(row, 7, QTableWidgetItem(item.failure_reason or item.last_error or ""))
+            self.transfer_table.setItem(row, 8, QTableWidgetItem(_status_text(item.status)))
+            _apply_transfer_row_style(self.transfer_table, row, item.status)
         self.transfer_summary_label.setText(_transfer_summary_text(items))
 
     def set_resource_snapshot(self, snapshot: ResourceSnapshot) -> None:
@@ -1082,6 +1104,8 @@ class MainWindow(QMainWindow):
         self.remote_panel.action_button.clicked.connect(self._handle_download_clicked)
         self.remote_panel.table.local_paths_dropped.connect(self._handle_remote_drop)
         self.local_panel.table.local_paths_dropped.connect(lambda _paths: self._handle_local_drop())
+        self.transfer_concurrency_spin.valueChanged.connect(self._handle_transfer_settings_changed)
+        self.transfer_limit_spin.valueChanged.connect(self._handle_transfer_settings_changed)
         self.pause_transfer_button.clicked.connect(self._handle_pause_transfer_clicked)
         self.resume_transfer_button.clicked.connect(self._handle_resume_transfer_clicked)
         self.cancel_transfer_button.clicked.connect(self._handle_cancel_transfer_clicked)
@@ -1620,6 +1644,13 @@ class MainWindow(QMainWindow):
                 Direction.DOWNLOAD,
             )
 
+    def _handle_transfer_settings_changed(self) -> None:
+        limit = self.transfer_limit_spin.value()
+        self.transfer_settings = TransferSettings(
+            max_concurrent=self.transfer_concurrency_spin.value(),
+            bytes_per_second_limit=limit * 1024 if limit > 0 else None,
+        )
+
     def _handle_remote_drop(self, local_paths) -> None:
         for local_path in [Path(path) for path in local_paths]:
             if not local_path.exists():
@@ -1924,6 +1955,66 @@ def _progress_text(item: TransferItem) -> str:
     if item.size_bytes <= 0:
         return "0%"
     return f"{int(item.bytes_transferred * 100 / item.size_bytes)}%"
+
+
+def _transfer_headers() -> list[str]:
+    return [
+        "Server",
+        "Direction",
+        "File",
+        "Progress",
+        "Speed",
+        "Remaining",
+        "Retries",
+        "Failure",
+        "Status",
+    ]
+
+
+def _speed_text(item: TransferItem) -> str:
+    if item.bytes_per_second <= 0:
+        return ""
+    return f"{_human_bytes(item.bytes_per_second)}/s"
+
+
+def _remaining_text(item: TransferItem) -> str:
+    if item.remaining_seconds is None:
+        return ""
+    seconds = int(item.remaining_seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, remainder = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {remainder}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m"
+
+
+def _status_text(status: TransferStatus) -> str:
+    return status.value.replace("_", " ").title()
+
+
+def _apply_transfer_row_style(
+    table: QTableWidget,
+    row: int,
+    status: TransferStatus,
+) -> None:
+    colors = {
+        TransferStatus.PENDING: QColor("#334155"),
+        TransferStatus.RUNNING: QColor("#1d4ed8"),
+        TransferStatus.PAUSED: QColor("#92400e"),
+        TransferStatus.RETRYING: QColor("#b45309"),
+        TransferStatus.FAILED: QColor("#991b1b"),
+        TransferStatus.COMPLETED: QColor("#166534"),
+        TransferStatus.CANCELED: QColor("#475569"),
+    }
+    color = colors.get(status)
+    if color is None:
+        return
+    for column in range(table.columnCount()):
+        item = table.item(row, column)
+        if item is not None:
+            item.setBackground(color)
 
 
 def _transfer_summary_text(items: list[TransferItem]) -> str:

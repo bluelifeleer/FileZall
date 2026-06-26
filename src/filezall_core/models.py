@@ -34,6 +34,7 @@ class TransferStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     PAUSED = "paused"
+    RETRYING = "retrying"
     FAILED = "failed"
     COMPLETED = "completed"
     CANCELED = "canceled"
@@ -92,6 +93,11 @@ class TransferItem:
     status: TransferStatus = TransferStatus.PENDING
     retry_count: int = 0
     last_error: str | None = None
+    started_at: datetime | None = None
+    updated_at: datetime | None = None
+    bytes_per_second: float = 0.0
+    remaining_seconds: float | None = None
+    failure_reason: str | None = None
 
     def with_progress(self, bytes_transferred: int) -> TransferItem:
         next_status = (

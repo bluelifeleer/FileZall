@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from filezall_core.models import Direction, TransferItem, TransferStatus
@@ -31,13 +32,15 @@ class TransferRunner:
                 self._run_upload(item, client, progress_callback)
             else:
                 self._run_download(item, client)
+            current = self._repository.get_item(item.id) or item
             completed = replace(
-                item,
+                current,
                 bytes_transferred=item.size_bytes,
                 status=TransferStatus.COMPLETED,
                 last_error=None,
+                failure_reason=None,
             )
-            self._update_progress(
+            completed = self._update_progress(
                 completed,
                 completed.bytes_transferred,
                 completed.status,
@@ -109,17 +112,41 @@ class TransferRunner:
         last_error: str | None = None,
         progress_callback: Callable[[TransferItem], None] | None = None,
     ) -> TransferItem:
+        persisted = self._repository.get_item(item.id) or item
+        now = datetime.now(UTC)
+        started_at = persisted.started_at or now
+        safe_bytes = min(bytes_transferred, item.size_bytes)
+        elapsed_seconds = max((now - started_at).total_seconds(), 0.0)
+        bytes_per_second = safe_bytes / elapsed_seconds if elapsed_seconds > 0 else 0.0
+        remaining_bytes = max(item.size_bytes - safe_bytes, 0)
+        remaining_seconds = (
+            0
+            if status is TransferStatus.COMPLETED
+            else remaining_bytes / bytes_per_second
+            if bytes_per_second > 0
+            else None
+        )
         updated = replace(
             item,
-            bytes_transferred=min(bytes_transferred, item.size_bytes),
+            bytes_transferred=safe_bytes,
             status=status,
             last_error=last_error,
+            started_at=started_at,
+            updated_at=now,
+            bytes_per_second=bytes_per_second,
+            remaining_seconds=remaining_seconds,
+            failure_reason=last_error,
         )
         self._repository.update_item_progress(
             updated.id,
             bytes_transferred=updated.bytes_transferred,
             status=updated.status,
             last_error=updated.last_error,
+            started_at=updated.started_at,
+            updated_at=updated.updated_at,
+            bytes_per_second=updated.bytes_per_second,
+            remaining_seconds=updated.remaining_seconds,
+            failure_reason=updated.failure_reason,
         )
         if progress_callback is not None:
             progress_callback(updated)

@@ -352,7 +352,7 @@ def test_main_window_exposes_connection_and_file_panels(qtbot) -> None:
     assert window.local_panel.path_button.maximumWidth() <= 32
     assert window.local_panel.path_button.text() == "..."
     assert window.remote_panel.path_button.maximumWidth() <= 32
-    assert window.transfer_table.columnCount() == 5
+    assert window.transfer_table.columnCount() == 9
 
 
 def test_local_path_button_keeps_ellipsis_after_language_and_theme_changes(qtbot) -> None:
@@ -2040,6 +2040,92 @@ def test_transfer_center_shows_directory_progress(qtbot, tmp_path) -> None:
     assert window.transfer_summary_label.text() == (
         "task-1: 2 files, 8 / 11 bytes, current index.html"
     )
+
+
+def test_transfer_center_shows_metrics_columns(qtbot, tmp_path) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    item = TransferItem(
+        id="item-1",
+        task_id="task-1",
+        server_id="site-1",
+        direction=Direction.UPLOAD,
+        source_path=tmp_path / "app.zip",
+        destination_path=PurePosixPath("/home/deploy/app.zip"),
+        temporary_path=PurePosixPath("/home/deploy/.filezall.app.zip.part"),
+        size_bytes=100,
+        protocol=Protocol.SFTP,
+        bytes_transferred=25,
+        status=TransferStatus.FAILED,
+        retry_count=2,
+        bytes_per_second=2048,
+        remaining_seconds=37,
+        failure_reason="network down",
+    )
+
+    window.set_transfer_items([item])
+
+    headers = [
+        window.transfer_table.horizontalHeaderItem(index).text()
+        for index in range(window.transfer_table.columnCount())
+    ]
+    assert headers == [
+        "Server",
+        "Direction",
+        "File",
+        "Progress",
+        "Speed",
+        "Remaining",
+        "Retries",
+        "Failure",
+        "Status",
+    ]
+    assert window.transfer_table.item(0, 4).text() == "2.0 KB/s"
+    assert window.transfer_table.item(0, 5).text() == "37s"
+    assert window.transfer_table.item(0, 6).text() == "2"
+    assert window.transfer_table.item(0, 7).text() == "network down"
+
+
+def test_transfer_center_has_concurrency_and_limit_controls(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    _use_english(window)
+
+    assert window.transfer_concurrency_label.text() == "Concurrency"
+    assert window.transfer_concurrency_spin.value() == 2
+    assert window.transfer_limit_label.text() == "Limit KB/s"
+    assert window.transfer_limit_spin.value() == 0
+
+    window.transfer_concurrency_spin.setValue(4)
+    window.transfer_limit_spin.setValue(512)
+
+    assert window.transfer_settings.max_concurrent == 4
+    assert window.transfer_settings.bytes_per_second_limit == 512 * 1024
+
+
+def test_transfer_center_renders_retry_and_failure_reason(qtbot, tmp_path) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    item = TransferItem(
+        id="item-1",
+        task_id="task-1",
+        server_id="site-1",
+        direction=Direction.UPLOAD,
+        source_path=tmp_path / "app.zip",
+        destination_path=PurePosixPath("/home/deploy/app.zip"),
+        temporary_path=PurePosixPath("/home/deploy/.filezall.app.zip.part"),
+        size_bytes=100,
+        protocol=Protocol.SFTP,
+        status=TransferStatus.RETRYING,
+        retry_count=1,
+        failure_reason="network down",
+    )
+
+    window.set_transfer_items([item])
+
+    assert window.transfer_table.item(0, 7).text() == "network down"
+    assert window.transfer_table.item(0, 8).text() == "Retrying"
+    assert window.transfer_table.item(0, 8).background().color().isValid()
 
 
 def test_dragging_local_files_to_remote_queues_upload(qtbot, tmp_path) -> None:
