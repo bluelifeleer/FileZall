@@ -18,25 +18,25 @@
 - Test: `tests/core/test_agent_status.py`
 - Test: `tests/desktop/test_controller.py`
 
-- [ ] **Step 1: Write failing Agent state tests**
+- [x] **Step 1: Write failing Agent state tests**
 
 Test states: unknown, not installed, installing, installed, outdated, unhealthy, update available, uninstalling, and unavailable.
 
-- [ ] **Step 2: Verify tests fail**
+- [x] **Step 2: Verify tests fail**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\core\test_agent_status.py -q`
 
 Expected: fail because the model does not exist.
 
-- [ ] **Step 3: Implement Agent state**
+- [x] **Step 3: Implement Agent state**
 
 Create `AgentStatus` enum and a `AgentStatusViewModel` dataclass with `state`, `version`, `message`, `primary_action`, and `danger_action`.
 
-- [ ] **Step 4: Wire detection result mapping**
+- [x] **Step 4: Wire detection result mapping**
 
 Map install detection, health, version, and errors to the view model.
 
-- [ ] **Step 5: Verify Agent state tests**
+- [x] **Step 5: Verify Agent state tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\core\test_agent_status.py tests\desktop\test_controller.py::test_controller_maps_agent_detection_to_status_view_model -q`
 
@@ -51,25 +51,25 @@ Expected: pass.
 - Test: `tests/desktop/test_agent_status_card.py`
 - Test: `tests/desktop/test_main_window.py`
 
-- [ ] **Step 1: Write failing UI tests**
+- [x] **Step 1: Write failing UI tests**
 
 Test that the card displays not installed, installed, outdated, unhealthy, update, reinstall, and uninstall actions with distinct button roles.
 
-- [ ] **Step 2: Verify tests fail**
+- [x] **Step 2: Verify tests fail**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_agent_status_card.py -q`
 
 Expected: fail because the widget does not exist.
 
-- [ ] **Step 3: Implement status card**
+- [x] **Step 3: Implement status card**
 
 Create a compact card with state label, version label, message label, primary action button, and uninstall button.
 
-- [ ] **Step 4: Replace scattered Agent status UI**
+- [x] **Step 4: Replace scattered Agent status UI**
 
 Keep the top Agent button for quick access but make the resource panel card the authoritative visual state.
 
-- [ ] **Step 5: Verify UI tests**
+- [x] **Step 5: Verify UI tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_agent_status_card.py tests\desktop\test_main_window.py::test_main_window_updates_agent_status_card -q`
 
@@ -83,21 +83,21 @@ Expected: pass.
 - Test: `tests/desktop/test_agent_status_card.py`
 - Test: `tests/desktop/test_main_window.py`
 
-- [ ] **Step 1: Write failing progress tests**
+- [x] **Step 1: Write failing progress tests**
 
 Test that install/update/uninstall progress appears as ordered step rows and final success/failure state is visible without opening logs.
 
-- [ ] **Step 2: Verify tests fail**
+- [x] **Step 2: Verify tests fail**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_agent_status_card.py::test_agent_card_shows_operation_steps -q`
 
 Expected: fail because progress rows are not rendered.
 
-- [ ] **Step 3: Add operation steps**
+- [x] **Step 3: Add operation steps**
 
 Render each progress callback line as a step row. Keep the full log in the log panel.
 
-- [ ] **Step 4: Verify progress tests**
+- [x] **Step 4: Verify progress tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_agent_status_card.py::test_agent_card_shows_operation_steps tests\desktop\test_main_window.py::test_agent_install_progress_updates_status_card -q`
 
@@ -109,21 +109,21 @@ Expected: pass.
 - Modify: `src/filezall_desktop/main_window.py`
 - Test: `tests/desktop/test_main_window.py`
 
-- [ ] **Step 1: Write failing chart tests**
+- [x] **Step 1: Write failing chart tests**
 
 Test time range controls, hover details, network curves, disk partition selector, and process sort/filter controls.
 
-- [ ] **Step 2: Verify tests fail**
+- [x] **Step 2: Verify tests fail**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py::test_resource_monitor_has_time_range_and_process_filters -q`
 
 Expected: fail because controls are missing.
 
-- [ ] **Step 3: Add chart controls**
+- [x] **Step 3: Add chart controls**
 
 Add time ranges `1m`, `5m`, `15m`, `1h`, disk partition selector, process sort selector, and process filter input.
 
-- [ ] **Step 4: Verify chart tests**
+- [x] **Step 4: Verify chart tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py::test_resource_monitor_has_time_range_and_process_filters -q`
 
@@ -131,19 +131,19 @@ Expected: pass.
 
 ### Task 5: Commit
 
-- [ ] **Step 1: Run focused tests**
+- [x] **Step 1: Run focused tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\core\test_agent_status.py tests\desktop\test_agent_status_card.py tests\desktop\test_main_window.py tests\desktop\test_controller.py`
 
 Expected: pass.
 
-- [ ] **Step 2: Run full tests**
+- [x] **Step 2: Run full tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest`
 
 Expected: pass, with live SFTP skipped when environment variables are absent.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 Run:
 

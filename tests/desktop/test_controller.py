@@ -13,6 +13,7 @@ from filezall_core.models import (
     TransferItem,
     TransferStatus,
 )
+from filezall_core.agent_status import AgentStatus
 from filezall_core.agent_deployment import AgentDetectionResult, AgentInstallResult
 from filezall_core.resource_models import (
     CpuStats,
@@ -34,6 +35,7 @@ class FakeWindow:
         self.resource_snapshot = None
         self.process_detail = None
         self.agent_statuses = []
+        self.agent_status_models = []
         self.agent_versions = []
         self.statuses: list[str] = []
         self.logs: list[str] = []
@@ -59,6 +61,9 @@ class FakeWindow:
 
     def set_agent_status(self, installed: bool | None) -> None:
         self.agent_statuses.append(installed)
+
+    def set_agent_status_model(self, model) -> None:
+        self.agent_status_models.append(model)
 
     def set_agent_version(self, version: str | None) -> None:
         self.agent_versions.append(version)
@@ -740,6 +745,39 @@ def test_controller_uses_detected_agent_token_for_resource_monitoring() -> None:
     assert service.resource_calls == [(controller._connected_site, "secret", session)]
     assert window.resource_snapshot == service.expected_snapshot
     assert window.agent_versions == ["0.1.0"]
+
+
+def test_controller_maps_agent_detection_to_status_view_model() -> None:
+    window = FakeWindow()
+    service = FakeAgentInstallService(AgentInstallResult(success=True, commands_run=8))
+    service.detect_result = AgentDetectionResult(
+        installed=True,
+        commands_run=1,
+        agent_token_ref="site-1:agent-token",
+        agent_version="0.0.1",
+    )
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: FakeSession(),
+        agent_install_service=service,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+
+    assert window.agent_status_models[0].state is AgentStatus.UNKNOWN
+    assert window.agent_status_models[-1].state is AgentStatus.OUTDATED
+    assert window.agent_status_models[-1].version == "0.0.1"
+    assert window.agent_status_models[-1].primary_action == "Update Agent"
 
 
 def test_controller_skips_agent_detection_for_ftp_connection() -> None:

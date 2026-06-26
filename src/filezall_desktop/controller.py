@@ -6,7 +6,9 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from filezall_core.agent_deployment import classify_agent_error
+from filezall_core.agent_status import view_model_for_agent
 from filezall_core.capabilities import resource_monitoring_message
+from filezall_core import __version__
 from filezall_core.client_factory import create_remote_client
 from filezall_core.directory_plan import plan_local_directory
 from filezall_core.local_files import list_local_directory
@@ -137,8 +139,18 @@ class MainWindowController:
         if hasattr(self._window, "set_agent_status"):
             for status in result.get("agent_status_sequence", []):
                 self._window.set_agent_status(status)
+                self._publish_agent_status_model(
+                    status,
+                    version=result.get("agent_version") if status is True else None,
+                    message=result.get("agent_status_message") or "",
+                )
             if agent_status is not None and not result.get("agent_status_sequence"):
                 self._window.set_agent_status(agent_status)
+                self._publish_agent_status_model(
+                    agent_status,
+                    version=result.get("agent_version") if agent_status is True else None,
+                    message=result.get("agent_status_message") or "",
+                )
         if result.get("agent_version") and hasattr(self._window, "set_agent_version"):
             self._window.set_agent_version(result["agent_version"])
         for message in result.get("logs", []):
@@ -502,6 +514,7 @@ class MainWindowController:
                 self._window.set_agent_status(status)
             if result["agent_status"] is not None and not result.get("agent_status_sequence"):
                 self._window.set_agent_status(result["agent_status"])
+                self._publish_agent_status_model(result["agent_status"])
         if result.get("agent_version") and hasattr(self._window, "set_agent_version"):
             self._window.set_agent_version(result["agent_version"])
         if result["resource_snapshot"] is not None:
@@ -528,6 +541,7 @@ class MainWindowController:
         ):
             return
         result["agent_status_sequence"].append(None)
+        self._publish_agent_status_model(None)
         logs.append("Agent detection started")
         try:
             agent_token_ref = None
@@ -550,6 +564,7 @@ class MainWindowController:
             logs.append(f"Agent detection failed: {classify_agent_error(str(exc))}")
             result["agent_status"] = False
             result["agent_status_sequence"].append(False)
+            self._publish_agent_status_model(False, message=classify_agent_error(str(exc)))
             return
         if installed and agent_token_ref is not None:
             self._mark_connected_site_agent_enabled_ref(agent_token_ref)
@@ -563,6 +578,11 @@ class MainWindowController:
                 logs.append(status)
         result["agent_status"] = installed
         result["agent_status_sequence"].append(installed)
+        self._publish_agent_status_model(
+            installed,
+            version=result.get("agent_version"),
+            message=result.get("agent_status_message") or "",
+        )
         if installed and agent_token_ref is None:
             logs.append("Agent service installed but Agent token is not available")
             result["agent_status_message"] = (
@@ -570,6 +590,29 @@ class MainWindowController:
             )
         else:
             logs.append("Agent service installed" if installed else "Agent service not installed")
+
+    def _publish_agent_status_model(
+        self,
+        installed: bool | None,
+        *,
+        version: str | None = None,
+        message: str = "",
+        healthy: bool = True,
+        operation: str | None = None,
+        unavailable: bool = False,
+    ) -> None:
+        if not hasattr(self._window, "set_agent_status_model"):
+            return
+        model = view_model_for_agent(
+            installed,
+            version=version,
+            message=message,
+            current_version=__version__,
+            healthy=healthy,
+            operation=operation,
+            unavailable=unavailable,
+        )
+        self._window.set_agent_status_model(model)
 
     def _mark_connected_site_agent_enabled_ref(self, agent_token_ref: str) -> None:
         if self._connected_site is None:

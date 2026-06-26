@@ -19,6 +19,7 @@ from filezall_core.models import (
     TransferItem,
     TransferStatus,
 )
+from filezall_core.agent_status import AgentStatus, AgentStatusViewModel
 from filezall_core.agent_deployment import AgentInstallResult
 from filezall_core.resource_models import (
     CpuStats,
@@ -462,6 +463,27 @@ def test_main_window_runs_agent_install_in_background_and_logs_progress(qtbot) -
     assert "Agent install: health check passed" in logs
     assert controller.agent_install_results[0].verified is True
     assert window.connection_bar.install_agent_button.isEnabled()
+
+
+def test_agent_install_progress_updates_status_card(qtbot) -> None:
+    controller = ProgressAgentController(delay_seconds=0.1)
+    window = MainWindow(
+        controller=controller,
+        agent_install_confirmer=lambda _parent: True,
+    )
+    qtbot.addWidget(window)
+
+    qtbot.mouseClick(window.connection_bar.install_agent_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(
+        lambda: "Agent install command finished" in window.agent_status_card.message_label.text(),
+        timeout=3000,
+    )
+
+    assert [label.text() for label in window.agent_status_card.step_labels] == [
+        "1. Agent install: uploading package",
+        "2. Agent install: health check passed",
+    ]
 
 
 def test_main_window_logs_agent_install_failure_from_background(qtbot) -> None:
@@ -1770,6 +1792,27 @@ def test_main_window_displays_detected_agent_status(qtbot) -> None:
     assert not window.resource_uninstall_agent_button.isHidden()
 
 
+def test_main_window_updates_agent_status_card(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    window.set_agent_status_model(
+        AgentStatusViewModel(
+            state=AgentStatus.OUTDATED,
+            version="0.0.1",
+            message="Agent update is available.",
+            primary_action="Update Agent",
+            danger_action="Uninstall Agent",
+        )
+    )
+
+    assert window.agent_status_card.state_label.text() == "Outdated"
+    assert window.agent_status_card.version_label.text() == "v0.0.1"
+    assert window.agent_status_card.primary_button.text() == "Update Agent"
+    assert window.agent_status_card.primary_button.property("buttonRole") == "warning"
+    assert window.agent_status_card.danger_button.text() == "Uninstall Agent"
+
+
 def test_resource_agent_install_button_uses_confirmed_install_flow(qtbot) -> None:
     controller = FakeController()
     window = MainWindow(
@@ -2225,6 +2268,52 @@ def test_main_window_renders_resource_snapshot_and_process_detail(qtbot) -> None
     assert controller.process_details == [123]
     assert "python app.py" in window.process_detail_label.text()
     assert "threads: 8" in window.process_detail_label.text()
+
+
+def test_resource_monitor_has_time_range_and_process_filters(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    assert [
+        window.resource_time_range_selector.itemText(index)
+        for index in range(window.resource_time_range_selector.count())
+    ] == ["1m", "5m", "15m", "1h"]
+    assert [
+        window.process_sort_selector.itemText(index)
+        for index in range(window.process_sort_selector.count())
+    ] == ["CPU", "Memory", "PID", "Name"]
+    assert window.process_filter_edit.placeholderText() == "Filter processes"
+
+    window.set_resource_snapshot(
+        ResourceSnapshot(
+            cpu=CpuStats(percent=12.5),
+            memory=MemoryStats(total_bytes=100, used_bytes=50, available_bytes=50),
+            disks=[
+                DiskUsage(mount="/", total_bytes=100, used_bytes=20, available_bytes=80),
+                DiskUsage(mount="/data", total_bytes=200, used_bytes=80, available_bytes=120),
+            ],
+            network=NetworkStats(rx_bytes_per_sec=1024, tx_bytes_per_sec=2048),
+            processes=[
+                ProcessSummary(pid=3, user="root", name="nginx", cpu_percent=40.0, memory_percent=3.0),
+                ProcessSummary(pid=9, user="deploy", name="python", cpu_percent=5.0, memory_percent=60.0),
+            ],
+        )
+    )
+
+    assert [
+        window.disk_partition_selector.itemText(index)
+        for index in range(window.disk_partition_selector.count())
+    ] == ["All disks", "/", "/data"]
+
+    window.disk_partition_selector.setCurrentText("/data")
+    assert window.disk_value_label.text() == "/data: 80 B / 200 B"
+
+    window.process_sort_selector.setCurrentText("Memory")
+    assert window.process_table.item(0, 2).text() == "python"
+
+    window.process_filter_edit.setText("ng")
+    assert window.process_table.rowCount() == 1
+    assert window.process_table.item(0, 2).text() == "nginx"
 
 
 def test_resource_snapshot_updates_usage_chart_history(qtbot) -> None:

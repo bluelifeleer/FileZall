@@ -8,9 +8,11 @@ from PySide6.QtGui import QActionGroup, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QComboBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -29,6 +31,7 @@ from PySide6.QtWidgets import (
 from filezall_core import __version__
 from filezall_core.app_paths import resolve_app_paths
 from filezall_core.agent_deployment import classify_agent_error
+from filezall_core.agent_status import AgentStatusViewModel, view_model_for_agent
 from filezall_core.diagnostics import DiagnosticPackageBuilder
 from filezall_core.log_service import TransferLogService
 from filezall_core.models import (
@@ -43,6 +46,7 @@ from filezall_core.models import (
 from filezall_core.resource_models import ProcessDetail, ResourceSnapshot
 from filezall_core.transfer_settings import TransferSettings
 from filezall_desktop.assets import app_icon
+from filezall_desktop.agent_status_card import AgentStatusCard
 from filezall_desktop.conflict_dialog import choose_conflict_policy
 from filezall_desktop.controller import MainWindowController, classify_connection_error
 from filezall_desktop.i18n import (
@@ -369,6 +373,7 @@ class MainWindow(QMainWindow):
         self._resource_refresh_workers = []
         self._active_resource_refresh = None
         self._resource_refresh_running = False
+        self._last_resource_snapshot: ResourceSnapshot | None = None
         self._remote_directory_workers = []
         self._active_remote_directory_load = None
         self._remote_directory_loading = False
@@ -852,6 +857,7 @@ class MainWindow(QMainWindow):
         self.resource_install_agent_button.hide()
         self.resource_uninstall_agent_button.hide()
         self.resource_monitor_label = QLabel("Resource Monitor", root)
+        self.agent_status_card = AgentStatusCard(resource_widget)
         resource_actions.addWidget(self.resource_monitor_label)
         resource_actions.addWidget(self.agent_status_label)
         resource_actions.addStretch(1)
@@ -859,6 +865,24 @@ class MainWindow(QMainWindow):
         resource_actions.addWidget(self.resource_uninstall_agent_button)
         resource_actions.addWidget(self.resource_refresh_button)
         resource_actions.addWidget(self.process_detail_button)
+
+        resource_controls = QHBoxLayout()
+        self.resource_time_range_selector = QComboBox(resource_widget)
+        self.resource_time_range_selector.addItems(["1m", "5m", "15m", "1h"])
+        self.resource_time_range_selector.setCurrentText("5m")
+        self.disk_partition_selector = QComboBox(resource_widget)
+        self.disk_partition_selector.addItem("All disks")
+        self.process_sort_selector = QComboBox(resource_widget)
+        self.process_sort_selector.addItems(["CPU", "Memory", "PID", "Name"])
+        self.process_filter_edit = QLineEdit(resource_widget)
+        self.process_filter_edit.setPlaceholderText("Filter processes")
+        resource_controls.addWidget(QLabel("Range", resource_widget))
+        resource_controls.addWidget(self.resource_time_range_selector)
+        resource_controls.addWidget(QLabel("Disk", resource_widget))
+        resource_controls.addWidget(self.disk_partition_selector)
+        resource_controls.addWidget(QLabel("Sort", resource_widget))
+        resource_controls.addWidget(self.process_sort_selector)
+        resource_controls.addWidget(self.process_filter_edit, stretch=1)
 
         resource_values = QHBoxLayout()
         self.cpu_value_label = QLabel("0.0%", root)
@@ -888,6 +912,8 @@ class MainWindow(QMainWindow):
         self.resource_content_splitter.setSizes([760, 360])
 
         resource_layout.addLayout(resource_actions, stretch=0)
+        resource_layout.addWidget(self.agent_status_card, stretch=0)
+        resource_layout.addLayout(resource_controls, stretch=0)
         resource_layout.addLayout(resource_values, stretch=0)
         resource_layout.addWidget(self.resource_content_splitter, stretch=1)
         resource_layout.addWidget(self.process_detail_label, stretch=0)
@@ -969,6 +995,9 @@ class MainWindow(QMainWindow):
             self.resource_install_agent_button.hide()
             self.resource_uninstall_agent_button.hide()
 
+    def set_agent_status_model(self, model: AgentStatusViewModel) -> None:
+        self.agent_status_card.set_status(model)
+
     def set_agent_status(self, installed: bool | None, version: str | None = None) -> None:
         self._agent_installed = installed
         if version is not None:
@@ -981,6 +1010,14 @@ class MainWindow(QMainWindow):
             and _version_is_older(self._agent_version, __version__)
         )
         self._refresh_agent_action_text()
+        self.set_agent_status_model(
+            view_model_for_agent(
+                installed,
+                version=self._agent_version,
+                current_version=__version__,
+                update_available=self._agent_update_available,
+            )
+        )
         if installed is None:
             self.agent_status_label.setText("Checking Agent...")
             self.resource_install_agent_button.show()
@@ -1028,18 +1065,47 @@ class MainWindow(QMainWindow):
         self.transfer_summary_label.setText(_transfer_summary_text(items))
 
     def set_resource_snapshot(self, snapshot: ResourceSnapshot) -> None:
+        self._last_resource_snapshot = snapshot
         self.cpu_value_label.setText(f"{snapshot.cpu.percent:.1f}%")
         self.memory_value_label.setText(
             f"{_human_bytes(snapshot.memory.used_bytes)} / {_human_bytes(snapshot.memory.total_bytes)}"
         )
-        self.disk_value_label.setText(_disk_text(snapshot))
+        self._update_disk_partition_selector(snapshot)
+        self._refresh_resource_disk_text()
         self.network_value_label.setText(
             f"RX {_human_bytes(snapshot.network.rx_bytes_per_sec)}/s, "
             f"TX {_human_bytes(snapshot.network.tx_bytes_per_sec)}/s"
         )
         self.resource_chart.add_snapshot(snapshot)
-        self.process_table.setRowCount(len(snapshot.processes))
-        for row, process in enumerate(snapshot.processes):
+        self._refresh_process_table()
+
+    def _update_disk_partition_selector(self, snapshot: ResourceSnapshot) -> None:
+        current = self.disk_partition_selector.currentText()
+        items = ["All disks"] + [disk.mount for disk in snapshot.disks]
+        existing = [
+            self.disk_partition_selector.itemText(index)
+            for index in range(self.disk_partition_selector.count())
+        ]
+        if existing == items:
+            return
+        self.disk_partition_selector.blockSignals(True)
+        self.disk_partition_selector.clear()
+        self.disk_partition_selector.addItems(items)
+        self.disk_partition_selector.setCurrentText(current if current in items else "All disks")
+        self.disk_partition_selector.blockSignals(False)
+
+    def _refresh_resource_disk_text(self) -> None:
+        if self._last_resource_snapshot is None:
+            return
+        selected = self.disk_partition_selector.currentText()
+        self.disk_value_label.setText(_disk_text(self._last_resource_snapshot, mount=selected))
+
+    def _refresh_process_table(self) -> None:
+        if self._last_resource_snapshot is None:
+            return
+        processes = self._filtered_sorted_processes(self._last_resource_snapshot.processes)
+        self.process_table.setRowCount(len(processes))
+        for row, process in enumerate(processes):
             pid_cell = QTableWidgetItem(str(process.pid))
             pid_cell.setData(Qt.ItemDataRole.UserRole, process.pid)
             self.process_table.setItem(row, 0, pid_cell)
@@ -1047,6 +1113,25 @@ class MainWindow(QMainWindow):
             self.process_table.setItem(row, 2, QTableWidgetItem(process.name))
             self.process_table.setItem(row, 3, QTableWidgetItem(f"{process.cpu_percent:.1f}%"))
             self.process_table.setItem(row, 4, QTableWidgetItem(f"{process.memory_percent:.1f}%"))
+
+    def _filtered_sorted_processes(self, processes):
+        filter_text = self.process_filter_edit.text().strip().lower()
+        if filter_text:
+            processes = [
+                process
+                for process in processes
+                if filter_text in str(process.pid).lower()
+                or filter_text in process.user.lower()
+                or filter_text in process.name.lower()
+            ]
+        sort_mode = self.process_sort_selector.currentText()
+        if sort_mode == "Memory":
+            return sorted(processes, key=lambda process: process.memory_percent, reverse=True)
+        if sort_mode == "PID":
+            return sorted(processes, key=lambda process: process.pid)
+        if sort_mode == "Name":
+            return sorted(processes, key=lambda process: process.name.lower())
+        return sorted(processes, key=lambda process: process.cpu_percent, reverse=True)
 
     def set_process_detail(self, detail: ProcessDetail) -> None:
         self.process_detail_label.setText(
@@ -1113,7 +1198,12 @@ class MainWindow(QMainWindow):
         self.resource_refresh_button.clicked.connect(self._handle_resource_refresh_tick)
         self.resource_install_agent_button.clicked.connect(self._handle_install_agent_clicked)
         self.resource_uninstall_agent_button.clicked.connect(self._handle_uninstall_agent_clicked)
+        self.agent_status_card.primary_action_requested.connect(self._handle_install_agent_clicked)
+        self.agent_status_card.danger_action_requested.connect(self._handle_uninstall_agent_clicked)
         self.process_detail_button.clicked.connect(self._handle_process_detail_clicked)
+        self.disk_partition_selector.currentTextChanged.connect(self._refresh_resource_disk_text)
+        self.process_sort_selector.currentTextChanged.connect(self._refresh_process_table)
+        self.process_filter_edit.textChanged.connect(self._refresh_process_table)
 
     def closeEvent(self, event) -> None:
         self.heartbeat_timer.stop()
@@ -1348,18 +1438,33 @@ class MainWindow(QMainWindow):
             self.append_log(f"Agent {label} request ignored: another Agent action is running")
             return
         self._set_agent_action_enabled(False)
+        operation = "uninstalling" if label == "uninstall" else "installing"
+        self.set_agent_status_model(
+            view_model_for_agent(
+                self._agent_installed,
+                version=self._agent_version,
+                current_version=__version__,
+                operation=operation,
+            )
+        )
+        self.agent_status_card.clear_operation_steps()
         thread = QThread(self)
         worker = AgentActionWorker(action)
         worker.moveToThread(thread)
         self._active_agent_action = (label, thread, worker, complete)
         self._agent_workers.append((thread, worker))
         thread.started.connect(worker.run)
-        worker.progress.connect(self.append_log, Qt.ConnectionType.QueuedConnection)
+        worker.progress.connect(self._handle_agent_progress, Qt.ConnectionType.QueuedConnection)
         worker.succeeded.connect(self._finish_agent_action, Qt.ConnectionType.QueuedConnection)
         worker.failed.connect(self._fail_agent_action, Qt.ConnectionType.QueuedConnection)
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         thread.start()
+
+    @Slot(str)
+    def _handle_agent_progress(self, message: str) -> None:
+        self.append_log(message)
+        self.agent_status_card.add_operation_step(message)
 
     def _run_agent_install(self, progress: Callable[[str], None]):
         return self.controller.install_agent_with_progress(progress)
@@ -1385,7 +1490,9 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.append_log(f"Agent {label} completion failed: {exc}")
             self.show_status(str(exc))
-        self.append_log(f"Agent {label} command finished")
+        message = f"Agent {label} command finished"
+        self.append_log(message)
+        self.agent_status_card.set_operation_result(message)
         if label in {"install", "update"}:
             self._handle_resource_refresh_tick()
         self._set_agent_action_enabled(True)
@@ -1403,6 +1510,7 @@ class MainWindow(QMainWindow):
         else:
             message = f"Agent uninstall failed: {classified_error}"
         self.append_log(message)
+        self.agent_status_card.set_operation_result(message)
         self.show_status(message)
         self._set_agent_action_enabled(True)
         self._cleanup_agent_worker()
@@ -2036,10 +2144,10 @@ def _transfer_summary_text(items: list[TransferItem]) -> str:
     )
 
 
-def _disk_text(snapshot: ResourceSnapshot) -> str:
+def _disk_text(snapshot: ResourceSnapshot, *, mount: str = "All disks") -> str:
     if not snapshot.disks:
         return ""
-    disk = snapshot.disks[0]
+    disk = next((item for item in snapshot.disks if item.mount == mount), snapshot.disks[0])
     return f"{disk.mount}: {_human_bytes(disk.used_bytes)} / {_human_bytes(disk.total_bytes)}"
 
 
