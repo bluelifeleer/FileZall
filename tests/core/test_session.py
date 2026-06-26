@@ -94,3 +94,29 @@ def test_remote_session_uploads_and_downloads_one_file(tmp_path: Path) -> None:
 
     assert client.uploads == [(local_file, PurePosixPath("/home/deploy/build.zip"))]
     assert client.downloads == [(PurePosixPath("/home/deploy/build.zip"), download_file)]
+
+
+def test_remote_session_routes_file_management_operations() -> None:
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+    client = FakeRemoteClient(entries={}, home=PurePosixPath("/home/deploy"))
+    session = RemoteSession(site=site, client=client)
+
+    session.delete_path(PurePosixPath("/home/deploy/app.txt"), is_dir=False)
+    session.delete_path(PurePosixPath("/home/deploy/old"), is_dir=True)
+    session.make_directory(PurePosixPath("/home/deploy/new-dir"))
+    session.create_file(PurePosixPath("/home/deploy/new.txt"))
+
+    assert client.deletes == [
+        (PurePosixPath("/home/deploy/app.txt"), False),
+        (PurePosixPath("/home/deploy/old"), True),
+    ]
+    assert client.directories == [PurePosixPath("/home/deploy/new-dir")]
+    assert client.files == [PurePosixPath("/home/deploy/new.txt")]

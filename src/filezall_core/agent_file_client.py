@@ -120,6 +120,15 @@ class AgentHttpFileClient:
             {"source": str(source_path), "destination": str(destination_path)},
         )
 
+    def delete_path(self, path: PurePosixPath, *, is_dir: bool) -> None:
+        self._post_json("/files/delete", {"path": str(path), "is_dir": is_dir})
+
+    def make_directory(self, path: PurePosixPath) -> None:
+        self._post_json("/files/mkdir", {"path": str(path)})
+
+    def create_file(self, path: PurePosixPath) -> None:
+        self._post_json("/files/touch", {"path": str(path)})
+
     def _get_json(self, path: str) -> dict:
         agent_request = request.Request(f"{self._base_url}{path}")
         agent_request.add_header("Authorization", f"Bearer {self._token}")

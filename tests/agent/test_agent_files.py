@@ -31,6 +31,26 @@ def test_agent_file_service_lists_sizes_renames_and_verifies(tmp_path: Path) -> 
     assert service.verify("/home/deploy/renamed.txt", "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824") == {"ok": True}
 
 
+def test_agent_file_service_deletes_and_creates_paths(tmp_path: Path) -> None:
+    service = AgentFileService(AgentConfig(root=tmp_path, token="secret"))
+    directory = tmp_path / "home" / "deploy"
+    directory.mkdir(parents=True)
+    file_path = directory / "app.txt"
+    file_path.write_text("hello", encoding="utf-8")
+    old_dir = directory / "old"
+    old_dir.mkdir()
+
+    assert service.delete_path("/home/deploy/app.txt", is_dir=False) == {"ok": True}
+    assert service.delete_path("/home/deploy/old", is_dir=True) == {"ok": True}
+    assert service.make_directory("/home/deploy/new-dir") == {"ok": True}
+    assert service.create_file("/home/deploy/new.txt") == {"ok": True}
+
+    assert not file_path.exists()
+    assert not old_dir.exists()
+    assert (directory / "new-dir").is_dir()
+    assert (directory / "new.txt").read_bytes() == b""
+
+
 def test_agent_file_service_writes_merges_and_downloads_chunks(tmp_path: Path) -> None:
     service = AgentFileService(AgentConfig(root=tmp_path, token="secret"))
 

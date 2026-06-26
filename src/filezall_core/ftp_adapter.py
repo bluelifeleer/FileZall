@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ftplib
+import io
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -101,6 +102,19 @@ class FtpAdapter:
         destination_path: PurePosixPath,
     ) -> None:
         self._require_client().rename(str(source_path), str(destination_path))
+
+    def delete_path(self, path: PurePosixPath, *, is_dir: bool) -> None:
+        client = self._require_client()
+        if is_dir:
+            client.rmd(str(path))
+            return
+        client.delete(str(path))
+
+    def make_directory(self, path: PurePosixPath) -> None:
+        self._require_client().mkd(str(path))
+
+    def create_file(self, path: PurePosixPath) -> None:
+        self._require_client().storbinary(f"STOR {path}", io.BytesIO(b""))
 
     def _entry_from_mlsd(
         self,

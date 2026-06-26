@@ -80,6 +80,9 @@ class FakeSession:
         self.list_calls = []
         self.captures = []
         self.renames = []
+        self.deletes = []
+        self.directories = []
+        self.files = []
         self.fail_list = False
         self.disconnect_calls = 0
 
@@ -103,6 +106,15 @@ class FakeSession:
 
     def rename(self, source_path: PurePosixPath, destination_path: PurePosixPath) -> None:
         self.renames.append((source_path, destination_path))
+
+    def delete_path(self, path: PurePosixPath, *, is_dir: bool) -> None:
+        self.deletes.append((path, is_dir))
+
+    def make_directory(self, path: PurePosixPath) -> None:
+        self.directories.append(path)
+
+    def create_file(self, path: PurePosixPath) -> None:
+        self.files.append(path)
 
     def list_directory(self, path: PurePosixPath):
         self.list_calls.append(path)
@@ -799,6 +811,51 @@ def test_controller_renames_local_and_remote_paths(tmp_path: Path) -> None:
     ]
     assert "Renamed local path" in window.statuses[-2]
     assert "Renamed remote path" in window.statuses[-1]
+
+
+def test_controller_manages_local_and_remote_paths(tmp_path: Path) -> None:
+    window = FakeWindow()
+    session = FakeSession()
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: session,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+    local_file = tmp_path / "app.txt"
+    local_file.write_text("hello", encoding="utf-8")
+    local_dir = tmp_path / "old"
+    local_dir.mkdir()
+
+    controller.connect(site, password="secret")
+    controller.delete_path(local_file, remote=False, is_dir=False)
+    controller.delete_path(local_dir, remote=False, is_dir=True)
+    controller.create_directory(tmp_path, remote=False)
+    controller.create_file(tmp_path, remote=False)
+    controller.delete_path(PurePosixPath("/home/deploy/app.txt"), remote=True, is_dir=False)
+    controller.delete_path(PurePosixPath("/home/deploy/old"), remote=True, is_dir=True)
+    controller.create_directory(PurePosixPath("/home/deploy"), remote=True)
+    controller.create_file(PurePosixPath("/home/deploy"), remote=True)
+
+    assert not local_file.exists()
+    assert not local_dir.exists()
+    assert (tmp_path / "New Folder").is_dir()
+    assert (tmp_path / "New File.txt").read_bytes() == b""
+    assert session.deletes == [
+        (PurePosixPath("/home/deploy/app.txt"), False),
+        (PurePosixPath("/home/deploy/old"), True),
+    ]
+    assert session.directories == [PurePosixPath("/home/deploy/New Folder")]
+    assert session.files == [PurePosixPath("/home/deploy/New File.txt")]
+    assert "Created remote file" in window.statuses[-1]
 
 
 def test_controller_refreshes_resources_for_connected_site() -> None:

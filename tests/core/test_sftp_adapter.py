@@ -29,6 +29,9 @@ class FakeSftpClient:
         self.stat_sizes = {}
         self.open_calls = []
         self.renames = []
+        self.removes = []
+        self.rmdirs = []
+        self.mkdirs = []
         self.remote_files = {}
         self.closed = False
 
@@ -60,6 +63,15 @@ class FakeSftpClient:
 
     def rename(self, source_path: str, destination_path: str) -> None:
         self.renames.append((source_path, destination_path))
+
+    def remove(self, path: str) -> None:
+        self.removes.append(path)
+
+    def rmdir(self, path: str) -> None:
+        self.rmdirs.append(path)
+
+    def mkdir(self, path: str) -> None:
+        self.mkdirs.append(path)
 
     def close(self) -> None:
         self.closed = True
@@ -255,6 +267,31 @@ def test_sftp_adapter_renames_remote_path() -> None:
     assert fake_paramiko.client.sftp.renames == [
         ("/home/deploy/.filezall.app.zip.part", "/home/deploy/app.zip")
     ]
+
+
+def test_sftp_adapter_deletes_and_creates_remote_paths() -> None:
+    fake_paramiko = FakeParamiko()
+    adapter = SftpAdapter(paramiko_module=fake_paramiko)
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+    adapter.connect(site, password="secret")
+
+    adapter.delete_path(PurePosixPath("/home/deploy/app.txt"), is_dir=False)
+    adapter.delete_path(PurePosixPath("/home/deploy/old"), is_dir=True)
+    adapter.make_directory(PurePosixPath("/home/deploy/new-dir"))
+    adapter.create_file(PurePosixPath("/home/deploy/new.txt"))
+
+    assert fake_paramiko.client.sftp.removes == ["/home/deploy/app.txt"]
+    assert fake_paramiko.client.sftp.rmdirs == ["/home/deploy/old"]
+    assert fake_paramiko.client.sftp.mkdirs == ["/home/deploy/new-dir"]
+    assert fake_paramiko.client.sftp.open_calls[-1] == ("/home/deploy/new.txt", "w")
 
 
 def test_sftp_adapter_captures_command_output_over_existing_ssh() -> None:

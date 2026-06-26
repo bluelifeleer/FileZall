@@ -119,6 +119,20 @@ class SftpAdapter:
     ) -> None:
         self._require_sftp().rename(str(source_path), str(destination_path))
 
+    def delete_path(self, path: PurePosixPath, *, is_dir: bool) -> None:
+        sftp = self._require_sftp()
+        if is_dir:
+            sftp.rmdir(str(path))
+            return
+        sftp.remove(str(path))
+
+    def make_directory(self, path: PurePosixPath) -> None:
+        self._require_sftp().mkdir(str(path))
+
+    def create_file(self, path: PurePosixPath) -> None:
+        with self._require_sftp().open(str(path), "w"):
+            pass
+
     def capture(self, command: str) -> str:
         stdout, _stderr = self._exec(command)
         return stdout.read().decode("utf-8", errors="replace")

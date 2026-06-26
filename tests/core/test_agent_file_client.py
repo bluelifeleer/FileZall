@@ -39,7 +39,13 @@ class FakeOpener:
             return FakeResponse({"exists": True, "size": 6})
         if "/download-chunk" in url:
             return FakeResponse(b"def")
-        if "/merge" in url or "/files/rename" in url:
+        if (
+            "/merge" in url
+            or "/files/rename" in url
+            or "/files/delete" in url
+            or "/files/mkdir" in url
+            or "/files/touch" in url
+        ):
             return FakeResponse({"ok": True})
         return FakeResponse({"index": 1, "size": len(request.data or b""), "complete": True})
 
@@ -96,3 +102,30 @@ def test_agent_file_client_renames_remote_path() -> None:
         "source": "/home/deploy/.filezall.app.zip.part",
         "destination": "/home/deploy/app.zip",
     }
+
+
+def test_agent_file_client_manages_remote_paths() -> None:
+    opener = FakeOpener()
+    client = AgentHttpFileClient("http://127.0.0.1:8765", token="secret", opener=opener)
+
+    client.delete_path(PurePosixPath("/home/deploy/app.txt"), is_dir=False)
+    client.delete_path(PurePosixPath("/home/deploy/old"), is_dir=True)
+    client.make_directory(PurePosixPath("/home/deploy/new-dir"))
+    client.create_file(PurePosixPath("/home/deploy/new.txt"))
+
+    requests = [
+        (request.full_url, json.loads(body.decode("utf-8")))
+        for request, body, _timeout in opener.requests
+    ]
+    assert requests == [
+        (
+            "http://127.0.0.1:8765/files/delete",
+            {"path": "/home/deploy/app.txt", "is_dir": False},
+        ),
+        (
+            "http://127.0.0.1:8765/files/delete",
+            {"path": "/home/deploy/old", "is_dir": True},
+        ),
+        ("http://127.0.0.1:8765/files/mkdir", {"path": "/home/deploy/new-dir"}),
+        ("http://127.0.0.1:8765/files/touch", {"path": "/home/deploy/new.txt"}),
+    ]

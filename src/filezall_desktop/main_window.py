@@ -1413,12 +1413,26 @@ class MainWindow(QMainWindow):
             )
 
     def _handle_local_delete_action(self) -> None:
-        for local_name in self.local_panel.selected_names():
-            self.controller.delete_path(self._local_root() / local_name, remote=False)
+        for local_name, is_dir in self._selected_panel_entries(self.local_panel):
+            self.controller.delete_path(self._local_root() / local_name, remote=False, is_dir=is_dir)
 
     def _handle_remote_delete_action(self) -> None:
-        for remote_name in self.remote_panel.selected_names():
-            self.controller.delete_path(self._remote_path_from_field() / remote_name, remote=True)
+        for remote_name, is_dir in self._selected_panel_entries(self.remote_panel):
+            self.controller.delete_path(
+                self._remote_path_from_field() / remote_name,
+                remote=True,
+                is_dir=is_dir,
+            )
+
+    def _selected_panel_entries(self, panel) -> list[tuple[str, bool]]:
+        entries = []
+        for row in panel.selected_rows():
+            if panel.is_parent_at(row):
+                continue
+            name = panel.name_at(row)
+            if name:
+                entries.append((name, panel.is_dir_at(row)))
+        return entries
 
     def _handle_local_rename_action(self) -> None:
         name = self.local_panel.selected_name()

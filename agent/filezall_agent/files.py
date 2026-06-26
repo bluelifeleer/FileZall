@@ -39,6 +39,24 @@ class AgentFileService:
         source_path.replace(destination_path)
         return {"ok": True}
 
+    def delete_path(self, path: str, is_dir: bool) -> dict:
+        target = self._config.resolve_path(path)
+        if is_dir or target.is_dir():
+            target.rmdir()
+        else:
+            target.unlink()
+        return {"ok": True}
+
+    def make_directory(self, path: str) -> dict:
+        self._config.resolve_path(path).mkdir(parents=True, exist_ok=True)
+        return {"ok": True}
+
+    def create_file(self, path: str) -> dict:
+        target = self._config.resolve_path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.touch(exist_ok=True)
+        return {"ok": True}
+
     def verify(self, path: str, checksum: str) -> dict:
         algorithm, _, expected = checksum.partition(":")
         if algorithm != "sha256" or not expected:

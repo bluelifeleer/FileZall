@@ -59,6 +59,15 @@ class RemoteFileClient(TypingProtocol):
     ) -> None:
         ...
 
+    def delete_path(self, path: PurePosixPath, *, is_dir: bool) -> None:
+        ...
+
+    def make_directory(self, path: PurePosixPath) -> None:
+        ...
+
+    def create_file(self, path: PurePosixPath) -> None:
+        ...
+
 
 class FakeRemoteClient:
     def __init__(
@@ -76,6 +85,9 @@ class FakeRemoteClient:
         self.range_uploads: list[tuple[Path, PurePosixPath, int]] = []
         self.range_downloads: list[tuple[PurePosixPath, Path, int]] = []
         self.renames: list[tuple[PurePosixPath, PurePosixPath]] = []
+        self.deletes: list[tuple[PurePosixPath, bool]] = []
+        self.directories: list[PurePosixPath] = []
+        self.files: list[PurePosixPath] = []
         self.closed = False
 
     def connect(self, site: SiteProfile, password: str | None = None) -> None:
@@ -125,3 +137,12 @@ class FakeRemoteClient:
         destination_path: PurePosixPath,
     ) -> None:
         self.renames.append((source_path, destination_path))
+
+    def delete_path(self, path: PurePosixPath, *, is_dir: bool) -> None:
+        self.deletes.append((path, is_dir))
+
+    def make_directory(self, path: PurePosixPath) -> None:
+        self.directories.append(path)
+
+    def create_file(self, path: PurePosixPath) -> None:
+        self.files.append(path)

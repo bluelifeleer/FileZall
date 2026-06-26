@@ -55,3 +55,19 @@ def test_fake_remote_client_reports_remote_size_and_resume_calls(tmp_path: Path)
         (PurePosixPath("/home/deploy/app.zip"), tmp_path / ".part", 2)
     ]
     assert client.renames == [(remote_part, PurePosixPath("/home/deploy/app.zip"))]
+
+
+def test_fake_remote_client_records_file_management_operations() -> None:
+    client = FakeRemoteClient(entries={}, home=PurePosixPath("/home/deploy"))
+
+    client.delete_path(PurePosixPath("/home/deploy/app.txt"), is_dir=False)
+    client.delete_path(PurePosixPath("/home/deploy/old"), is_dir=True)
+    client.make_directory(PurePosixPath("/home/deploy/new-dir"))
+    client.create_file(PurePosixPath("/home/deploy/new.txt"))
+
+    assert client.deletes == [
+        (PurePosixPath("/home/deploy/app.txt"), False),
+        (PurePosixPath("/home/deploy/old"), True),
+    ]
+    assert client.directories == [PurePosixPath("/home/deploy/new-dir")]
+    assert client.files == [PurePosixPath("/home/deploy/new.txt")]

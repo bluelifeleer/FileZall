@@ -67,6 +67,24 @@ def test_agent_http_server_serves_files_chunks_and_resources(tmp_path: Path) -> 
                 "checksum": "sha256:bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721",
             },
         ) == {"ok": True}
+        assert _json(base_url, "/files/mkdir", data={"path": "/home/deploy/new-dir"}) == {
+            "ok": True
+        }
+        assert _json(base_url, "/files/touch", data={"path": "/home/deploy/new.txt"}) == {
+            "ok": True
+        }
+        assert _json(
+            base_url,
+            "/files/delete",
+            data={"path": "/home/deploy/new.txt", "is_dir": False},
+        ) == {"ok": True}
+        assert _json(
+            base_url,
+            "/files/delete",
+            data={"path": "/home/deploy/new-dir", "is_dir": True},
+        ) == {"ok": True}
+        assert not (deploy_dir / "new.txt").exists()
+        assert not (deploy_dir / "new-dir").exists()
         assert "cpu" in _json(base_url, "/resources")
         assert "processes" in _json(base_url, "/processes")
         assert _json(base_url, "/processes/123")["pid"] == 123

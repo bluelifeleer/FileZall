@@ -94,8 +94,8 @@ class FakeController:
     def download_file(self, remote_path, local_path) -> None:
         self.downloads.append((remote_path, local_path))
 
-    def delete_path(self, path, remote: bool) -> None:
-        self.deleted.append((path, remote))
+    def delete_path(self, path, remote: bool, is_dir: bool | None = None) -> None:
+        self.deleted.append((path, remote, is_dir))
 
     def add_to_queue(self, source_path, destination_path, direction) -> None:
         self.queued.append((source_path, destination_path, direction))
@@ -1106,11 +1106,53 @@ def test_file_panel_context_actions_route_to_controller(qtbot, tmp_path) -> None
     window.remote_panel.delete_action.trigger()
 
     assert controller.queued[0] == (local_root / "app.txt", PurePosixPath("/home/deploy/app.txt"), Direction.UPLOAD)
-    assert controller.deleted[0] == (local_root / "app.txt", False)
+    assert controller.deleted[0] == (local_root / "app.txt", False, False)
     assert controller.created_dirs[0] == (local_root, False)
     assert controller.created_files[0] == (local_root, False)
     assert controller.queued[1] == (PurePosixPath("/home/deploy/remote.txt"), local_root / "remote.txt", Direction.DOWNLOAD)
-    assert controller.deleted[1] == (PurePosixPath("/home/deploy/remote.txt"), True)
+    assert controller.deleted[1] == (PurePosixPath("/home/deploy/remote.txt"), True, False)
+
+
+def test_file_panel_delete_actions_pass_directory_state(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    window.local_panel.path_edit.setText(str(local_root))
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.local_panel.set_entries(
+        [
+            RemoteFileEntry(
+                path=PurePosixPath("local-dir"),
+                name="local-dir",
+                is_dir=True,
+                size_bytes=0,
+                modified_time=None,
+            )
+        ]
+    )
+    window.remote_panel.set_entries(
+        [
+            RemoteFileEntry(
+                path=PurePosixPath("/home/deploy/logs"),
+                name="logs",
+                is_dir=True,
+                size_bytes=0,
+                modified_time=None,
+            )
+        ]
+    )
+    window.local_panel.table.selectRow(1)
+    window.remote_panel.table.selectRow(1)
+
+    window.local_panel.delete_action.trigger()
+    window.remote_panel.delete_action.trigger()
+
+    assert controller.deleted == [
+        (local_root / "local-dir", False, True),
+        (PurePosixPath("/home/deploy/logs"), True, True),
+    ]
 
 
 def test_file_panel_rename_actions_route_to_controller(qtbot, tmp_path) -> None:

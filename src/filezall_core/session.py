@@ -31,6 +31,15 @@ class RemoteSession:
     def rename(self, source_path: PurePosixPath, destination_path: PurePosixPath) -> None:
         self.client.rename(source_path, destination_path)
 
+    def delete_path(self, path: PurePosixPath, *, is_dir: bool) -> None:
+        self.client.delete_path(path, is_dir=is_dir)
+
+    def make_directory(self, path: PurePosixPath) -> None:
+        self.client.make_directory(path)
+
+    def create_file(self, path: PurePosixPath) -> None:
+        self.client.create_file(path)
+
     def close(self) -> None:
         self.client.close()
 

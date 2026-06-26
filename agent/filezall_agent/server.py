@@ -104,6 +104,18 @@ def _handle_post(
     if path == "/files/rename":
         payload = _read_json(handler)
         _write_json(handler, file_service.rename(payload["source"], payload["destination"]))
+    elif path == "/files/delete":
+        payload = _read_json(handler)
+        _write_json(
+            handler,
+            file_service.delete_path(payload["path"], bool(payload.get("is_dir", False))),
+        )
+    elif path == "/files/mkdir":
+        payload = _read_json(handler)
+        _write_json(handler, file_service.make_directory(payload["path"]))
+    elif path == "/files/touch":
+        payload = _read_json(handler)
+        _write_json(handler, file_service.create_file(payload["path"]))
     elif path == "/files/verify":
         payload = _read_json(handler)
         _write_json(handler, file_service.verify(payload["path"], payload["checksum"]))

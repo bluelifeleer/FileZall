@@ -162,10 +162,25 @@ class MainWindowController:
         self._window.show_status(f"Downloaded {remote_path.name}")
         self._log(f"Downloaded {remote_path} to {local_path}")
 
-    def delete_path(self, path: Path | PurePosixPath, remote: bool) -> None:
-        location = "remote" if remote else "local"
-        self._window.show_status(f"Delete requested for {location} path {path}")
-        self._log(f"Delete requested for {location} path {path}")
+    def delete_path(
+        self,
+        path: Path | PurePosixPath,
+        remote: bool,
+        is_dir: bool | None = None,
+    ) -> None:
+        if remote:
+            remote_path = PurePosixPath(path)
+            self._require_session().delete_path(remote_path, is_dir=bool(is_dir))
+            message = f"Deleted remote path {remote_path}"
+        else:
+            local_path = Path(path)
+            if is_dir is True or (is_dir is None and local_path.is_dir()):
+                local_path.rmdir()
+            else:
+                local_path.unlink()
+            message = f"Deleted local path {local_path}"
+        self._window.show_status(message)
+        self._log(message)
 
     def add_to_queue(
         self,
@@ -225,14 +240,28 @@ class MainWindowController:
         )
 
     def create_directory(self, path: Path | PurePosixPath, remote: bool) -> None:
-        location = "remote" if remote else "local"
-        self._window.show_status(f"Create directory requested in {location} path {path}")
-        self._log(f"Create directory requested in {location} path {path}")
+        if remote:
+            target = PurePosixPath(path) / "New Folder"
+            self._require_session().make_directory(target)
+            message = f"Created remote directory {target}"
+        else:
+            target = _unique_local_child_path(Path(path), "New Folder", "")
+            target.mkdir()
+            message = f"Created local directory {target}"
+        self._window.show_status(message)
+        self._log(message)
 
     def create_file(self, path: Path | PurePosixPath, remote: bool) -> None:
-        location = "remote" if remote else "local"
-        self._window.show_status(f"Create file requested in {location} path {path}")
-        self._log(f"Create file requested in {location} path {path}")
+        if remote:
+            target = PurePosixPath(path) / "New File.txt"
+            self._require_session().create_file(target)
+            message = f"Created remote file {target}"
+        else:
+            target = _unique_local_child_path(Path(path), "New File", ".txt")
+            target.touch()
+            message = f"Created local file {target}"
+        self._window.show_status(message)
+        self._log(message)
 
     def rename_path(
         self,
@@ -533,3 +562,15 @@ class MainWindowController:
             self._window.append_log(message)
         elif self._log_service is not None:
             self._log_service.append(message)
+
+
+def _unique_local_child_path(parent: Path, stem: str, suffix: str) -> Path:
+    candidate = parent / f"{stem}{suffix}"
+    if not candidate.exists():
+        return candidate
+    index = 2
+    while True:
+        candidate = parent / f"{stem} ({index}){suffix}"
+        if not candidate.exists():
+            return candidate
+        index += 1

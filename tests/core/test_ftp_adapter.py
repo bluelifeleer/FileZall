@@ -13,6 +13,9 @@ class FakeFtp:
         self.stores = []
         self.retrieves = []
         self.renames = []
+        self.deletes = []
+        self.rmdirs = []
+        self.mkds = []
         self.closed = False
         self.size_map = {"/home/deploy/.filezall.app.zip.part": 3}
         self.entries = [
@@ -47,6 +50,15 @@ class FakeFtp:
 
     def rename(self, source: str, destination: str) -> None:
         self.renames.append((source, destination))
+
+    def delete(self, path: str) -> None:
+        self.deletes.append(path)
+
+    def rmd(self, path: str) -> None:
+        self.rmdirs.append(path)
+
+    def mkd(self, path: str) -> None:
+        self.mkds.append(path)
 
     def quit(self) -> None:
         self.closed = True
@@ -126,6 +138,22 @@ def test_ftp_adapter_supports_resume_operations(tmp_path: Path) -> None:
     assert module.ftp.renames == [
         ("/home/deploy/.filezall.app.zip.part", "/home/deploy/app.zip")
     ]
+
+
+def test_ftp_adapter_deletes_and_creates_remote_paths() -> None:
+    module = FakeFtpModule()
+    adapter = FtpAdapter(protocol=Protocol.FTP, ftp_module=module)
+    adapter.connect(_site(Protocol.FTP), password="secret")
+
+    adapter.delete_path(PurePosixPath("/home/deploy/app.txt"), is_dir=False)
+    adapter.delete_path(PurePosixPath("/home/deploy/old"), is_dir=True)
+    adapter.make_directory(PurePosixPath("/home/deploy/new-dir"))
+    adapter.create_file(PurePosixPath("/home/deploy/new.txt"))
+
+    assert module.ftp.deletes == ["/home/deploy/app.txt"]
+    assert module.ftp.rmdirs == ["/home/deploy/old"]
+    assert module.ftp.mkds == ["/home/deploy/new-dir"]
+    assert module.ftp.stores[-1] == ("STOR /home/deploy/new.txt", b"", None)
 
 
 def _site(protocol: Protocol) -> SiteProfile:
