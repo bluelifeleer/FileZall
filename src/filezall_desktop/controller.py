@@ -14,6 +14,36 @@ from filezall_core.resource_monitor import ResourceMonitoringUnavailable
 from filezall_core.session import RemoteSession
 
 
+def classify_connection_error(error: str) -> str:
+    lowered = error.lower()
+    if any(token in lowered for token in ["authentication failed", "auth failed", "bad authentication"]):
+        return "Authentication failed. Check the username, password, SSH key, or passphrase."
+    if any(
+        token in lowered
+        for token in [
+            "connection refused",
+            "timed out",
+            "timeout",
+            "unable to connect",
+            "no route to host",
+            "network is unreachable",
+        ]
+    ):
+        return "Could not reach the server or port. Check the host, port, firewall, and network."
+    if "agent token is not available" in lowered or "agent is not installed" in lowered:
+        return "FileZall Agent is not installed or its token is missing. Install or update the Agent."
+    if (
+        "systemd" in lowered
+        or "systemctl" in lowered
+        or "health check failed" in lowered
+        or "health endpoint" in lowered
+    ):
+        return classify_agent_error(error)
+    if "permission denied" in lowered:
+        return "Permission denied. Check the account permissions for the selected remote path."
+    return error
+
+
 class MainWindowController:
     def __init__(
         self,

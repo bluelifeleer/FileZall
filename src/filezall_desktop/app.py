@@ -16,6 +16,7 @@ from filezall_core.agent_deployment import (
 from filezall_core.app_paths import resolve_app_paths
 from filezall_core.credentials import CredentialService
 from filezall_core.queue import TransferQueue
+from filezall_core.settings_repository import SettingsRepository
 from filezall_core.site_repository import SiteRepository
 from filezall_core.sftp_adapter import SftpAdapter
 from filezall_core.storage import initialize_database
@@ -32,6 +33,7 @@ def create_main_window() -> MainWindow:
     _enable_runtime_diagnostics(paths.logs)
     initialize_database(paths.database)
     transfer_repository = TransferRepository(paths.database)
+    settings_repository = SettingsRepository(paths.database)
     credential_service = CredentialService()
     site_repository = SiteRepository(paths.database)
     agent_root = _agent_root()
@@ -52,6 +54,7 @@ def create_main_window() -> MainWindow:
             credential_service=credential_service,
             site_repository=site_repository,
         ),
+        onboarding_settings=settings_repository,
     )
 
 

@@ -33,7 +33,7 @@ from filezall_core.log_service import TransferLogService
 from filezall_core.models import AuthMode, Direction, Protocol, SiteProfile, TransferItem
 from filezall_core.resource_models import ProcessDetail, ResourceSnapshot
 from filezall_desktop.assets import app_icon
-from filezall_desktop.controller import MainWindowController
+from filezall_desktop.controller import MainWindowController, classify_connection_error
 from filezall_desktop.i18n import (
     EN_LANGUAGE,
     LANGUAGE_LABELS,
@@ -324,6 +324,7 @@ class MainWindow(QMainWindow):
         rename_prompt=None,
         new_session_factory=None,
         agent_install_service=None,
+        onboarding_settings=None,
     ) -> None:
         super().__init__()
         self.log_service = TransferLogService()
@@ -338,6 +339,7 @@ class MainWindow(QMainWindow):
         self._diagnostics_logs_dir = Path(diagnostics_logs_dir) if diagnostics_logs_dir else resolve_app_paths().logs
         self._rename_prompt = rename_prompt or _prompt_rename
         self._new_session_factory = new_session_factory
+        self._onboarding_settings = onboarding_settings
         self._should_confirm_remember_secret = controller is None
         self._heartbeat_failed_logged = False
         self._agent_installed: bool | None = False
@@ -346,6 +348,7 @@ class MainWindow(QMainWindow):
         self._connection_workers = []
         self._active_connection = None
         self._connection_running = False
+        self._connection_test_running = False
         self._agent_workers = []
         self._active_agent_action = None
         self._resource_refresh_workers = []
@@ -390,6 +393,7 @@ class MainWindow(QMainWindow):
         )
         self._connect_signals()
         self.controller.load_saved_sites()
+        self._schedule_first_run_guide()
 
     def _build_session_menu(self) -> None:
         self.session_menu = QMenu("Session", self)
@@ -447,6 +451,9 @@ class MainWindow(QMainWindow):
             dialog.focus_connection_requested.connect(self._focus_connection_setup)
             dialog.focus_local_requested.connect(self._focus_local_files)
             dialog.focus_remote_requested.connect(self._focus_remote_files)
+            dialog.test_connection_requested.connect(self._handle_getting_started_test_connection)
+            dialog.save_site_requested.connect(self._handle_getting_started_save_site)
+            dialog.dismissed_changed.connect(self._set_onboarding_dismissed)
             self.getting_started_dialog = dialog
         else:
             self.getting_started_dialog.set_texts(self._getting_started_texts())
@@ -469,7 +476,72 @@ class MainWindow(QMainWindow):
             "focus_connection": self._text("getting_started.focus_connection"),
             "focus_local": self._text("getting_started.focus_local"),
             "focus_remote": self._text("getting_started.focus_remote"),
+            "start_setup": self._text("getting_started.start_setup"),
+            "test_connection": self._text("getting_started.test_connection"),
+            "save_site": self._text("getting_started.save_site"),
+            "close": self._text("getting_started.close"),
+            "dismiss": self._text("getting_started.dismiss"),
         }
+
+    def _schedule_first_run_guide(self) -> None:
+        if self._onboarding_settings is None:
+            return
+        if self._onboarding_settings.get_bool("onboarding.dismissed", default=False):
+            return
+        QTimer.singleShot(0, self._show_getting_started)
+
+    def _set_onboarding_dismissed(self, dismissed: bool) -> None:
+        if self._onboarding_settings is not None:
+            self._onboarding_settings.set_bool("onboarding.dismissed", dismissed)
+
+    def _handle_getting_started_test_connection(self) -> None:
+        if self.getting_started_dialog is None:
+            return
+        site = self._selected_saved_site() or self._site_from_fields()
+        secret = self._secret_from_fields()
+        self.getting_started_dialog.set_status(self._text("getting_started.testing_connection"))
+        self.getting_started_dialog.set_connection_ready(False)
+        self.append_log(f"Connection test requested for {site.host}:{site.port} as {site.username}")
+        if hasattr(self.controller, "connect_for_window"):
+            self._connection_test_running = True
+            self._set_connection_state("Connecting", "goldenrod")
+            self.connection_bar.connect_button.setEnabled(False)
+            self._start_connection(site, secret, remember_secret=False)
+            return
+        try:
+            self.controller.connect(site, secret, remember_secret=False)
+        except Exception as exc:
+            message = classify_connection_error(str(exc))
+            self.getting_started_dialog.set_status(message)
+            self.getting_started_dialog.set_connection_ready(False)
+            self.append_log(f"Connection test failed: {message}")
+            self._set_connection_state("Failed", "red")
+            self.show_status(message)
+            return
+        self.getting_started_dialog.set_status(self._text("getting_started.connection_ok"))
+        self.getting_started_dialog.set_connection_ready(True)
+        self.append_log("Connection test passed")
+        self._set_connection_state("Connected", "green")
+
+    def _handle_getting_started_save_site(self) -> None:
+        if self.getting_started_dialog is None:
+            return
+        site = self._selected_saved_site() or self._site_from_fields()
+        secret = self._secret_from_fields()
+        try:
+            self.controller.connect(site, secret, remember_secret=True)
+        except Exception as exc:
+            message = classify_connection_error(str(exc))
+            self.getting_started_dialog.set_status(message)
+            self.append_log(f"Save site failed: {message}")
+            self.show_status(message)
+            return
+        self.controller.load_saved_sites()
+        self._set_onboarding_dismissed(True)
+        self.getting_started_dialog.dismiss_checkbox.setChecked(True)
+        self.getting_started_dialog.set_status(self._text("getting_started.site_saved"))
+        self.append_log(f"Site saved: {site.host}:{site.port} as {site.username}")
+        self.show_status(self._text("getting_started.site_saved"))
 
     def _focus_connection_setup(self) -> None:
         self._hide_getting_started_dialog()
@@ -1045,11 +1117,12 @@ class MainWindow(QMainWindow):
                 remember_secret=remember_secret,
             )
         except Exception as exc:
-            self.append_log(f"Connection failed: {exc}")
+            message = classify_connection_error(str(exc))
+            self.append_log(f"Connection failed: {message}")
             self._set_connection_state("Failed", "red")
             self.heartbeat_timer.stop()
             self.connection_bar.connect_button.setEnabled(True)
-            self.show_status(str(exc))
+            self.show_status(message)
             return
         self._heartbeat_failed_logged = False
         self._set_connection_state("Connected", "green")
@@ -1091,22 +1164,33 @@ class MainWindow(QMainWindow):
         self._publish_connection_result(result)
         self._heartbeat_failed_logged = False
         self._set_connection_state("Connected", "green")
+        if self._connection_test_running and self.getting_started_dialog is not None:
+            self.getting_started_dialog.set_status(self._text("getting_started.connection_ok"))
+            self.getting_started_dialog.set_connection_ready(True)
+            self.append_log("Connection test passed")
         self.heartbeat_timer.start()
         self.resource_refresh_timer.start()
         if not isinstance(result, dict) or result.get("resource_snapshot") is None:
             self._handle_resource_refresh_tick()
         self.connection_bar.connect_button.setEnabled(True)
+        self._connection_test_running = False
         self._cleanup_connection_worker()
 
     @Slot(str)
     def _fail_connection(self, error: str) -> None:
-        self._append_background_failure("connection", error)
-        self.append_log(f"Connection failed: {error}")
+        message = classify_connection_error(error)
+        self._append_background_failure("connection", message)
+        self.append_log(f"Connection failed: {message}")
+        if self._connection_test_running and self.getting_started_dialog is not None:
+            self.getting_started_dialog.set_status(message)
+            self.getting_started_dialog.set_connection_ready(False)
+            self.append_log(f"Connection test failed: {message}")
         self._set_connection_state("Failed", "red")
         self.heartbeat_timer.stop()
         self.resource_refresh_timer.stop()
         self.connection_bar.connect_button.setEnabled(True)
-        self.show_status(error)
+        self.show_status(message)
+        self._connection_test_running = False
         self._cleanup_connection_worker()
 
     def _publish_connection_result(self, result) -> None:

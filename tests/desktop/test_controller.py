@@ -20,7 +20,7 @@ from filezall_core.resource_models import (
     ResourceSnapshot,
 )
 from filezall_core.resource_monitor import ResourceMonitoringUnavailable
-from filezall_desktop.controller import MainWindowController
+from filezall_desktop.controller import MainWindowController, classify_connection_error
 
 
 class FakeWindow:
@@ -752,6 +752,30 @@ def test_controller_classifies_agent_detection_errors() -> None:
         for log in window.logs
     )
     assert window.agent_statuses == [None, False]
+
+
+def test_controller_classifies_connection_errors() -> None:
+    assert classify_connection_error("Authentication failed") == (
+        "Authentication failed. Check the username, password, SSH key, or passphrase."
+    )
+    assert classify_connection_error("Unable to connect to port 22: Connection refused") == (
+        "Could not reach the server or port. Check the host, port, firewall, and network."
+    )
+    assert classify_connection_error("Permission denied while opening directory") == (
+        "Permission denied. Check the account permissions for the selected remote path."
+    )
+    assert classify_connection_error("System has not been booted with systemd as init system") == (
+        "This server does not appear to support systemd. FileZall Agent currently requires "
+        "a systemd-based Linux host."
+    )
+    assert classify_connection_error("Agent token is not available for this site") == (
+        "FileZall Agent is not installed or its token is missing. Install or update the Agent."
+    )
+    assert classify_connection_error("Agent install: health check failed") == (
+        "FileZall Agent service started, but the health endpoint did not respond. Check "
+        "firewall rules, localhost access, and filezall-agent service logs."
+    )
+    assert classify_connection_error("boom") == "boom"
 
 
 def test_controller_delegates_transfer_queue_actions() -> None:

@@ -148,6 +148,22 @@ class FakeController:
         return self.heartbeat_results.pop(0) if self.heartbeat_results else True
 
 
+class FakeSettings:
+    def __init__(self, dismissed: bool = False) -> None:
+        self.dismissed = dismissed
+        self.saved = []
+
+    def get_bool(self, key: str, default: bool = False) -> bool:
+        if key == "onboarding.dismissed":
+            return self.dismissed
+        return default
+
+    def set_bool(self, key: str, value: bool) -> None:
+        self.saved.append((key, value))
+        if key == "onboarding.dismissed":
+            self.dismissed = value
+
+
 class ProgressAgentController(FakeController):
     def __init__(self, delay_seconds: float = 0) -> None:
         super().__init__()
@@ -177,6 +193,12 @@ class FailingConnectController(FakeController):
     def connect(self, site, password=None, remember_secret: bool = True) -> None:
         super().connect(site, password, remember_secret)
         raise RuntimeError("connect failed")
+
+
+class AuthenticationFailingConnectController(FakeController):
+    def connect(self, site, password=None, remember_secret: bool = True) -> None:
+        super().connect(site, password, remember_secret)
+        raise RuntimeError("Authentication failed")
 
 
 class ObservingRemoteLoadingController(FakeController):
@@ -759,6 +781,100 @@ def test_getting_started_guide_follows_language(qtbot) -> None:
     assert window.getting_started_action.statusTip() == "Show the first-use guide"
     assert dialog.windowTitle() == "Getting Started"
     assert dialog.focus_connection_button.text() == "Focus Connection"
+
+
+def test_first_run_guide_opens_when_not_dismissed(qtbot) -> None:
+    settings = FakeSettings(dismissed=False)
+    window = MainWindow(controller=FakeController(), onboarding_settings=settings)
+    qtbot.addWidget(window)
+    _use_english(window)
+
+    qtbot.waitUntil(
+        lambda: window.getting_started_dialog is not None
+        and window.getting_started_dialog.isVisible(),
+        timeout=1000,
+    )
+
+    dialog = window.getting_started_dialog
+    qtbot.addWidget(dialog)
+    assert dialog.dismiss_checkbox.text() == "Do not show again"
+
+    dialog.dismiss_checkbox.setChecked(True)
+
+    assert settings.saved[-1] == ("onboarding.dismissed", True)
+
+
+def test_first_run_guide_stays_closed_after_dismissal(qtbot) -> None:
+    window = MainWindow(
+        controller=FakeController(),
+        onboarding_settings=FakeSettings(dismissed=True),
+    )
+    qtbot.addWidget(window)
+
+    qtbot.wait(50)
+
+    assert window.getting_started_dialog is None
+
+
+def test_getting_started_test_connection_shows_clear_failure(qtbot) -> None:
+    controller = AuthenticationFailingConnectController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    _use_english(window)
+    window.connection_bar.host_edit.setText("example.com")
+    window.connection_bar.port_edit.setText("2222")
+    window.connection_bar.username_edit.setText("deploy")
+    window.connection_bar.secret_edit.setText("secret")
+
+    window.getting_started_action.trigger()
+    dialog = window.getting_started_dialog
+    qtbot.addWidget(dialog)
+
+    qtbot.mouseClick(dialog.test_connection_button, Qt.MouseButton.LeftButton)
+
+    site, password, remember_secret = controller.connect_calls[0]
+    assert site.host == "example.com"
+    assert site.port == 2222
+    assert password == "secret"
+    assert remember_secret is False
+    expected = "Authentication failed. Check the username, password, SSH key, or passphrase."
+    assert dialog.status_label.text() == expected
+    assert f"Connection test failed: {expected}" in window.log_view.toPlainText()
+
+
+def test_getting_started_saves_successful_site(qtbot) -> None:
+    controller = FakeController()
+    settings = FakeSettings()
+    window = MainWindow(controller=controller, onboarding_settings=settings)
+    qtbot.addWidget(window)
+    _use_english(window)
+    window.connection_bar.host_edit.setText("example.com")
+    window.connection_bar.port_edit.setText("2222")
+    window.connection_bar.username_edit.setText("deploy")
+    window.connection_bar.secret_edit.setText("secret")
+    window.remote_panel.path_edit.setText("/var/www")
+
+    window.getting_started_action.trigger()
+    dialog = window.getting_started_dialog
+    qtbot.addWidget(dialog)
+
+    assert dialog.save_site_button.isEnabled() is False
+
+    qtbot.mouseClick(dialog.test_connection_button, Qt.MouseButton.LeftButton)
+
+    assert dialog.status_label.text() == "Connection test passed."
+    assert dialog.save_site_button.isEnabled() is True
+    controller.loaded_sites = False
+
+    qtbot.mouseClick(dialog.save_site_button, Qt.MouseButton.LeftButton)
+
+    site, password, remember_secret = controller.connect_calls[-1]
+    assert site.host == "example.com"
+    assert str(site.default_remote_path) == "/var/www"
+    assert password == "secret"
+    assert remember_secret is True
+    assert controller.loaded_sites is True
+    assert settings.dismissed is True
 
 
 def test_main_window_has_session_menu_new_session_action(qtbot) -> None:
