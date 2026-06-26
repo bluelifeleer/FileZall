@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMenu,
@@ -319,6 +320,7 @@ class MainWindow(QMainWindow):
         log_file_chooser=None,
         diagnostic_file_chooser=None,
         diagnostics_logs_dir=None,
+        rename_prompt=None,
         new_session_factory=None,
         agent_install_service=None,
     ) -> None:
@@ -333,6 +335,7 @@ class MainWindow(QMainWindow):
         self._log_file_chooser = log_file_chooser or _choose_log_file
         self._diagnostic_file_chooser = diagnostic_file_chooser or _choose_diagnostic_file
         self._diagnostics_logs_dir = Path(diagnostics_logs_dir) if diagnostics_logs_dir else resolve_app_paths().logs
+        self._rename_prompt = rename_prompt or _prompt_rename
         self._new_session_factory = new_session_factory
         self._should_confirm_remember_secret = controller is None
         self._heartbeat_failed_logged = False
@@ -546,6 +549,8 @@ class MainWindow(QMainWindow):
                 "directory_label": self._text("table.directory"),
                 "file_label": self._text("table.file"),
                 "delete_label": self._text("context.delete"),
+                "rename_label": self._text("context.rename"),
+                "copy_path_label": self._text("context.copy_path"),
                 "queue_label": self._text("context.queue"),
                 "create_dir_label": self._text("context.create_dir"),
                 "create_file_label": self._text("context.create_file"),
@@ -899,6 +904,10 @@ class MainWindow(QMainWindow):
         self.remote_panel.refresh_action.triggered.connect(self._handle_remote_refresh_clicked)
         self.local_panel.delete_action.triggered.connect(self._handle_local_delete_action)
         self.remote_panel.delete_action.triggered.connect(self._handle_remote_delete_action)
+        self.local_panel.rename_action.triggered.connect(self._handle_local_rename_action)
+        self.remote_panel.rename_action.triggered.connect(self._handle_remote_rename_action)
+        self.local_panel.copy_path_action.triggered.connect(self._handle_local_copy_path_action)
+        self.remote_panel.copy_path_action.triggered.connect(self._handle_remote_copy_path_action)
         self.local_panel.queue_action.triggered.connect(self._handle_local_queue_action)
         self.remote_panel.queue_action.triggered.connect(self._handle_remote_queue_action)
         self.local_panel.transfer_action.triggered.connect(self._handle_upload_clicked)
@@ -1411,6 +1420,41 @@ class MainWindow(QMainWindow):
         for remote_name in self.remote_panel.selected_names():
             self.controller.delete_path(self._remote_path_from_field() / remote_name, remote=True)
 
+    def _handle_local_rename_action(self) -> None:
+        name = self.local_panel.selected_name()
+        if not name:
+            return
+        new_name = self._rename_prompt(self, name)
+        if not new_name:
+            return
+        source = self._local_root() / name
+        self.controller.rename_path(source, source.with_name(new_name), remote=False)
+
+    def _handle_remote_rename_action(self) -> None:
+        name = self.remote_panel.selected_name()
+        if not name:
+            return
+        new_name = self._rename_prompt(self, name)
+        if not new_name:
+            return
+        source = self._remote_path_from_field() / name
+        self.controller.rename_path(source, source.parent / new_name, remote=True)
+
+    def _handle_local_copy_path_action(self) -> None:
+        paths = [str(self._local_root() / name) for name in self.local_panel.selected_names()]
+        self._copy_paths(paths)
+
+    def _handle_remote_copy_path_action(self) -> None:
+        paths = [str(self._remote_path_from_field() / name) for name in self.remote_panel.selected_names()]
+        self._copy_paths(paths)
+
+    def _copy_paths(self, paths: list[str]) -> None:
+        if not paths:
+            return
+        QApplication.clipboard().setText("\n".join(paths))
+        self.show_status(f"Copied {len(paths)} path(s)")
+        self.append_log(f"Copied {len(paths)} path(s)")
+
     def _handle_local_create_dir_action(self) -> None:
         self.controller.create_directory(self._local_root(), remote=False)
 
@@ -1697,6 +1741,11 @@ def _choose_diagnostic_file(parent) -> str:
         "Zip Files (*.zip);;All Files (*)",
     )
     return path
+
+
+def _prompt_rename(parent, old_name: str) -> str:
+    value, accepted = QInputDialog.getText(parent, "Rename", "New name:", text=old_name)
+    return value.strip() if accepted else ""
 
 
 def _connection_state_key(text: str) -> str:

@@ -61,6 +61,7 @@ class FakeController:
         self.queued = []
         self.created_dirs = []
         self.created_files = []
+        self.renamed = []
         self.paused = []
         self.resumed = []
         self.canceled = []
@@ -104,6 +105,9 @@ class FakeController:
 
     def create_file(self, path, remote: bool) -> None:
         self.created_files.append((path, remote))
+
+    def rename_path(self, source_path, destination_path, remote: bool) -> None:
+        self.renamed.append((source_path, destination_path, remote))
 
     def pause_transfer(self, task_id) -> None:
         self.paused.append(task_id)
@@ -1107,6 +1111,50 @@ def test_file_panel_context_actions_route_to_controller(qtbot, tmp_path) -> None
     assert controller.created_files[0] == (local_root, False)
     assert controller.queued[1] == (PurePosixPath("/home/deploy/remote.txt"), local_root / "remote.txt", Direction.DOWNLOAD)
     assert controller.deleted[1] == (PurePosixPath("/home/deploy/remote.txt"), True)
+
+
+def test_file_panel_rename_actions_route_to_controller(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(
+        controller=controller,
+        rename_prompt=lambda _parent, _old_name: "renamed.txt",
+    )
+    qtbot.addWidget(window)
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    window.local_panel.path_edit.setText(str(local_root))
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.local_panel.set_placeholder_row("app.txt")
+    window.remote_panel.set_placeholder_row("remote.txt")
+    window.local_panel.table.selectRow(0)
+    window.remote_panel.table.selectRow(0)
+
+    window.local_panel.rename_action.trigger()
+    window.remote_panel.rename_action.trigger()
+
+    assert controller.renamed == [
+        (local_root / "app.txt", local_root / "renamed.txt", False),
+        (PurePosixPath("/home/deploy/remote.txt"), PurePosixPath("/home/deploy/renamed.txt"), True),
+    ]
+
+
+def test_file_panel_copy_path_actions_write_clipboard(qtbot, tmp_path) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    window.local_panel.path_edit.setText(str(local_root))
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.local_panel.set_placeholder_row("app.txt")
+    window.remote_panel.set_placeholder_row("remote.txt")
+    window.local_panel.table.selectRow(0)
+    window.remote_panel.table.selectRow(0)
+
+    window.local_panel.copy_path_action.trigger()
+    assert QApplication.clipboard().text() == str(local_root / "app.txt")
+
+    window.remote_panel.copy_path_action.trigger()
+    assert QApplication.clipboard().text() == "/home/deploy/remote.txt"
 
 
 def test_main_window_refresh_buttons_clear_current_selection(qtbot, tmp_path) -> None:

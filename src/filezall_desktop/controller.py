@@ -234,6 +234,24 @@ class MainWindowController:
         self._window.show_status(f"Create file requested in {location} path {path}")
         self._log(f"Create file requested in {location} path {path}")
 
+    def rename_path(
+        self,
+        source_path: Path | PurePosixPath,
+        destination_path: Path | PurePosixPath,
+        remote: bool,
+    ) -> None:
+        if remote:
+            self._require_session().rename(
+                PurePosixPath(source_path),
+                PurePosixPath(destination_path),
+            )
+            message = f"Renamed remote path {source_path} to {destination_path}"
+        else:
+            Path(source_path).rename(Path(destination_path))
+            message = f"Renamed local path {source_path} to {destination_path}"
+        self._window.show_status(message)
+        self._log(message)
+
     def pause_transfer(self, task_id: str) -> None:
         self._require_queue().pause_task(task_id)
         self._window.show_status(f"Paused transfer task {task_id}")

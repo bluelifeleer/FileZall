@@ -263,6 +263,8 @@ class FilePanel(QWidget):
         self.context_menu = QMenu(self)
         self.refresh_action = QAction("Refresh", self)
         self.delete_action = QAction("Delete", self)
+        self.rename_action = QAction("Rename", self)
+        self.copy_path_action = QAction("Copy Path", self)
         self.queue_action = QAction("Add to Queue", self)
         self.transfer_action = QAction(self._transfer_action_label, self)
         self.create_dir_action = QAction("Create Directory", self)
@@ -270,6 +272,8 @@ class FilePanel(QWidget):
         for action in [
             self.refresh_action,
             self.delete_action,
+            self.rename_action,
+            self.copy_path_action,
             self.queue_action,
             self.transfer_action,
             self.create_dir_action,
@@ -291,6 +295,8 @@ class FilePanel(QWidget):
         directory_label: str,
         file_label: str,
         delete_label: str,
+        rename_label: str,
+        copy_path_label: str,
         queue_label: str,
         create_dir_label: str,
         create_file_label: str,
@@ -307,6 +313,8 @@ class FilePanel(QWidget):
         self._file_label = file_label
         self.transfer_action.setText(transfer_label)
         self.delete_action.setText(delete_label)
+        self.rename_action.setText(rename_label)
+        self.copy_path_action.setText(copy_path_label)
         self.queue_action.setText(queue_label)
         self.create_dir_action.setText(create_dir_label)
         self.create_file_action.setText(create_file_label)

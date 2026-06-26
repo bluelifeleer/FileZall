@@ -79,6 +79,7 @@ class FakeSession:
         self.downloads = []
         self.list_calls = []
         self.captures = []
+        self.renames = []
         self.fail_list = False
         self.disconnect_calls = 0
 
@@ -99,6 +100,9 @@ class FakeSession:
 
     def download_file(self, remote_path: PurePosixPath, local_path: Path) -> None:
         self.downloads.append((remote_path, local_path))
+
+    def rename(self, source_path: PurePosixPath, destination_path: PurePosixPath) -> None:
+        self.renames.append((source_path, destination_path))
 
     def list_directory(self, path: PurePosixPath):
         self.list_calls.append(path)
@@ -757,6 +761,44 @@ def test_controller_delegates_transfer_queue_actions() -> None:
     assert queue.resumed == ["task-1"]
     assert queue.canceled == ["task-1"]
     assert queue.retried == ["task-1"]
+
+
+def test_controller_renames_local_and_remote_paths(tmp_path: Path) -> None:
+    window = FakeWindow()
+    session = FakeSession()
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: session,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+    local_source = tmp_path / "app.txt"
+    local_destination = tmp_path / "renamed.txt"
+    local_source.write_text("hello", encoding="utf-8")
+
+    controller.connect(site, password="secret")
+    controller.rename_path(local_source, local_destination, remote=False)
+    controller.rename_path(
+        PurePosixPath("/home/deploy/app.txt"),
+        PurePosixPath("/home/deploy/renamed.txt"),
+        remote=True,
+    )
+
+    assert not local_source.exists()
+    assert local_destination.read_text(encoding="utf-8") == "hello"
+    assert session.renames == [
+        (PurePosixPath("/home/deploy/app.txt"), PurePosixPath("/home/deploy/renamed.txt"))
+    ]
+    assert "Renamed local path" in window.statuses[-2]
+    assert "Renamed remote path" in window.statuses[-1]
 
 
 def test_controller_refreshes_resources_for_connected_site() -> None:

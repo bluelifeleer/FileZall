@@ -28,6 +28,9 @@ class RemoteSession:
     def download_file(self, remote_path: PurePosixPath, local_path: Path) -> None:
         self.client.download_file(remote_path, local_path)
 
+    def rename(self, source_path: PurePosixPath, destination_path: PurePosixPath) -> None:
+        self.client.rename(source_path, destination_path)
+
     def close(self) -> None:
         self.client.close()
 
