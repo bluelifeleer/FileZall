@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
-from PySide6.QtCore import QObject, QPoint, QRect, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QActionGroup, QColor, QPainter, QPen
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtGui import QActionGroup, QColor, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -343,6 +343,7 @@ class MainWindow(QMainWindow):
         agent_install_service=None,
         onboarding_settings=None,
         conflict_policy_prompt=None,
+        delete_confirmer=None,
     ) -> None:
         super().__init__()
         self.log_service = TransferLogService()
@@ -359,6 +360,7 @@ class MainWindow(QMainWindow):
         self._new_session_factory = new_session_factory
         self._onboarding_settings = onboarding_settings
         self._conflict_policy_prompt = conflict_policy_prompt or choose_conflict_policy
+        self._delete_confirmer = delete_confirmer or _confirm_delete
         self._site_repository = site_repository or getattr(controller, "_site_repository", None)
         self._should_confirm_remember_secret = controller is None
         self._heartbeat_failed_logged = False
@@ -378,6 +380,10 @@ class MainWindow(QMainWindow):
         self._remote_directory_workers = []
         self._active_remote_directory_load = None
         self._remote_directory_loading = False
+        self.file_list_density = "standard"
+        self.current_theme = SYSTEM_THEME
+        self.current_language = SYSTEM_LANGUAGE
+        self.last_copied_text = ""
         self.transfer_settings = TransferSettings()
         self.getting_started_dialog: GettingStartedDialog | None = None
         self.site_manager_dialog: SiteManagerDialog | None = None
@@ -391,7 +397,11 @@ class MainWindow(QMainWindow):
         self._build_logs_menu()
         self._build_toolbar()
         self._build_central_layout()
+        self._build_shortcuts()
+        self.local_panel.table.installEventFilter(self)
+        self.remote_panel.table.installEventFilter(self)
         self._apply_button_roles()
+        self._apply_file_list_density(self.file_list_density)
         self._apply_theme(SYSTEM_THEME)
         self._apply_language(SYSTEM_LANGUAGE)
         self.setStatusBar(QStatusBar(self))
@@ -607,6 +617,14 @@ class MainWindow(QMainWindow):
         self.light_theme_action = self._add_theme_action(LIGHT_THEME)
         self.dark_theme_action = self._add_theme_action(DARK_THEME)
         self.theme_action_group.triggered.connect(self._handle_theme_action)
+        self.theme_menu.addSeparator()
+        self.density_action_group = QActionGroup(self)
+        self.density_action_group.setExclusive(True)
+        self.compact_density_action = self._add_density_action("compact", "density.compact")
+        self.standard_density_action = self._add_density_action("standard", "density.standard")
+        self.comfortable_density_action = self._add_density_action("comfortable", "density.comfortable")
+        self.standard_density_action.setChecked(True)
+        self.density_action_group.triggered.connect(self._handle_density_action)
 
     def _add_theme_action(self, theme_name: str):
         action = self.theme_menu.addAction(THEME_LABELS[theme_name])
@@ -617,6 +635,31 @@ class MainWindow(QMainWindow):
 
     def _handle_theme_action(self, action) -> None:
         self._apply_theme(action.data())
+
+    def _add_density_action(self, density_name: str, text_key: str):
+        action = self.theme_menu.addAction(t(EN_LANGUAGE, text_key))
+        action.setCheckable(True)
+        action.setData(density_name)
+        action.setProperty("textKey", text_key)
+        self.density_action_group.addAction(action)
+        return action
+
+    def _handle_density_action(self, action) -> None:
+        self._apply_file_list_density(action.data())
+
+    def _apply_file_list_density(self, density_name: str) -> None:
+        sizes = {
+            "compact": 24,
+            "standard": 30,
+            "comfortable": 36,
+        }
+        self.file_list_density = density_name if density_name in sizes else "standard"
+        for action in getattr(self, "density_action_group", QActionGroup(self)).actions():
+            action.setChecked(action.data() == self.file_list_density)
+        size = sizes[self.file_list_density]
+        for panel in (getattr(self, "local_panel", None), getattr(self, "remote_panel", None)):
+            if panel is not None:
+                panel.table.verticalHeader().setDefaultSectionSize(size)
 
     def _apply_theme(self, theme_name: str) -> None:
         self.current_theme = theme_name
@@ -667,11 +710,19 @@ class MainWindow(QMainWindow):
         self.site_manager_action.setStatusTip(self._text("session.site_manager_tip"))
         self.help_menu.setTitle(self._text("menu.help"))
         self.theme_menu.setTitle(self._text("menu.theme"))
+        for action in getattr(self, "density_action_group", QActionGroup(self)).actions():
+            action.setText(self._text(action.property("textKey")))
         self.language_menu.setTitle(self._text("menu.language"))
         if hasattr(self, "logs_menu"):
             self.logs_menu.setTitle(self._text("menu.logs"))
             self.export_logs_action.setText(self._text("logs.export"))
             self.export_diagnostics_action.setText(self._text("logs.export_diagnostics"))
+        if hasattr(self, "log_viewer"):
+            self.log_viewer.set_labels(
+                copy_error=self._text("logs.copy_error"),
+                export_logs=self._text("logs.export"),
+                export_diagnostics=self._text("logs.export_diagnostics"),
+            )
 
         self.getting_started_action.setText(self._text("help.getting_started"))
         self.getting_started_action.setStatusTip(self._text("help.getting_started_tip"))
@@ -755,6 +806,10 @@ class MainWindow(QMainWindow):
             self.resource_install_agent_button.setText(self._text("resource.install_agent"))
             self.resource_uninstall_agent_button.setText(self._text("resource.uninstall_agent"))
             self.resource_monitor_label.setText(self._text("resource.monitor"))
+            self.resource_range_label.setText(self._text("resource.range"))
+            self.resource_disk_label.setText(self._text("resource.disk_selector"))
+            self.resource_sort_label.setText(self._text("resource.sort"))
+            self.process_filter_edit.setPlaceholderText(self._text("resource.process_filter"))
             self.cpu_label.setText(self._text("resource.cpu"))
             self.memory_label.setText(self._text("resource.memory"))
             self.disk_label.setText(self._text("resource.disk"))
@@ -875,16 +930,19 @@ class MainWindow(QMainWindow):
         self.resource_time_range_selector.addItems(["1m", "5m", "15m", "1h"])
         self.resource_time_range_selector.setCurrentText("5m")
         self.disk_partition_selector = QComboBox(resource_widget)
-        self.disk_partition_selector.addItem("All disks")
+        self.disk_partition_selector.addItem(self._text("resource.all_disks"))
         self.process_sort_selector = QComboBox(resource_widget)
         self.process_sort_selector.addItems(["CPU", "Memory", "PID", "Name"])
         self.process_filter_edit = QLineEdit(resource_widget)
-        self.process_filter_edit.setPlaceholderText("Filter processes")
-        resource_controls.addWidget(QLabel("Range", resource_widget))
+        self.process_filter_edit.setPlaceholderText(self._text("resource.process_filter"))
+        self.resource_range_label = QLabel("Range", resource_widget)
+        self.resource_disk_label = QLabel("Disk", resource_widget)
+        self.resource_sort_label = QLabel("Sort", resource_widget)
+        resource_controls.addWidget(self.resource_range_label)
         resource_controls.addWidget(self.resource_time_range_selector)
-        resource_controls.addWidget(QLabel("Disk", resource_widget))
+        resource_controls.addWidget(self.resource_disk_label)
         resource_controls.addWidget(self.disk_partition_selector)
-        resource_controls.addWidget(QLabel("Sort", resource_widget))
+        resource_controls.addWidget(self.resource_sort_label)
         resource_controls.addWidget(self.process_sort_selector)
         resource_controls.addWidget(self.process_filter_edit, stretch=1)
 
@@ -929,23 +987,104 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self.main_splitter)
         self.setCentralWidget(root)
 
+    def _build_shortcuts(self) -> None:
+        shortcuts = [
+            ("Ctrl+A", self._shortcut_select_all),
+            ("F5", self._shortcut_refresh),
+            ("Delete", self._shortcut_delete),
+            ("Return", self._shortcut_enter),
+            ("Enter", self._shortcut_enter),
+            ("Backspace", self._shortcut_parent),
+        ]
+        self._file_panel_shortcuts = []
+        for sequence, handler in shortcuts:
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+            shortcut.activated.connect(handler)
+            self._file_panel_shortcuts.append(shortcut)
+
+    def _active_file_panel(self):
+        focus_widget = QApplication.focusWidget()
+        if focus_widget is not None:
+            if self.remote_panel.isAncestorOf(focus_widget) or focus_widget is self.remote_panel:
+                return self.remote_panel
+            if self.local_panel.isAncestorOf(focus_widget) or focus_widget is self.local_panel:
+                return self.local_panel
+        return self.local_panel
+
+    def _shortcut_select_all(self) -> None:
+        self._active_file_panel().table.selectAll()
+
+    def _shortcut_refresh(self) -> None:
+        if self._active_file_panel() is self.remote_panel:
+            self._handle_remote_refresh_clicked()
+            return
+        self._handle_local_refresh_clicked()
+
+    def _shortcut_delete(self) -> None:
+        if self._active_file_panel() is self.remote_panel:
+            self._handle_remote_delete_action()
+            return
+        self._handle_local_delete_action()
+
+    def _shortcut_enter(self) -> None:
+        panel = self._active_file_panel()
+        rows = panel.selected_rows()
+        if not rows:
+            return
+        row = rows[0]
+        if panel is self.remote_panel:
+            self._handle_remote_double_clicked(row, 0)
+            return
+        self._handle_local_double_clicked(row, 0)
+
+    def _shortcut_parent(self) -> None:
+        if self._active_file_panel() is self.remote_panel:
+            self._load_remote_directory(self._remote_parent())
+            return
+        self._load_local_directory(self._local_parent())
+
+    def eventFilter(self, watched, event) -> bool:
+        if (
+            watched in {getattr(self.local_panel, "table", None), getattr(self.remote_panel, "table", None)}
+            and event.type() == QEvent.Type.KeyPress
+        ):
+            key = event.key()
+            modifiers = event.modifiers()
+            if key == Qt.Key.Key_F5:
+                self._shortcut_refresh()
+                return True
+            if key == Qt.Key.Key_Delete:
+                self._shortcut_delete()
+                return True
+            if key in {Qt.Key.Key_Return, Qt.Key.Key_Enter}:
+                self._shortcut_enter()
+                return True
+            if key == Qt.Key.Key_Backspace:
+                self._shortcut_parent()
+                return True
+            if key == Qt.Key.Key_A and modifiers & Qt.KeyboardModifier.ControlModifier:
+                self._shortcut_select_all()
+                return True
+        return super().eventFilter(watched, event)
+
     def _apply_button_roles(self) -> None:
         role_map = {
             self.connection_bar.connect_button: "primary",
             self.connection_bar.disconnect_button: "danger",
-            self.connection_bar.install_agent_button: "success",
-            self.local_panel.refresh_button: "secondary",
-            self.remote_panel.refresh_button: "secondary",
+            self.connection_bar.install_agent_button: "warning",
+            self.local_panel.refresh_button: "neutral",
+            self.remote_panel.refresh_button: "neutral",
             self.local_panel.action_button: "primary",
             self.remote_panel.action_button: "primary",
-            self.pause_transfer_button: "secondary",
-            self.resume_transfer_button: "success",
+            self.pause_transfer_button: "warning",
+            self.resume_transfer_button: "primary",
             self.cancel_transfer_button: "danger",
-            self.retry_transfer_button: "secondary",
-            self.resource_install_agent_button: "success",
+            self.retry_transfer_button: "warning",
+            self.resource_install_agent_button: "primary",
             self.resource_uninstall_agent_button: "danger",
-            self.resource_refresh_button: "primary",
-            self.process_detail_button: "secondary",
+            self.resource_refresh_button: "neutral",
+            self.process_detail_button: "neutral",
         }
         for button, role in role_map.items():
             button.setProperty("buttonRole", role)
@@ -1044,17 +1183,20 @@ class MainWindow(QMainWindow):
                     f"Agent update available v{self._agent_version} -> v{__version__}"
                 )
                 self.resource_install_agent_button.setText(self._text("resource.update_agent"))
+                self.resource_install_agent_button.setProperty("buttonRole", "warning")
                 self.resource_install_agent_button.show()
                 self.resource_uninstall_agent_button.show()
                 return
             suffix = f" v{self._agent_version}" if self._agent_version else ""
             self.agent_status_label.setText(f"Agent installed{suffix}")
             self.resource_install_agent_button.setText(self._text("resource.install_agent"))
+            self.resource_install_agent_button.setProperty("buttonRole", "primary")
             self.resource_install_agent_button.hide()
             self.resource_uninstall_agent_button.show()
         else:
             self.agent_status_label.setText("Agent not installed")
             self.resource_install_agent_button.setText(self._text("resource.install_agent"))
+            self.resource_install_agent_button.setProperty("buttonRole", "primary")
             self.resource_install_agent_button.show()
             self.resource_uninstall_agent_button.show()
 
@@ -1671,7 +1813,10 @@ class MainWindow(QMainWindow):
         self.remote_panel.path_button.setEnabled(enabled)
         self.remote_panel.action_button.setEnabled(enabled)
         if loading:
+            self.remote_panel.refresh_button.setProperty("buttonRole", "loading")
             self.show_status(self._text("status.loading_remote", path=path))
+        else:
+            self.remote_panel.refresh_button.setProperty("buttonRole", "neutral")
 
     @Slot(object)
     def _finish_remote_directory_load(self, result) -> None:
@@ -1794,11 +1939,17 @@ class MainWindow(QMainWindow):
             )
 
     def _handle_local_delete_action(self) -> None:
-        for local_name, is_dir in self._selected_panel_entries(self.local_panel):
+        entries = self._selected_panel_entries(self.local_panel)
+        if not entries or not self._delete_confirmer(self, [name for name, _is_dir in entries], False):
+            return
+        for local_name, is_dir in entries:
             self.controller.delete_path(self._local_root() / local_name, remote=False, is_dir=is_dir)
 
     def _handle_remote_delete_action(self) -> None:
-        for remote_name, is_dir in self._selected_panel_entries(self.remote_panel):
+        entries = self._selected_panel_entries(self.remote_panel)
+        if not entries or not self._delete_confirmer(self, [name for name, _is_dir in entries], True):
+            return
+        for remote_name, is_dir in entries:
             self.controller.delete_path(
                 self._remote_path_from_field() / remote_name,
                 remote=True,
@@ -1846,7 +1997,9 @@ class MainWindow(QMainWindow):
     def _copy_paths(self, paths: list[str]) -> None:
         if not paths:
             return
-        QApplication.clipboard().setText("\n".join(paths))
+        text = "\n".join(paths)
+        self.last_copied_text = text
+        QApplication.clipboard().setText(text)
         self.show_status(f"Copied {len(paths)} path(s)")
         self.append_log(f"Copied {len(paths)} path(s)")
 
@@ -2300,6 +2453,21 @@ def _confirm_remember_secret(parent) -> bool:
             parent,
             "Remember Password",
             "Remember this server password for future logins?",
+        )
+        == QMessageBox.StandardButton.Yes
+    )
+
+
+def _confirm_delete(parent, names: list[str], remote: bool) -> bool:
+    target = "remote" if remote else "local"
+    sample = ", ".join(names[:3])
+    if len(names) > 3:
+        sample = f"{sample}, ..."
+    return (
+        QMessageBox.question(
+            parent,
+            "Confirm Delete",
+            f"Delete {len(names)} {target} item(s)?\n{sample}",
         )
         == QMessageBox.StandardButton.Yes
     )

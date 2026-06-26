@@ -110,17 +110,31 @@ QPushButton[buttonRole="primary"]:hover {{
 QPushButton[buttonRole="primary"]:pressed {{
     background-color: {colors["primary_pressed"]};
 }}
-QPushButton[buttonRole="success"] {{
-    background-color: {colors["success"]};
-    border-color: {colors["success"]};
+QPushButton[buttonRole="neutral"], QPushButton[buttonRole="secondary"] {{
+    background-color: {colors["neutral_bg"]};
+    border-color: {colors["neutral_border"]};
+    color: {colors["text"]};
+}}
+QPushButton[buttonRole="neutral"]:hover, QPushButton[buttonRole="secondary"]:hover {{
+    background-color: {colors["neutral_hover"]};
+    border-color: {colors["accent"]};
+}}
+QPushButton[buttonRole="warning"], QPushButton[buttonRole="success"] {{
+    background-color: {colors["warning"]};
+    border-color: {colors["warning"]};
     color: #ffffff;
 }}
-QPushButton[buttonRole="success"]:hover {{
-    background-color: {colors["success_hover"]};
-    border-color: {colors["success_hover"]};
+QPushButton[buttonRole="warning"]:hover, QPushButton[buttonRole="success"]:hover {{
+    background-color: {colors["warning_hover"]};
+    border-color: {colors["warning_hover"]};
 }}
-QPushButton[buttonRole="success"]:pressed {{
-    background-color: {colors["success_pressed"]};
+QPushButton[buttonRole="warning"]:pressed, QPushButton[buttonRole="success"]:pressed {{
+    background-color: {colors["warning_pressed"]};
+}}
+QPushButton[buttonRole="loading"] {{
+    background-color: {colors["loading"]};
+    border-color: {colors["loading"]};
+    color: #ffffff;
 }}
 QPushButton[buttonRole="danger"] {{
     background-color: {colors["danger"]};
@@ -133,15 +147,6 @@ QPushButton[buttonRole="danger"]:hover {{
 }}
 QPushButton[buttonRole="danger"]:pressed {{
     background-color: {colors["danger_pressed"]};
-}}
-QPushButton[buttonRole="secondary"] {{
-    background-color: {colors["secondary_bg"]};
-    border-color: {colors["secondary_border"]};
-    color: {colors["text"]};
-}}
-QPushButton[buttonRole="secondary"]:hover {{
-    background-color: {colors["secondary_hover"]};
-    border-color: {colors["accent"]};
 }}
 QToolButton#pathButton {{
     padding: 0px;
@@ -206,15 +211,16 @@ def _palette(theme_name: str) -> dict[str, str]:
             "primary": "#2563eb",
             "primary_hover": "#1d4ed8",
             "primary_pressed": "#1e40af",
-            "success": "#16a34a",
-            "success_hover": "#15803d",
-            "success_pressed": "#166534",
+            "warning": "#d97706",
+            "warning_hover": "#b45309",
+            "warning_pressed": "#92400e",
+            "loading": "#0891b2",
             "danger": "#dc2626",
             "danger_hover": "#b91c1c",
             "danger_pressed": "#991b1b",
-            "secondary_bg": "#172033",
-            "secondary_border": "#3b475c",
-            "secondary_hover": "#1f2a44",
+            "neutral_bg": "#172033",
+            "neutral_border": "#3b475c",
+            "neutral_hover": "#1f2a44",
             "hover": "#243244",
             "selected": "#1d4ed8",
             "accent": "#2563eb",
@@ -237,15 +243,16 @@ def _palette(theme_name: str) -> dict[str, str]:
         "primary": "#2563eb",
         "primary_hover": "#1d4ed8",
         "primary_pressed": "#1e40af",
-        "success": "#16a34a",
-        "success_hover": "#15803d",
-        "success_pressed": "#166534",
+        "warning": "#d97706",
+        "warning_hover": "#b45309",
+        "warning_pressed": "#92400e",
+        "loading": "#0891b2",
         "danger": "#dc2626",
         "danger_hover": "#b91c1c",
         "danger_pressed": "#991b1b",
-        "secondary_bg": "#ffffff",
-        "secondary_border": "#cbd5e1",
-        "secondary_hover": "#eef4ff",
+        "neutral_bg": "#ffffff",
+        "neutral_border": "#cbd5e1",
+        "neutral_hover": "#eef4ff",
         "hover": "#dbeafe",
         "selected": "#bfdbfe",
         "accent": "#2563eb",

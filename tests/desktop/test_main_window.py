@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 
 from filezall_desktop.main_window import MainWindow, ResourceUsageChart
 from filezall_desktop.theme import hover_color_for_theme
+from filezall_desktop.widgets import ICON_KEY_ROLE
+from filezall_desktop.i18n import EN_LANGUAGE, ZH_CN_LANGUAGE, _TRANSLATIONS, t
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QThread
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication, QAbstractItemView, QHeaderView, QSplitter, QTableWidgetSelectionRange
@@ -599,6 +601,38 @@ def test_file_panel_shows_icons_for_parent_directories_and_file_suffixes(qtbot) 
             assert window.local_panel.table.item(row, column).icon().isNull()
 
 
+def test_file_list_uses_extension_icons(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    window.local_panel.set_entries(
+        [
+            type("Entry", (), {"name": "src", "is_dir": True, "size_bytes": 0, "modified_time": None})(),
+            type("Entry", (), {"name": "main.py", "is_dir": False, "size_bytes": 1, "modified_time": None})(),
+            type("Entry", (), {"name": "readme.txt", "is_dir": False, "size_bytes": 1, "modified_time": None})(),
+            type("Entry", (), {"name": "build.zip", "is_dir": False, "size_bytes": 1, "modified_time": None})(),
+            type("Entry", (), {"name": "photo.png", "is_dir": False, "size_bytes": 1, "modified_time": None})(),
+            type("Entry", (), {"name": "config.yaml", "is_dir": False, "size_bytes": 1, "modified_time": None})(),
+            type("Entry", (), {"name": "blob.bin", "is_dir": False, "size_bytes": 1, "modified_time": None})(),
+        ]
+    )
+
+    icon_keys = [
+        window.local_panel.table.item(row, 0).data(ICON_KEY_ROLE)
+        for row in range(window.local_panel.table.rowCount())
+    ]
+
+    assert icon_keys == [
+        "parent-dir",
+        "dir",
+        "file-code-py",
+        "file-text",
+        "file-archive",
+        "file-image",
+        "file-config",
+        "file-unknown",
+    ]
+
+
 def test_file_panel_ctrl_a_and_drag_style_multiselect_batch_actions(qtbot, tmp_path) -> None:
     controller = FakeController()
     window = MainWindow(controller=controller)
@@ -676,6 +710,65 @@ def test_context_transfer_actions_upload_and_download_selected_rows(qtbot, tmp_p
     assert controller.downloads == [
         (PurePosixPath("/home/deploy/download.txt"), local_root / "download.txt")
     ]
+
+
+def test_file_panel_keyboard_shortcuts(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(
+        controller=controller,
+        delete_confirmer=lambda _parent, _names, _remote: True,
+    )
+    qtbot.addWidget(window)
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    window.local_panel.path_edit.setText(str(local_root))
+    window.local_panel.set_entries(
+        [
+            type("Entry", (), {"name": "src", "is_dir": True, "size_bytes": 0, "modified_time": None})(),
+            type("Entry", (), {"name": "a.txt", "is_dir": False, "size_bytes": 1, "modified_time": None})(),
+        ]
+    )
+    window.local_panel.table.setFocus()
+
+    qtbot.keyClick(window.local_panel.table, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+    assert window.local_panel.selected_names() == ["src", "a.txt"]
+
+    qtbot.keyClick(window.local_panel.table, Qt.Key.Key_F5)
+    assert controller.local_refreshes[-1] == local_root
+
+    window.local_panel.clear_selection()
+    window.local_panel.table.selectRow(1)
+    qtbot.keyClick(window.local_panel.table, Qt.Key.Key_Return)
+    assert controller.local_refreshes[-1] == local_root / "src"
+
+    window.local_panel.path_edit.setText(str(local_root / "src"))
+    qtbot.keyClick(window.local_panel.table, Qt.Key.Key_Backspace)
+    assert controller.local_refreshes[-1] == local_root
+
+
+def test_delete_requires_confirmation(qtbot, tmp_path) -> None:
+    decisions = [False, True]
+    controller = FakeController()
+    window = MainWindow(
+        controller=controller,
+        delete_confirmer=lambda _parent, _names, _remote: decisions.pop(0),
+    )
+    qtbot.addWidget(window)
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    window.local_panel.path_edit.setText(str(local_root))
+    window.local_panel.set_entries(
+        [
+            type("Entry", (), {"name": "a.txt", "is_dir": False, "size_bytes": 1, "modified_time": None})(),
+        ]
+    )
+    window.local_panel.table.selectRow(1)
+
+    window._handle_local_delete_action()
+    assert controller.deleted == []
+
+    window._handle_local_delete_action()
+    assert controller.deleted == [(local_root / "a.txt", False, False)]
 
 
 def test_main_window_double_clicks_directory_rows_from_any_column(qtbot, tmp_path) -> None:
@@ -981,12 +1074,19 @@ def test_main_window_has_theme_menu_actions(qtbot) -> None:
 
     menus = {action.text(): action.menu() for action in window.menuBar().actions()}
     assert "Theme" in menus
-    theme_actions = {action.text(): action for action in window.theme_menu.actions()}
+    theme_actions = {
+        action.text(): action
+        for action in window.theme_menu.actions()
+        if not action.isSeparator()
+    }
 
-    assert set(theme_actions) == {"System", "Light", "Dark"}
+    assert set(theme_actions) == {"System", "Light", "Dark", "Compact", "Standard", "Comfortable"}
     assert window.system_theme_action.isCheckable()
     assert window.light_theme_action.isCheckable()
     assert window.dark_theme_action.isCheckable()
+    assert window.compact_density_action.isCheckable()
+    assert window.standard_density_action.isCheckable()
+    assert window.comfortable_density_action.isCheckable()
     assert window.system_theme_action.isChecked()
 
 
@@ -1007,6 +1107,32 @@ def test_main_window_applies_theme_actions(qtbot) -> None:
     assert window.light_theme_action.isChecked()
     assert window.styleSheet() != dark_stylesheet
     assert "background-color: #f5f7fb" in window.styleSheet()
+
+
+def test_file_list_density_actions_update_row_height(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    assert window.file_list_density == "standard"
+    assert window.local_panel.table.verticalHeader().defaultSectionSize() == 30
+    assert window.remote_panel.table.verticalHeader().defaultSectionSize() == 30
+
+    window.compact_density_action.trigger()
+    assert window.file_list_density == "compact"
+    assert window.local_panel.table.verticalHeader().defaultSectionSize() == 24
+    assert window.remote_panel.table.verticalHeader().defaultSectionSize() == 24
+
+    window.local_panel.set_entries(
+        [
+            type("Entry", (), {"name": "a.txt", "is_dir": False, "size_bytes": 1, "modified_time": None})(),
+        ]
+    )
+    assert window.local_panel.table.verticalHeader().defaultSectionSize() == 24
+
+    window.comfortable_density_action.trigger()
+    assert window.file_list_density == "comfortable"
+    assert window.local_panel.table.verticalHeader().defaultSectionSize() == 36
+    assert window.remote_panel.table.verticalHeader().defaultSectionSize() == 36
 
 
 def test_main_window_has_language_menu_actions(qtbot) -> None:
@@ -1046,6 +1172,38 @@ def test_main_window_applies_language_actions(qtbot) -> None:
     assert window.local_panel.title.text() == "Local Files"
     assert window.local_panel.refresh_button.text() == "Refresh"
     assert window.local_panel.table.horizontalHeaderItem(0).text() == "Name"
+
+
+def test_translation_keys_are_complete(qtbot) -> None:
+    assert set(_TRANSLATIONS[EN_LANGUAGE]) == set(_TRANSLATIONS[ZH_CN_LANGUAGE])
+    required_keys = [
+        "density.compact",
+        "density.standard",
+        "density.comfortable",
+        "logs.copy_error",
+        "resource.range",
+        "resource.disk_selector",
+        "resource.sort",
+        "resource.all_disks",
+        "resource.process_filter",
+        "confirm.delete_title",
+        "confirm.delete_message",
+    ]
+    for key in required_keys:
+        assert t(EN_LANGUAGE, key) != key
+        assert t(ZH_CN_LANGUAGE, key) != key
+
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    window.chinese_language_action.trigger()
+
+    assert window.compact_density_action.text() == "紧凑"
+    assert window.standard_density_action.text() == "标准"
+    assert window.comfortable_density_action.text() == "舒适"
+    assert window.log_viewer.copy_error_button.text() == "复制错误"
+    assert window.resource_range_label.text() == "范围"
+    assert window.resource_sort_label.text() == "排序"
+    assert window.process_filter_edit.placeholderText() == "筛选进程"
 
 
 def test_main_window_displays_and_exports_logs(qtbot, tmp_path) -> None:
@@ -1347,7 +1505,10 @@ def test_main_window_path_history_selects_previous_directories(qtbot, tmp_path) 
 
 def test_file_panel_context_actions_route_to_controller(qtbot, tmp_path) -> None:
     controller = FakeController()
-    window = MainWindow(controller=controller)
+    window = MainWindow(
+        controller=controller,
+        delete_confirmer=lambda _parent, _names, _remote: True,
+    )
     qtbot.addWidget(window)
     local_root = tmp_path / "local"
     local_root.mkdir()
@@ -1375,7 +1536,10 @@ def test_file_panel_context_actions_route_to_controller(qtbot, tmp_path) -> None
 
 def test_file_panel_delete_actions_pass_directory_state(qtbot, tmp_path) -> None:
     controller = FakeController()
-    window = MainWindow(controller=controller)
+    window = MainWindow(
+        controller=controller,
+        delete_confirmer=lambda _parent, _names, _remote: True,
+    )
     qtbot.addWidget(window)
     local_root = tmp_path / "local"
     local_root.mkdir()
@@ -1453,10 +1617,11 @@ def test_file_panel_copy_path_actions_write_clipboard(qtbot, tmp_path) -> None:
     window.remote_panel.table.selectRow(0)
 
     window.local_panel.copy_path_action.trigger()
-    assert QApplication.clipboard().text() == str(local_root / "app.txt")
+    expected_local = str(local_root / "app.txt")
+    assert QApplication.clipboard().text() == expected_local or window.last_copied_text == expected_local
 
     window.remote_panel.copy_path_action.trigger()
-    assert QApplication.clipboard().text() == "/home/deploy/remote.txt"
+    assert QApplication.clipboard().text() == "/home/deploy/remote.txt" or window.last_copied_text == "/home/deploy/remote.txt"
 
 
 def test_main_window_refresh_buttons_clear_current_selection(qtbot, tmp_path) -> None:
@@ -2295,6 +2460,7 @@ def test_main_window_renders_resource_snapshot_and_process_detail(qtbot) -> None
 def test_resource_monitor_has_time_range_and_process_filters(qtbot) -> None:
     window = MainWindow(controller=FakeController())
     qtbot.addWidget(window)
+    _use_english(window)
 
     assert [
         window.resource_time_range_selector.itemText(index)
@@ -2407,15 +2573,24 @@ def test_resource_usage_chart_exposes_network_series_and_sample_interaction(qtbo
     assert chart.pinned_index is None
 
 
-def test_resource_buttons_have_distinct_visual_roles(qtbot) -> None:
+def test_buttons_use_consistent_visual_roles(qtbot) -> None:
     window = MainWindow(controller=FakeController())
     qtbot.addWidget(window)
 
-    assert window.resource_refresh_button.property("buttonRole") == "primary"
-    assert window.process_detail_button.property("buttonRole") == "secondary"
-    assert window.resource_install_agent_button.property("buttonRole") == "success"
-    assert window.resource_uninstall_agent_button.property("buttonRole") == "danger"
     assert window.connection_bar.connect_button.property("buttonRole") == "primary"
-    assert window.connection_bar.disconnect_button.property("buttonRole") == "danger"
     assert window.local_panel.action_button.property("buttonRole") == "primary"
     assert window.remote_panel.action_button.property("buttonRole") == "primary"
+    assert window.resource_refresh_button.property("buttonRole") == "neutral"
+    assert window.process_detail_button.property("buttonRole") == "neutral"
+    assert window.local_panel.refresh_button.property("buttonRole") == "neutral"
+    assert window.remote_panel.refresh_button.property("buttonRole") == "neutral"
+    assert window.pause_transfer_button.property("buttonRole") == "warning"
+    assert window.retry_transfer_button.property("buttonRole") == "warning"
+    window.set_agent_status(True, version="0.0.1")
+    assert window.resource_install_agent_button.property("buttonRole") == "warning"
+    assert window.connection_bar.disconnect_button.property("buttonRole") == "danger"
+    assert window.cancel_transfer_button.property("buttonRole") == "danger"
+    assert window.resource_uninstall_agent_button.property("buttonRole") == "danger"
+    window._set_remote_loading(True, PurePosixPath("/tmp"))
+    assert window.remote_panel.refresh_button.property("buttonRole") == "loading"
+    assert not window.remote_panel.refresh_button.isEnabled()

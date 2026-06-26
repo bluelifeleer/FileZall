@@ -507,6 +507,7 @@ def _format_time(value: datetime | None) -> str:
 
 
 _ROW_KIND_ROLE = Qt.ItemDataRole.UserRole + 1
+ICON_KEY_ROLE = Qt.ItemDataRole.UserRole + 2
 
 
 def _entry_item(
@@ -518,6 +519,8 @@ def _entry_item(
 ) -> QTableWidgetItem:
     item = QTableWidgetItem(text)
     if show_icon and text:
+        icon_key = _entry_icon_key(text, is_dir, row_kind)
+        item.setData(ICON_KEY_ROLE, icon_key)
         icon = _entry_icon(text, is_dir, row_kind)
         if not icon.isNull():
             item.setIcon(icon)
@@ -530,17 +533,33 @@ _ICON_CACHE: dict[str, QIcon] = {}
 
 
 def _entry_icon(text: str, is_dir: bool, row_kind: str) -> QIcon:
+    key = _entry_icon_key(text, is_dir, row_kind)
     if is_dir:
-        key = "parent-dir" if row_kind == "parent" else "dir"
         if key not in _ICON_CACHE:
             _ICON_CACHE[key] = _paint_folder_icon(parent=row_kind == "parent")
         return _ICON_CACHE[key]
     suffix = PurePath(text).suffix.lower().lstrip(".")
     label = _suffix_label(suffix)
-    key = f"file-{label}"
     if key not in _ICON_CACHE:
         _ICON_CACHE[key] = _paint_icon(label, _suffix_color(suffix))
     return _ICON_CACHE[key]
+
+
+def _entry_icon_key(text: str, is_dir: bool, row_kind: str) -> str:
+    if is_dir:
+        return "parent-dir" if row_kind == "parent" else "dir"
+    suffix = PurePath(text).suffix.lower().lstrip(".")
+    if suffix in {"py", "js", "ts", "css", "go", "rs", "sh"}:
+        return f"file-code-{suffix}"
+    if suffix in {"png", "jpg", "jpeg", "gif", "webp", "svg"}:
+        return "file-image"
+    if suffix in {"zip", "rar", "7z", "tar", "gz"}:
+        return "file-archive"
+    if suffix in {"json", "yaml", "yml", "toml", "xml", "ini", "conf", "env"}:
+        return "file-config"
+    if suffix in {"md", "txt", "log"}:
+        return "file-text"
+    return "file-unknown"
 
 
 def _suffix_label(suffix: str) -> str:

@@ -17,25 +17,25 @@
 - Modify: `src/filezall_desktop/main_window.py`
 - Test: `tests/desktop/test_main_window.py`
 
-- [ ] **Step 1: Write failing role tests**
+- [x] **Step 1: Write failing role tests**
 
 Test primary, neutral, warning, danger, loading, and disabled visual roles are assigned to the expected buttons.
 
-- [ ] **Step 2: Verify tests fail**
+- [x] **Step 2: Verify tests fail**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py::test_buttons_use_consistent_visual_roles -q`
 
 Expected: fail because not all roles are assigned.
 
-- [ ] **Step 3: Extend stylesheet**
+- [x] **Step 3: Extend stylesheet**
 
 Add role selectors for `primary`, `neutral`, `warning`, `danger`, `loading`, and disabled states.
 
-- [ ] **Step 4: Assign roles**
+- [x] **Step 4: Assign roles**
 
 Assign connect/upload/download as primary; refresh/path/copy as neutral; pause/retry/update as warning; delete/uninstall as danger.
 
-- [ ] **Step 5: Verify role tests**
+- [x] **Step 5: Verify role tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py::test_buttons_use_consistent_visual_roles -q`
 
@@ -48,21 +48,21 @@ Expected: pass.
 - Create or modify: `src/filezall_desktop/assets/icons/`
 - Test: `tests/desktop/test_main_window.py`
 
-- [ ] **Step 1: Write failing icon tests**
+- [x] **Step 1: Write failing icon tests**
 
 Test directories use one directory icon and files use extension-based icons for py, txt, zip, image, config, and unknown files.
 
-- [ ] **Step 2: Verify tests fail**
+- [x] **Step 2: Verify tests fail**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py::test_file_list_uses_extension_icons -q`
 
 Expected: fail because extension mapping is incomplete.
 
-- [ ] **Step 3: Add icon helper**
+- [x] **Step 3: Add icon helper**
 
 Create one helper that maps extension groups to icons and returns a fallback icon for unknown file types.
 
-- [ ] **Step 4: Verify icon tests**
+- [x] **Step 4: Verify icon tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py::test_file_list_uses_extension_icons -q`
 
@@ -76,25 +76,25 @@ Expected: pass.
 - Modify: `src/filezall_desktop/i18n.py`
 - Test: `tests/desktop/test_main_window.py`
 
-- [ ] **Step 1: Write failing density tests**
+- [x] **Step 1: Write failing density tests**
 
 Test compact, standard, and comfortable density actions update row heights and remain stable after refresh.
 
-- [ ] **Step 2: Verify tests fail**
+- [x] **Step 2: Verify tests fail**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py::test_file_list_density_actions_update_row_height -q`
 
 Expected: fail because density controls do not exist.
 
-- [ ] **Step 3: Add density actions**
+- [x] **Step 3: Add density actions**
 
 Add View or Theme menu density actions. Store active density in `MainWindow`.
 
-- [ ] **Step 4: Apply density**
+- [x] **Step 4: Apply density**
 
 Set table vertical header default section size for both file panels.
 
-- [ ] **Step 5: Verify density tests**
+- [x] **Step 5: Verify density tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py::test_file_list_density_actions_update_row_height -q`
 
@@ -107,25 +107,25 @@ Expected: pass.
 - Modify: `src/filezall_desktop/i18n.py`
 - Test: `tests/desktop/test_main_window.py`
 
-- [ ] **Step 1: Write failing shortcut tests**
+- [x] **Step 1: Write failing shortcut tests**
 
 Test Ctrl+A selects active panel rows, F5 refreshes active panel, Delete prompts delete, Enter enters selected directory, and Backspace navigates to parent.
 
-- [ ] **Step 2: Verify tests fail**
+- [x] **Step 2: Verify tests fail**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py::test_file_panel_keyboard_shortcuts -q`
 
 Expected: fail because shortcuts are not fully wired.
 
-- [ ] **Step 3: Add shortcuts**
+- [x] **Step 3: Add shortcuts**
 
 Add `QShortcut` instances in `MainWindow`. Track active panel by focus and mouse entry.
 
-- [ ] **Step 4: Add confirmations**
+- [x] **Step 4: Add confirmations**
 
 Add delete and Agent uninstall confirmations with action-specific text.
 
-- [ ] **Step 5: Verify shortcut tests**
+- [x] **Step 5: Verify shortcut tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py::test_file_panel_keyboard_shortcuts tests\desktop\test_main_window.py::test_delete_requires_confirmation -q`
 
@@ -137,21 +137,21 @@ Expected: pass.
 - Modify: `src/filezall_desktop/i18n.py`
 - Test: `tests/desktop/test_main_window.py`
 
-- [ ] **Step 1: Write failing coverage test**
+- [x] **Step 1: Write failing coverage test**
 
 Test that every English translation key exists in Simplified Chinese and no visible menu/action text added by this roadmap falls back to raw keys.
 
-- [ ] **Step 2: Verify test fails**
+- [x] **Step 2: Verify test fails**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py::test_translation_keys_are_complete -q`
 
 Expected: fail if keys are missing.
 
-- [ ] **Step 3: Fill translations**
+- [x] **Step 3: Fill translations**
 
 Add missing English and Simplified Chinese strings for menus, dialogs, status messages, log categories, shortcut labels, and confirmations.
 
-- [ ] **Step 4: Verify translation tests**
+- [x] **Step 4: Verify translation tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py::test_translation_keys_are_complete -q`
 
@@ -159,25 +159,25 @@ Expected: pass.
 
 ### Task 6: Commit
 
-- [ ] **Step 1: Run focused tests**
+- [x] **Step 1: Run focused tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py`
 
 Expected: pass.
 
-- [ ] **Step 2: Run full tests**
+- [x] **Step 2: Run full tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest`
 
 Expected: pass, with live SFTP skipped when environment variables are absent.
 
-- [ ] **Step 3: Package smoke**
+- [x] **Step 3: Package smoke**
 
 Run: `powershell -ExecutionPolicy Bypass -File packaging\windows\release.ps1`
 
 Expected: Windows portable zip and setup exe are generated.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Run:
 

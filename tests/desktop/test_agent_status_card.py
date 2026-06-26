@@ -19,7 +19,7 @@ def test_agent_status_card_renders_states_and_actions(qtbot) -> None:
     assert card.state_label.text() == "Not Installed"
     assert card.message_label.text() == "Agent is not installed."
     assert card.primary_button.text() == "Install Agent"
-    assert card.primary_button.property("buttonRole") == "success"
+    assert card.primary_button.property("buttonRole") == "primary"
     assert card.danger_button.isHidden()
 
     card.set_status(

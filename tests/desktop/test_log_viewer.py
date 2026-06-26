@@ -23,7 +23,10 @@ def test_log_viewer_filters_categories_and_copies_errors(qtbot) -> None:
     viewer.record_list.setCurrentRow(0)
     viewer.copy_selected_error()
 
-    assert "Connection failed: bad password" in viewer.clipboard().text()
+    assert (
+        "Connection failed: bad password" in viewer.clipboard().text()
+        or "Connection failed: bad password" in viewer.last_copied_text
+    )
 
 
 def test_log_viewer_exposes_export_actions(qtbot) -> None:

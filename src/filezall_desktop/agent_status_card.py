@@ -97,4 +97,4 @@ def _state_text(state: AgentStatus) -> str:
 def _primary_role(state: AgentStatus) -> str:
     if state in {AgentStatus.OUTDATED, AgentStatus.UPDATE_AVAILABLE, AgentStatus.UNHEALTHY}:
         return "warning"
-    return "success"
+    return "primary"

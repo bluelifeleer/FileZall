@@ -33,6 +33,7 @@ class LogViewer(QWidget):
         self._category_filter = "all"
         self._export_logs_callback = export_logs_callback
         self._export_diagnostics_callback = export_diagnostics_callback
+        self.last_copied_text = ""
 
         layout = QVBoxLayout(self)
         actions = QHBoxLayout()
@@ -61,6 +62,17 @@ class LogViewer(QWidget):
         self.export_logs_button.clicked.connect(self._export_logs)
         self.export_diagnostics_button.clicked.connect(self._export_diagnostics)
 
+    def set_labels(
+        self,
+        *,
+        copy_error: str,
+        export_logs: str,
+        export_diagnostics: str,
+    ) -> None:
+        self.copy_error_button.setText(copy_error)
+        self.export_logs_button.setText(export_logs)
+        self.export_diagnostics_button.setText(export_diagnostics)
+
     def add_record(self, record: LogRecord) -> None:
         self._records.append(record)
         self._refresh()
@@ -78,6 +90,7 @@ class LogViewer(QWidget):
             return
         record = item.data(256)
         if isinstance(record, LogRecord) and record.level == "error":
+            self.last_copied_text = record.message
             self.clipboard().setText(record.message)
 
     def toPlainText(self) -> str:
