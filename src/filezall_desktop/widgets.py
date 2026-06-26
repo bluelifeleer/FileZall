@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import PurePath
 
-from PySide6.QtCore import QModelIndex, QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QModelIndex, QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -214,6 +214,12 @@ class FilePanel(QWidget):
         self._parent_label = "Parent Directory"
         self._directory_label = "Directory"
         self._file_label = "File"
+        self.large_directory_threshold = 500
+        self.entry_batch_size = 200
+        self.is_loading_entries = False
+        self._entry_batch_generation = 0
+        self._pending_entries = []
+        self._pending_entry_index = 0
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
         self.title = QLabel(title, self)
@@ -242,6 +248,7 @@ class FilePanel(QWidget):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
         self._build_context_menu()
+        self.load_progress_label = QLabel("", self)
 
         header.addWidget(self.title)
         header.addWidget(self.path_edit)
@@ -250,6 +257,7 @@ class FilePanel(QWidget):
         header.addWidget(self.action_button)
         layout.addLayout(header)
         layout.addWidget(self.table)
+        layout.addWidget(self.load_progress_label)
 
     def _build_context_menu(self) -> None:
         self.context_menu = QMenu(self)
@@ -307,6 +315,7 @@ class FilePanel(QWidget):
         self.context_menu.exec(self.table.viewport().mapToGlobal(position))
 
     def set_placeholder_row(self, text: str) -> None:
+        self._cancel_pending_entry_batches()
         self.table.setUpdatesEnabled(False)
         self.table.setRowCount(1)
         self.table.setItem(0, 0, _entry_item(text, False, show_icon=True))
@@ -314,8 +323,14 @@ class FilePanel(QWidget):
         self.table.setItem(0, 2, _entry_item("", False))
         self.table.setItem(0, 3, _entry_item("", False))
         self.table.setUpdatesEnabled(True)
+        self.load_progress_label.setText("")
 
     def set_entries(self, entries) -> None:
+        entries = list(entries)
+        self._cancel_pending_entry_batches()
+        if len(entries) > self.large_directory_threshold:
+            self._start_batched_entries(entries)
+            return
         self.table.setUpdatesEnabled(False)
         try:
             self.table.setRowCount(len(entries) + 1)
@@ -337,9 +352,68 @@ class FilePanel(QWidget):
                     _entry_item(_format_time(entry.modified_time), entry.is_dir),
                 )
             self.clear_selection()
+            self.load_progress_label.setText(f"{len(entries)} items" if entries else "")
         finally:
             self.table.setUpdatesEnabled(True)
             self.table.viewport().update()
+
+    def _start_batched_entries(self, entries: list) -> None:
+        self.is_loading_entries = True
+        self._pending_entries = entries
+        self._pending_entry_index = 0
+        generation = self._entry_batch_generation
+        self.table.setUpdatesEnabled(False)
+        try:
+            self.table.setRowCount(1)
+            self._set_row(0, "..", "", self._parent_label, "", is_dir=True, row_kind="parent")
+            self.clear_selection()
+        finally:
+            self.table.setUpdatesEnabled(True)
+        self._append_entry_batch(generation)
+
+    def _append_entry_batch(self, generation: int) -> None:
+        if generation != self._entry_batch_generation:
+            return
+        entries = self._pending_entries
+        start = self._pending_entry_index
+        end = min(start + self.entry_batch_size, len(entries))
+        self.table.setUpdatesEnabled(False)
+        try:
+            self.table.setRowCount(end + 1)
+            for row, entry in enumerate(entries[start:end], start=start + 1):
+                self.table.setItem(row, 0, _entry_item(entry.name, entry.is_dir, show_icon=True))
+                self.table.setItem(row, 1, _entry_item(str(entry.size_bytes), entry.is_dir))
+                self.table.setItem(
+                    row,
+                    2,
+                    _entry_item(
+                        self._directory_label if entry.is_dir else self._file_label,
+                        entry.is_dir,
+                    ),
+                )
+                self.table.setItem(
+                    row,
+                    3,
+                    _entry_item(_format_time(entry.modified_time), entry.is_dir),
+                )
+        finally:
+            self.table.setUpdatesEnabled(True)
+        self._pending_entry_index = end
+        if end < len(entries):
+            self.load_progress_label.setText(f"Loading {end}/{len(entries)} items...")
+            self.table.viewport().update()
+            QTimer.singleShot(0, lambda generation=generation: self._append_entry_batch(generation))
+            return
+        self.is_loading_entries = False
+        self._pending_entries = []
+        self.load_progress_label.setText(f"{len(entries)} items")
+        self.table.viewport().update()
+
+    def _cancel_pending_entry_batches(self) -> None:
+        self._entry_batch_generation += 1
+        self.is_loading_entries = False
+        self._pending_entries = []
+        self._pending_entry_index = 0
 
     def selected_name(self) -> str | None:
         names = self.selected_names()

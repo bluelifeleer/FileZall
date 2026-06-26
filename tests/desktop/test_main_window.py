@@ -225,6 +225,12 @@ class SnapshotController(FakeController):
         return self.snapshot, "Resource snapshot refreshed"
 
 
+class FailingSnapshotController(SnapshotController):
+    def load_resource_snapshot(self):
+        self.resource_refreshes += 1
+        raise RuntimeError("agent timeout")
+
+
 class AsyncConnectController(FakeController):
     def connect_for_window(self, site, password=None, remember_secret: bool = True):
         self.connect_calls.append((site, password, remember_secret))
@@ -1130,6 +1136,38 @@ def test_file_panel_set_entries_clears_current_and_hover_rows(qtbot) -> None:
     assert window.local_panel.table.hovered_row == -1
 
 
+def test_file_panel_batches_large_directory_rendering(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    entries = [
+        type(
+            "Entry",
+            (),
+            {
+                "name": f"file-{index}.txt",
+                "is_dir": False,
+                "size_bytes": index,
+                "modified_time": None,
+            },
+        )()
+        for index in range(750)
+    ]
+
+    window.local_panel.set_entries(entries)
+
+    assert window.local_panel.is_loading_entries is True
+    assert window.local_panel.table.rowCount() < len(entries) + 1
+    assert "Loading" in window.local_panel.load_progress_label.text()
+
+    qtbot.waitUntil(
+        lambda: window.local_panel.table.rowCount() == len(entries) + 1,
+        timeout=3000,
+    )
+
+    assert window.local_panel.is_loading_entries is False
+    assert window.local_panel.load_progress_label.text() == "750 items"
+
+
 def test_main_window_loads_sites_and_connects_button_to_controller(qtbot) -> None:
     controller = FakeController()
     window = MainWindow(controller=controller)
@@ -1150,6 +1188,7 @@ def test_main_window_loads_sites_and_connects_button_to_controller(qtbot) -> Non
     assert remember_secret is True
     assert window.connection_state_label.text() == ""
     assert window.connection_state_label.toolTip() == "Connected"
+    assert window.connection_state_label.property("connectionState") == "connected"
     assert "green" in window.connection_state_label.styleSheet()
 
 
@@ -1164,6 +1203,7 @@ def test_main_window_connection_failure_shows_red_status(qtbot) -> None:
 
     assert window.connection_state_label.text() == ""
     assert window.connection_state_label.toolTip() == "Failed"
+    assert window.connection_state_label.property("connectionState") == "failed"
     assert "red" in window.connection_state_label.styleSheet()
     assert window.connection_bar.connect_button.isEnabled()
 
@@ -1192,6 +1232,7 @@ def test_connection_status_light_uses_tooltip_for_state_text(qtbot) -> None:
 
     assert window.connection_state_label.text() == ""
     assert window.connection_state_label.toolTip() == "Connecting"
+    assert window.connection_state_label.property("connectionState") == "connecting"
     assert "goldenrod" in window.connection_state_label.styleSheet()
 
 
@@ -1255,6 +1296,20 @@ def test_heartbeat_failure_logs_once_until_recovered(qtbot) -> None:
     window._handle_heartbeat_tick()
     window._handle_heartbeat_tick()
     assert window.log_view.toPlainText().count("Heartbeat failed: disconnected") == 2
+
+
+def test_background_worker_failures_get_diagnostic_log_context(qtbot) -> None:
+    window = MainWindow(controller=FailingSnapshotController())
+    qtbot.addWidget(window)
+
+    window._handle_resource_refresh_tick()
+
+    qtbot.waitUntil(
+        lambda: "Background operation failed [resource refresh]: agent timeout"
+        in window.log_view.toPlainText(),
+        timeout=3000,
+    )
+    assert "Resource refresh failed: agent timeout" in window.log_view.toPlainText()
 
 
 def test_resource_refresh_timer_starts_after_successful_connect(qtbot) -> None:

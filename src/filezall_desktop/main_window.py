@@ -1017,6 +1017,7 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def _fail_connection(self, error: str) -> None:
+        self._append_background_failure("connection", error)
         self.append_log(f"Connection failed: {error}")
         self._set_connection_state("Failed", "red")
         self.heartbeat_timer.stop()
@@ -1167,6 +1168,7 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _fail_agent_action(self, error: str) -> None:
         label = self._active_agent_action[0] if self._active_agent_action else "install"
+        self._append_background_failure(f"agent {label}", error)
         if label == "install":
             message = f"Agent installation failed: {error}"
         elif label == "update":
@@ -1332,6 +1334,7 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def _fail_remote_directory_load(self, error: str) -> None:
+        self._append_background_failure("remote directory", error)
         message = f"Remote directory load failed: {error}"
         self.show_status(message)
         self.append_log(message)
@@ -1462,6 +1465,7 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def _fail_resource_refresh(self, error: str) -> None:
+        self._append_background_failure("resource refresh", error)
         message = f"Resource refresh failed: {error}"
         self.show_status(message)
         self.append_log(message)
@@ -1501,9 +1505,13 @@ class MainWindow(QMainWindow):
         self.append_log(message)
         self._heartbeat_failed_logged = True
 
+    def _append_background_failure(self, operation: str, error: str) -> None:
+        self.append_log(f"Background operation failed [{operation}]: {error}")
+
     def _set_connection_state(self, text: str, color: str) -> None:
         self.connection_state_label.setText("")
         self.connection_state_label.setToolTip(text)
+        self.connection_state_label.setProperty("connectionState", _connection_state_key(text))
         self.connection_state_label.setStyleSheet(
             "border-radius: 6px; "
             f"background-color: {color}; "
@@ -1671,6 +1679,23 @@ def _choose_diagnostic_file(parent) -> str:
         "Zip Files (*.zip);;All Files (*)",
     )
     return path
+
+
+def _connection_state_key(text: str) -> str:
+    lowered = text.lower()
+    if lowered.startswith("connecting"):
+        return "connecting"
+    if lowered.startswith("connected"):
+        return "connected"
+    if lowered.startswith("disconnecting"):
+        return "disconnecting"
+    if lowered.startswith("disconnected"):
+        return "disconnected"
+    if lowered.startswith("failed") or "failed" in lowered:
+        return "failed"
+    if lowered.startswith("checking"):
+        return "checking"
+    return lowered.replace(" ", "_")
 
 
 def _confirm_agent_install(parent, action: str = "install") -> bool:
