@@ -701,15 +701,64 @@ def test_main_window_has_help_menu_actions(qtbot) -> None:
     help_actions = {action.text(): action for action in window.help_menu.actions()}
 
     assert set(help_actions) == {
+        "Getting Started",
         "About FileZall",
         "Version",
         "Protocols",
         "Commercial",
     }
+    assert help_actions["Getting Started"].statusTip()
     assert help_actions["About FileZall"].statusTip()
     assert help_actions["Version"].statusTip()
     assert help_actions["Protocols"].statusTip()
     assert help_actions["Commercial"].statusTip()
+
+
+def test_getting_started_guide_opens_from_help_menu(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    _use_english(window)
+    window.show()
+    qtbot.waitExposed(window)
+
+    window.getting_started_action.trigger()
+
+    dialog = window.getting_started_dialog
+    qtbot.addWidget(dialog)
+    assert dialog.windowTitle() == "Getting Started"
+    assert [label.text() for label in dialog.step_labels] == [
+        "1. Create or choose a connection.",
+        "2. Enter server credentials.",
+        "3. Connect and load the remote home directory.",
+        "4. Install or update the Agent when monitoring is needed.",
+        "5. Choose local and remote folders.",
+        "6. Upload, download, or add selected files to the queue.",
+    ]
+
+    qtbot.mouseClick(dialog.focus_connection_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: window.connection_bar.host_edit.hasFocus(), timeout=1000)
+
+
+def test_getting_started_guide_follows_language(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    window.chinese_language_action.trigger()
+    assert window.getting_started_action.text() == "入门向导"
+    assert window.getting_started_action.statusTip() == "显示首次使用向导"
+
+    window.getting_started_action.trigger()
+    dialog = window.getting_started_dialog
+    qtbot.addWidget(dialog)
+    assert dialog.windowTitle() == "入门向导"
+    assert dialog.focus_connection_button.text() == "定位到连接"
+
+    window.english_language_action.trigger()
+    assert window.getting_started_action.text() == "Getting Started"
+    assert window.getting_started_action.statusTip() == "Show the first-use guide"
+    assert dialog.windowTitle() == "Getting Started"
+    assert dialog.focus_connection_button.text() == "Focus Connection"
 
 
 def test_main_window_has_session_menu_new_session_action(qtbot) -> None:

@@ -41,6 +41,7 @@ from filezall_desktop.i18n import (
     ZH_CN_LANGUAGE,
     t,
 )
+from filezall_desktop.onboarding import GettingStartedDialog
 from filezall_desktop.theme import (
     DARK_THEME,
     LIGHT_THEME,
@@ -353,6 +354,7 @@ class MainWindow(QMainWindow):
         self._remote_directory_workers = []
         self._active_remote_directory_load = None
         self._remote_directory_loading = False
+        self.getting_started_dialog: GettingStartedDialog | None = None
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
@@ -399,6 +401,9 @@ class MainWindow(QMainWindow):
     def _build_help_menu(self) -> None:
         self.help_menu = QMenu("Help", self)
         self.menuBar().addMenu(self.help_menu)
+        self.getting_started_action = self.help_menu.addAction("Getting Started")
+        self.getting_started_action.setStatusTip("Show the first-use guide")
+        self.getting_started_action.triggered.connect(self._show_getting_started)
         self.about_action = self.help_menu.addAction("About FileZall")
         self.about_action.setStatusTip("Show FileZall product information")
         self.about_action.triggered.connect(self._show_about)
@@ -435,6 +440,54 @@ class MainWindow(QMainWindow):
             self._text("commercial.title"),
             self._text("commercial.body"),
         )
+
+    def _show_getting_started(self) -> None:
+        if self.getting_started_dialog is None:
+            dialog = GettingStartedDialog(self._getting_started_texts(), self)
+            dialog.focus_connection_requested.connect(self._focus_connection_setup)
+            dialog.focus_local_requested.connect(self._focus_local_files)
+            dialog.focus_remote_requested.connect(self._focus_remote_files)
+            self.getting_started_dialog = dialog
+        else:
+            self.getting_started_dialog.set_texts(self._getting_started_texts())
+        self.getting_started_dialog.show()
+        self.getting_started_dialog.raise_()
+        self.getting_started_dialog.activateWindow()
+
+    def _getting_started_texts(self) -> dict[str, str | list[str]]:
+        return {
+            "title": self._text("getting_started.title"),
+            "intro": self._text("getting_started.intro"),
+            "steps": [
+                self._text("getting_started.step1"),
+                self._text("getting_started.step2"),
+                self._text("getting_started.step3"),
+                self._text("getting_started.step4"),
+                self._text("getting_started.step5"),
+                self._text("getting_started.step6"),
+            ],
+            "focus_connection": self._text("getting_started.focus_connection"),
+            "focus_local": self._text("getting_started.focus_local"),
+            "focus_remote": self._text("getting_started.focus_remote"),
+        }
+
+    def _focus_connection_setup(self) -> None:
+        self._hide_getting_started_dialog()
+        self.connection_bar.host_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
+    def _focus_local_files(self) -> None:
+        self._hide_getting_started_dialog()
+        self.local_panel.path_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
+    def _focus_remote_files(self) -> None:
+        self._hide_getting_started_dialog()
+        self.remote_panel.path_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
+    def _hide_getting_started_dialog(self) -> None:
+        if self.getting_started_dialog is not None:
+            self.getting_started_dialog.hide()
+        self.raise_()
+        self.activateWindow()
 
     def _build_theme_menu(self) -> None:
         self.theme_menu = QMenu("Theme", self)
@@ -509,10 +562,14 @@ class MainWindow(QMainWindow):
             self.export_logs_action.setText(self._text("logs.export"))
             self.export_diagnostics_action.setText(self._text("logs.export_diagnostics"))
 
+        self.getting_started_action.setText(self._text("help.getting_started"))
+        self.getting_started_action.setStatusTip(self._text("help.getting_started_tip"))
         self.about_action.setText(self._text("help.about"))
         self.version_action.setText(self._text("help.version"))
         self.protocols_action.setText(self._text("help.protocols"))
         self.commercial_action.setText(self._text("help.commercial"))
+        if self.getting_started_dialog is not None:
+            self.getting_started_dialog.set_texts(self._getting_started_texts())
 
         self.connection_bar.site_label.setText(self._text("connection.site"))
         self.connection_bar.host_edit.setPlaceholderText(self._text("connection.host"))

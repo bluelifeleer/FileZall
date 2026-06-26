@@ -35,6 +35,8 @@ _TRANSLATIONS = {
         "menu.language": "Language",
         "menu.logs": "Logs",
         "session.new": "New Session",
+        "help.getting_started": "Getting Started",
+        "help.getting_started_tip": "Show the first-use guide",
         "help.about": "About FileZall",
         "help.version": "Version",
         "help.protocols": "Protocols",
@@ -48,6 +50,20 @@ _TRANSLATIONS = {
             "maintainer or vendor channel for licensing, support, and partnership "
             "details."
         ),
+        "getting_started.title": "Getting Started",
+        "getting_started.intro": (
+            "Use this guide as the shortest path from a fresh install to a successful "
+            "file transfer."
+        ),
+        "getting_started.step1": "1. Create or choose a connection.",
+        "getting_started.step2": "2. Enter server credentials.",
+        "getting_started.step3": "3. Connect and load the remote home directory.",
+        "getting_started.step4": "4. Install or update the Agent when monitoring is needed.",
+        "getting_started.step5": "5. Choose local and remote folders.",
+        "getting_started.step6": "6. Upload, download, or add selected files to the queue.",
+        "getting_started.focus_connection": "Focus Connection",
+        "getting_started.focus_local": "Focus Local Files",
+        "getting_started.focus_remote": "Focus Remote Files",
         "logs.export": "Export Logs",
         "logs.export_diagnostics": "Export Diagnostics",
         "site.quick": "Quick Connect",
@@ -113,6 +129,8 @@ _TRANSLATIONS = {
         "menu.language": "语言",
         "menu.logs": "日志",
         "session.new": "新建会话",
+        "help.getting_started": "入门向导",
+        "help.getting_started_tip": "显示首次使用向导",
         "help.about": "关于 FileZall",
         "help.version": "版本",
         "help.protocols": "协议",
@@ -123,6 +141,17 @@ _TRANSLATIONS = {
             "私有构建、Agent 定制、更新通道和优先故障排查。授权、支持和合作信息可通过 "
             "FileZall 维护者或厂商渠道获取。"
         ),
+        "getting_started.title": "入门向导",
+        "getting_started.intro": "按这个流程可以从首次安装快速完成一次文件传输。",
+        "getting_started.step1": "1. 创建或选择连接。",
+        "getting_started.step2": "2. 输入服务器凭据。",
+        "getting_started.step3": "3. 连接并加载远端用户目录。",
+        "getting_started.step4": "4. 需要监控时安装或更新 Agent。",
+        "getting_started.step5": "5. 选择本地和远端目录。",
+        "getting_started.step6": "6. 上传、下载，或把选中文件加入队列。",
+        "getting_started.focus_connection": "定位到连接",
+        "getting_started.focus_local": "定位到本地文件",
+        "getting_started.focus_remote": "定位到远端文件",
         "logs.export": "导出日志",
         "logs.export_diagnostics": "导出诊断包",
         "site.quick": "快速连接",
