@@ -26,6 +26,9 @@ class RemoteFileClient(TypingProtocol):
     def list_directory(self, path: PurePosixPath) -> list[RemoteFileEntry]:
         ...
 
+    def walk_directory(self, path: PurePosixPath) -> list[RemoteFileEntry]:
+        ...
+
     def upload_file(self, local_path: Path, remote_path: PurePosixPath) -> None:
         ...
 
@@ -103,6 +106,9 @@ class FakeRemoteClient:
     def list_directory(self, path: PurePosixPath) -> list[RemoteFileEntry]:
         return self._entries.get(path, [])
 
+    def walk_directory(self, path: PurePosixPath) -> list[RemoteFileEntry]:
+        return walk_remote_directory(self, path)
+
     def upload_file(self, local_path: Path, remote_path: PurePosixPath) -> None:
         self.uploads.append((local_path, remote_path))
 
@@ -146,3 +152,13 @@ class FakeRemoteClient:
 
     def create_file(self, path: PurePosixPath) -> None:
         self.files.append(path)
+
+
+def walk_remote_directory(client: RemoteFileClient, path: PurePosixPath) -> list[RemoteFileEntry]:
+    walked: list[RemoteFileEntry] = []
+    for entry in client.list_directory(path):
+        if entry.is_dir:
+            walked.extend(walk_remote_directory(client, entry.path))
+        else:
+            walked.append(entry)
+    return walked

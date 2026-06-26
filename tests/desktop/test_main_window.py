@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication, QAbstractItemView, QHeaderView, QSpl
 
 from filezall_core.models import (
     AuthMode,
+    ConflictPolicy,
     Direction,
     Protocol,
     RemoteFileEntry,
@@ -56,7 +57,9 @@ class FakeController:
         self.local_refreshes = []
         self.remote_refreshes = []
         self.uploads = []
+        self.upload_conflict_policies = []
         self.downloads = []
+        self.download_conflict_policies = []
         self.deleted = []
         self.queued = []
         self.created_dirs = []
@@ -88,11 +91,13 @@ class FakeController:
     def list_remote_directory(self, path) -> None:
         self.remote_refreshes.append(path)
 
-    def upload_file(self, local_path, remote_path) -> None:
+    def upload_file(self, local_path, remote_path, conflict_policy=None) -> None:
         self.uploads.append((local_path, remote_path))
+        self.upload_conflict_policies.append(conflict_policy)
 
-    def download_file(self, remote_path, local_path) -> None:
+    def download_file(self, remote_path, local_path, conflict_policy=None) -> None:
         self.downloads.append((remote_path, local_path))
+        self.download_conflict_policies.append(conflict_policy)
 
     def delete_path(self, path, remote: bool, is_dir: bool | None = None) -> None:
         self.deleted.append((path, remote, is_dir))
@@ -1919,6 +1924,52 @@ def test_main_window_refresh_upload_and_download_buttons_call_controller(qtbot, 
     assert controller.downloads == [(controller.remote_refreshes[0] / "remote.txt", local_root / "remote.txt")]
 
 
+def test_upload_prompts_for_conflict_policy(qtbot, tmp_path) -> None:
+    decisions = []
+
+    def choose_policy(_parent, destination_name: str):
+        decisions.append(destination_name)
+        return type(
+            "Decision",
+            (),
+            {"policy": ConflictPolicy.RENAME, "apply_to_all": False},
+        )()
+
+    controller = FakeController()
+    window = MainWindow(controller=controller, conflict_policy_prompt=choose_policy)
+    qtbot.addWidget(window)
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    (local_root / "app.txt").write_text("hello", encoding="utf-8")
+    window.local_panel.path_edit.setText(str(local_root))
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.local_panel.set_entries(
+        [
+            type(
+                "Entry",
+                (),
+                {"name": "app.txt", "is_dir": False, "size_bytes": 5, "modified_time": None},
+            )(),
+        ]
+    )
+    window.remote_panel.set_entries(
+        [
+            type(
+                "Entry",
+                (),
+                {"name": "app.txt", "is_dir": False, "size_bytes": 2, "modified_time": None},
+            )(),
+        ]
+    )
+
+    window.local_panel.table.selectRow(1)
+    qtbot.mouseClick(window.local_panel.action_button, Qt.MouseButton.LeftButton)
+
+    assert decisions == ["app.txt"]
+    assert controller.uploads == [(local_root / "app.txt", PurePosixPath("/home/deploy/app.txt"))]
+    assert controller.upload_conflict_policies == [ConflictPolicy.RENAME]
+
+
 def test_main_window_renders_transfer_rows_and_queue_action_buttons(qtbot, tmp_path) -> None:
     controller = FakeController()
     window = MainWindow(controller=controller)
@@ -1952,6 +2003,82 @@ def test_main_window_renders_transfer_rows_and_queue_action_buttons(qtbot, tmp_p
     assert controller.resumed == ["task-1"]
     assert controller.canceled == ["task-1"]
     assert controller.retried == ["task-1"]
+
+
+def test_transfer_center_shows_directory_progress(qtbot, tmp_path) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    first = TransferItem(
+        id="item-1",
+        task_id="task-1",
+        server_id="site-1",
+        direction=Direction.UPLOAD,
+        source_path=tmp_path / "site" / "assets" / "app.js",
+        destination_path=PurePosixPath("/home/deploy/site/assets/app.js"),
+        temporary_path=PurePosixPath("/home/deploy/site/assets/.filezall.app.js.part"),
+        size_bytes=6,
+        protocol=Protocol.SFTP,
+        bytes_transferred=6,
+        status=TransferStatus.COMPLETED,
+    )
+    second = TransferItem(
+        id="item-2",
+        task_id="task-1",
+        server_id="site-1",
+        direction=Direction.UPLOAD,
+        source_path=tmp_path / "site" / "index.html",
+        destination_path=PurePosixPath("/home/deploy/site/index.html"),
+        temporary_path=PurePosixPath("/home/deploy/site/.filezall.index.html.part"),
+        size_bytes=5,
+        protocol=Protocol.SFTP,
+        bytes_transferred=2,
+        status=TransferStatus.RUNNING,
+    )
+
+    window.set_transfer_items([first, second])
+
+    assert window.transfer_summary_label.text() == (
+        "task-1: 2 files, 8 / 11 bytes, current index.html"
+    )
+
+
+def test_dragging_local_files_to_remote_queues_upload(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    local_file = tmp_path / "upload.txt"
+    local_file.write_text("hello", encoding="utf-8")
+    window.remote_panel.path_edit.setText("/home/deploy")
+
+    window._handle_remote_drop([local_file])
+
+    assert controller.queued == [
+        (local_file, PurePosixPath("/home/deploy/upload.txt"), Direction.UPLOAD)
+    ]
+
+
+def test_dragging_remote_rows_to_local_queues_download(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.local_panel.path_edit.setText(str(tmp_path))
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.remote_panel.set_entries(
+        [
+            type(
+                "Entry",
+                (),
+                {"name": "remote.txt", "is_dir": False, "size_bytes": 1, "modified_time": None},
+            )(),
+        ]
+    )
+    window.remote_panel.table.selectRow(1)
+
+    window._handle_local_drop()
+
+    assert controller.queued == [
+        (PurePosixPath("/home/deploy/remote.txt"), tmp_path / "remote.txt", Direction.DOWNLOAD)
+    ]
 
 
 def test_main_window_renders_resource_snapshot_and_process_detail(qtbot) -> None:

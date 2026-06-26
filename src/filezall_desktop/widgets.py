@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import PurePath
+from pathlib import Path, PurePath
 
 from PySide6.QtCore import QModelIndex, QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
@@ -68,6 +68,8 @@ class ConnectionBar(QWidget):
 
 
 class HoverRowTableWidget(QTableWidget):
+    local_paths_dropped = Signal(object)
+
     def __init__(self, rows: int, columns: int, parent: QWidget | None = None) -> None:
         super().__init__(rows, columns, parent)
         self.hovered_row = -1
@@ -75,6 +77,7 @@ class HoverRowTableWidget(QTableWidget):
         self.full_row_selected_color = "#2563eb"
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
+        self.setAcceptDrops(True)
         self.setShowGrid(False)
 
     def set_full_row_hover_color(self, color: str) -> None:
@@ -99,6 +102,25 @@ class HoverRowTableWidget(QTableWidget):
     def leaveEvent(self, event) -> None:
         self.set_hovered_row(-1)
         super().leaveEvent(event)
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event) -> None:
+        if event.mimeData().hasUrls():
+            paths = [
+                Path(url.toLocalFile())
+                for url in event.mimeData().urls()
+                if url.isLocalFile()
+            ]
+            if paths:
+                self.local_paths_dropped.emit(paths)
+                event.acceptProposedAction()
+                return
+        super().dropEvent(event)
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)

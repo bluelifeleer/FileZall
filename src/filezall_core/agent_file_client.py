@@ -8,6 +8,7 @@ from urllib import parse, request
 
 from filezall_core.agent_transfer import AgentTransferClient
 from filezall_core.models import RemoteFileEntry, SiteProfile
+from filezall_core.protocols import walk_remote_directory
 
 
 class AgentHttpFileClient:
@@ -53,6 +54,9 @@ class AgentHttpFileClient:
             )
             for row in payload.get("entries", [])
         ]
+
+    def walk_directory(self, path: PurePosixPath) -> list[RemoteFileEntry]:
+        return walk_remote_directory(self, path)
 
     def upload_file(self, local_path: Path, remote_path: PurePosixPath) -> None:
         self.upload_file_range(local_path, remote_path, offset=0)

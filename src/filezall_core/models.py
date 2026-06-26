@@ -27,6 +27,7 @@ class ConflictPolicy(StrEnum):
     OVERWRITE = "overwrite"
     SKIP = "skip"
     RENAME = "rename"
+    NEWER_ONLY = "newer_only"
 
 
 class TransferStatus(StrEnum):

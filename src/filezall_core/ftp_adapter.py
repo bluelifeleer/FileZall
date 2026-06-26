@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from filezall_core.models import Protocol, RemoteFileEntry, SiteProfile
-from filezall_core.protocols import RemoteConnectionError
+from filezall_core.protocols import RemoteConnectionError, walk_remote_directory
 
 
 class FtpAdapter:
@@ -46,6 +46,9 @@ class FtpAdapter:
             for name, facts in self._require_client().mlsd(str(path))
         ]
         return sorted(entries, key=lambda entry: (not entry.is_dir, entry.name.lower()))
+
+    def walk_directory(self, path: PurePosixPath) -> list[RemoteFileEntry]:
+        return walk_remote_directory(self, path)
 
     def upload_file(self, local_path: Path, remote_path: PurePosixPath) -> None:
         with local_path.open("rb") as file:

@@ -30,9 +30,18 @@ from filezall_core.app_paths import resolve_app_paths
 from filezall_core.agent_deployment import classify_agent_error
 from filezall_core.diagnostics import DiagnosticPackageBuilder
 from filezall_core.log_service import TransferLogService
-from filezall_core.models import AuthMode, Direction, Protocol, SiteProfile, TransferItem
+from filezall_core.models import (
+    AuthMode,
+    ConflictPolicy,
+    Direction,
+    Protocol,
+    SiteProfile,
+    TransferItem,
+    TransferStatus,
+)
 from filezall_core.resource_models import ProcessDetail, ResourceSnapshot
 from filezall_desktop.assets import app_icon
+from filezall_desktop.conflict_dialog import choose_conflict_policy
 from filezall_desktop.controller import MainWindowController, classify_connection_error
 from filezall_desktop.i18n import (
     EN_LANGUAGE,
@@ -326,6 +335,7 @@ class MainWindow(QMainWindow):
         new_session_factory=None,
         agent_install_service=None,
         onboarding_settings=None,
+        conflict_policy_prompt=None,
     ) -> None:
         super().__init__()
         self.log_service = TransferLogService()
@@ -341,6 +351,7 @@ class MainWindow(QMainWindow):
         self._rename_prompt = rename_prompt or _prompt_rename
         self._new_session_factory = new_session_factory
         self._onboarding_settings = onboarding_settings
+        self._conflict_policy_prompt = conflict_policy_prompt or choose_conflict_policy
         self._site_repository = site_repository or getattr(controller, "_site_repository", None)
         self._should_confirm_remember_secret = controller is None
         self._heartbeat_failed_logged = False
@@ -804,8 +815,10 @@ class MainWindow(QMainWindow):
         transfer_actions.addWidget(self.cancel_transfer_button)
         transfer_actions.addWidget(self.retry_transfer_button)
         self.monitoring_status_label = QLabel("", transfer_widget)
+        self.transfer_summary_label = QLabel("", transfer_widget)
 
         transfer_layout.addLayout(transfer_actions, stretch=0)
+        transfer_layout.addWidget(self.transfer_summary_label, stretch=0)
         transfer_layout.addWidget(self.monitoring_status_label, stretch=0)
         self.transfer_logs_label = QLabel("Transfer Logs", transfer_widget)
         transfer_layout.addWidget(self.transfer_logs_label, stretch=0)
@@ -990,6 +1003,7 @@ class MainWindow(QMainWindow):
             self.transfer_table.setItem(row, 2, QTableWidgetItem(_path_name(item.destination_path)))
             self.transfer_table.setItem(row, 3, QTableWidgetItem(_progress_text(item)))
             self.transfer_table.setItem(row, 4, QTableWidgetItem(item.status.value))
+        self.transfer_summary_label.setText(_transfer_summary_text(items))
 
     def set_resource_snapshot(self, snapshot: ResourceSnapshot) -> None:
         self.cpu_value_label.setText(f"{snapshot.cpu.percent:.1f}%")
@@ -1066,6 +1080,8 @@ class MainWindow(QMainWindow):
         self.remote_panel.create_file_action.triggered.connect(self._handle_remote_create_file_action)
         self.local_panel.action_button.clicked.connect(self._handle_upload_clicked)
         self.remote_panel.action_button.clicked.connect(self._handle_download_clicked)
+        self.remote_panel.table.local_paths_dropped.connect(self._handle_remote_drop)
+        self.local_panel.table.local_paths_dropped.connect(lambda _paths: self._handle_local_drop())
         self.pause_transfer_button.clicked.connect(self._handle_pause_transfer_clicked)
         self.resume_transfer_button.clicked.connect(self._handle_resume_transfer_clicked)
         self.cancel_transfer_button.clicked.connect(self._handle_cancel_transfer_clicked)
@@ -1546,15 +1562,47 @@ class MainWindow(QMainWindow):
         local_root = Path(self.local_panel.path_edit.text().strip() or Path.home())
         for local_name in self.local_panel.selected_names():
             local_path = local_root / local_name
-            self.controller.upload_file(local_path, self._remote_path_from_field() / local_name)
+            policy = self._conflict_policy_for_name(self.remote_panel, local_name)
+            if policy is None:
+                continue
+            self.controller.upload_file(
+                local_path,
+                self._remote_path_from_field() / local_name,
+                conflict_policy=policy,
+            )
 
     def _handle_download_clicked(self) -> None:
         local_root = Path(self.local_panel.path_edit.text().strip() or Path.home())
         for remote_name in self.remote_panel.selected_names():
+            policy = self._local_conflict_policy(local_root / remote_name)
+            if policy is None:
+                continue
             self.controller.download_file(
                 self._remote_path_from_field() / remote_name,
                 local_root / remote_name,
+                conflict_policy=policy,
             )
+
+    def _conflict_policy_for_name(self, panel, destination_name: str) -> ConflictPolicy | None:
+        if not self._panel_has_entry_named(panel, destination_name):
+            return ConflictPolicy.OVERWRITE
+        decision = self._conflict_policy_prompt(self, destination_name)
+        return decision.policy if decision is not None else None
+
+    def _local_conflict_policy(self, destination_path: Path) -> ConflictPolicy | None:
+        if not destination_path.exists():
+            return ConflictPolicy.OVERWRITE
+        decision = self._conflict_policy_prompt(self, destination_path.name)
+        return decision.policy if decision is not None else None
+
+    @staticmethod
+    def _panel_has_entry_named(panel, name: str) -> bool:
+        for row in range(panel.table.rowCount()):
+            if panel.is_parent_at(row):
+                continue
+            if panel.name_at(row) == name:
+                return True
+        return False
 
     def _handle_local_queue_action(self) -> None:
         for local_name in self.local_panel.selected_names():
@@ -1565,6 +1613,24 @@ class MainWindow(QMainWindow):
             )
 
     def _handle_remote_queue_action(self) -> None:
+        for remote_name in self.remote_panel.selected_names():
+            self.controller.add_to_queue(
+                self._remote_path_from_field() / remote_name,
+                self._local_root() / remote_name,
+                Direction.DOWNLOAD,
+            )
+
+    def _handle_remote_drop(self, local_paths) -> None:
+        for local_path in [Path(path) for path in local_paths]:
+            if not local_path.exists():
+                continue
+            self.controller.add_to_queue(
+                local_path,
+                self._remote_path_from_field() / local_path.name,
+                Direction.UPLOAD,
+            )
+
+    def _handle_local_drop(self) -> None:
         for remote_name in self.remote_panel.selected_names():
             self.controller.add_to_queue(
                 self._remote_path_from_field() / remote_name,
@@ -1858,6 +1924,25 @@ def _progress_text(item: TransferItem) -> str:
     if item.size_bytes <= 0:
         return "0%"
     return f"{int(item.bytes_transferred * 100 / item.size_bytes)}%"
+
+
+def _transfer_summary_text(items: list[TransferItem]) -> str:
+    if not items:
+        return ""
+    task_id = items[0].task_id
+    task_items = [item for item in items if item.task_id == task_id]
+    if len(task_items) <= 1:
+        return ""
+    total_bytes = sum(item.size_bytes for item in task_items)
+    completed_bytes = sum(item.bytes_transferred for item in task_items)
+    current = next(
+        (item for item in task_items if item.status is not TransferStatus.COMPLETED),
+        task_items[-1],
+    )
+    return (
+        f"{task_id}: {len(task_items)} files, "
+        f"{completed_bytes} / {total_bytes} bytes, current {_path_name(current.destination_path)}"
+    )
 
 
 def _disk_text(snapshot: ResourceSnapshot) -> str:

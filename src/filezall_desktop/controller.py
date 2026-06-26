@@ -8,6 +8,7 @@ from uuid import uuid4
 from filezall_core.agent_deployment import classify_agent_error
 from filezall_core.capabilities import resource_monitoring_message
 from filezall_core.client_factory import create_remote_client
+from filezall_core.directory_plan import plan_local_directory
 from filezall_core.local_files import list_local_directory
 from filezall_core.models import AuthMode, ConflictPolicy, Direction, Protocol, SiteProfile, TransferTask
 from filezall_core.resource_monitor import ResourceMonitoringUnavailable
@@ -179,15 +180,32 @@ class MainWindowController:
             return False
         return True
 
-    def upload_file(self, local_path: Path, remote_path: PurePosixPath) -> None:
+    def upload_file(
+        self,
+        local_path: Path,
+        remote_path: PurePosixPath,
+        conflict_policy: ConflictPolicy = ConflictPolicy.OVERWRITE,
+    ) -> None:
         if self._queue_service is not None and self._connected_site is not None:
-            self._queue_upload_file(local_path, remote_path)
+            if local_path.is_dir():
+                self._queue_upload_directory(
+                    local_path,
+                    remote_path,
+                    conflict_policy=conflict_policy,
+                )
+                return
+            self._queue_upload_file(local_path, remote_path, conflict_policy=conflict_policy)
             return
         self._require_session().upload_file(local_path, remote_path)
         self._window.show_status(f"Uploaded {local_path.name}")
         self._log(f"Uploaded {local_path} to {remote_path}")
 
-    def download_file(self, remote_path: PurePosixPath, local_path: Path) -> None:
+    def download_file(
+        self,
+        remote_path: PurePosixPath,
+        local_path: Path,
+        conflict_policy: ConflictPolicy = ConflictPolicy.OVERWRITE,
+    ) -> None:
         self._require_session().download_file(remote_path, local_path)
         self._window.show_status(f"Downloaded {remote_path.name}")
         self._log(f"Downloaded {remote_path} to {local_path}")
@@ -221,7 +239,46 @@ class MainWindowController:
         self._window.show_status(f"Queued {direction.value} {source_path}")
         self._log(f"Queued {direction.value} {source_path} -> {destination_path}")
 
-    def _queue_upload_file(self, local_path: Path, remote_path: PurePosixPath) -> None:
+    def _queue_upload_directory(
+        self,
+        local_path: Path,
+        remote_path: PurePosixPath,
+        conflict_policy: ConflictPolicy,
+    ) -> None:
+        site = self._require_connected_site()
+        plan = plan_local_directory(local_path, remote_path, direction=Direction.UPLOAD)
+        task = TransferTask(
+            id=f"task-{uuid4()}",
+            server_id=site.id,
+            direction=Direction.UPLOAD,
+            source_path=local_path,
+            destination_path=remote_path,
+            protocol=site.protocol,
+            conflict_policy=conflict_policy,
+        )
+        items = [
+            task.create_item(
+                item_id=f"item-{uuid4()}",
+                relative_path=item.relative_path,
+                size_bytes=item.size_bytes,
+            )
+            for item in plan.items
+        ]
+        self._require_queue().add_task(task, items)
+        self._publish_transfer_items(site.id)
+        message = (
+            f"Queued directory upload {local_path.name}: "
+            f"{plan.total_files} files, {plan.total_bytes} bytes"
+        )
+        self._window.show_status(message)
+        self._log(message)
+
+    def _queue_upload_file(
+        self,
+        local_path: Path,
+        remote_path: PurePosixPath,
+        conflict_policy: ConflictPolicy,
+    ) -> None:
         site = self._require_connected_site()
         task = TransferTask(
             id=f"task-{uuid4()}",
@@ -230,7 +287,7 @@ class MainWindowController:
             source_path=local_path.parent,
             destination_path=remote_path.parent,
             protocol=site.protocol,
-            conflict_policy=ConflictPolicy.OVERWRITE,
+            conflict_policy=conflict_policy,
         )
         item = task.create_item(
             item_id=f"item-{uuid4()}",

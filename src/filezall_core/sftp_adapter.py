@@ -8,7 +8,7 @@ from pathlib import Path, PurePosixPath
 import paramiko
 
 from filezall_core.models import AuthMode, RemoteFileEntry, SiteProfile
-from filezall_core.protocols import RemoteConnectionError
+from filezall_core.protocols import RemoteConnectionError, walk_remote_directory
 
 
 class SftpAdapter:
@@ -68,6 +68,9 @@ class SftpAdapter:
                 )
             )
         return sorted(entries, key=lambda entry: (not entry.is_dir, entry.name.lower()))
+
+    def walk_directory(self, path: PurePosixPath) -> list[RemoteFileEntry]:
+        return walk_remote_directory(self, path)
 
     def upload_file(self, local_path: Path, remote_path: PurePosixPath) -> None:
         self._require_sftp().put(str(local_path), str(remote_path))

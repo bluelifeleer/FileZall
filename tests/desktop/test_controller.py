@@ -5,10 +5,12 @@ import pytest
 
 from filezall_core.models import (
     AuthMode,
+    Direction,
     LocalFileEntry,
     Protocol,
     RemoteFileEntry,
     SiteProfile,
+    TransferItem,
     TransferStatus,
 )
 from filezall_core.agent_deployment import AgentDetectionResult, AgentInstallResult
@@ -505,6 +507,46 @@ def test_controller_upload_file_adds_pending_item_and_updates_transfer_list(
     assert running.status is TransferStatus.RUNNING
     assert completed.status is TransferStatus.COMPLETED
     assert completed.bytes_transferred == 6
+
+
+def test_controller_queues_recursive_directory_upload(tmp_path: Path) -> None:
+    window = FakeWindow()
+    session = FakeSession()
+    queue = FakeQueue()
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: session,
+        queue_service=queue,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+        default_remote_path=PurePosixPath("/home/deploy"),
+    )
+    root = tmp_path / "site"
+    (root / "assets").mkdir(parents=True)
+    (root / "index.html").write_bytes(b"hello")
+    (root / "assets" / "app.js").write_bytes(b"abcdef")
+
+    controller.connect(site, password="secret")
+    controller.upload_file(root, PurePosixPath("/home/deploy/site"))
+
+    task = queue.saved_tasks[0]
+    items = queue.saved_items[0]
+    assert task.source_path == root
+    assert task.destination_path == PurePosixPath("/home/deploy/site")
+    assert task.direction is Direction.UPLOAD
+    assert [(item.source_path, item.destination_path, item.size_bytes) for item in items] == [
+        (root / "assets" / "app.js", PurePosixPath("/home/deploy/site/assets/app.js"), 6),
+        (root / "index.html", PurePosixPath("/home/deploy/site/index.html"), 5),
+    ]
+    assert window.statuses[-1] == "Queued directory upload site: 2 files, 11 bytes"
 
 
 def test_controller_heartbeat_checks_current_remote_directory() -> None:
