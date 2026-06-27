@@ -2364,6 +2364,48 @@ def test_transfer_center_shows_directory_progress(qtbot, tmp_path) -> None:
     )
 
 
+def test_transfer_center_coalesces_running_progress_but_flushes_terminal_status(
+    qtbot,
+    tmp_path,
+) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    def item(bytes_transferred: int, status: TransferStatus = TransferStatus.RUNNING):
+        return TransferItem(
+            id="item-1",
+            task_id="task-1",
+            server_id="site-1",
+            direction=Direction.UPLOAD,
+            source_path=tmp_path / "app.zip",
+            destination_path=PurePosixPath("/home/deploy/app.zip"),
+            temporary_path=PurePosixPath("/home/deploy/.filezall.app.zip.part"),
+            size_bytes=100,
+            protocol=Protocol.SFTP,
+            bytes_transferred=bytes_transferred,
+            status=status,
+        )
+
+    window.set_transfer_items([item(10)])
+    assert window.transfer_table.item(0, 3).text() == "10%"
+
+    window.set_transfer_items([item(20)])
+    window.set_transfer_items([item(30)])
+
+    assert window._optimistic_transfer_items[0].bytes_transferred == 30
+    assert window.transfer_table.item(0, 3).text() == "10%"
+
+    qtbot.waitUntil(
+        lambda: window.transfer_table.item(0, 3).text() == "30%",
+        timeout=1000,
+    )
+
+    window.set_transfer_items([item(100, TransferStatus.COMPLETED)])
+
+    assert window.transfer_table.item(0, 3).text() == "100%"
+    assert window.transfer_table.item(0, 8).text() == "Completed"
+
+
 def test_transfer_center_shows_metrics_columns(qtbot, tmp_path) -> None:
     window = MainWindow(controller=FakeController())
     qtbot.addWidget(window)

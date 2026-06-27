@@ -470,6 +470,12 @@ class MainWindow(QMainWindow):
         self.transfer_settings = TransferSettings()
         self.getting_started_dialog: GettingStartedDialog | None = None
         self.site_manager_dialog: SiteManagerDialog | None = None
+        self._rendered_transfer_items: list[TransferItem] = []
+        self._pending_transfer_items: list[TransferItem] | None = None
+        self.transfer_refresh_timer = QTimer(self)
+        self.transfer_refresh_timer.setInterval(75)
+        self.transfer_refresh_timer.setSingleShot(True)
+        self.transfer_refresh_timer.timeout.connect(self._flush_pending_transfer_items)
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
@@ -1346,7 +1352,38 @@ class MainWindow(QMainWindow):
             self.set_agent_status(True, version=version)
 
     def set_transfer_items(self, items: list[TransferItem]) -> None:
-        self._optimistic_transfer_items = list(items)
+        items = list(items)
+        self._optimistic_transfer_items = items
+        self.transfer_summary_label.setText(_transfer_summary_text(items))
+        if self._should_render_transfer_items_immediately(items):
+            self.transfer_refresh_timer.stop()
+            self._pending_transfer_items = None
+            self._render_transfer_items(items)
+            return
+        self._pending_transfer_items = items
+        if not self.transfer_refresh_timer.isActive():
+            self.transfer_refresh_timer.start()
+
+    def _should_render_transfer_items_immediately(self, items: list[TransferItem]) -> bool:
+        if not self._rendered_transfer_items:
+            return True
+        if len(items) != len(self._rendered_transfer_items):
+            return True
+        rendered_keys = [_transfer_render_key(item) for item in self._rendered_transfer_items]
+        next_keys = [_transfer_render_key(item) for item in items]
+        if rendered_keys != next_keys:
+            return True
+        return any(_is_terminal_transfer_status(item.status) for item in items)
+
+    def _flush_pending_transfer_items(self) -> None:
+        if self._pending_transfer_items is None:
+            return
+        items = self._pending_transfer_items
+        self._pending_transfer_items = None
+        self._render_transfer_items(items)
+
+    def _render_transfer_items(self, items: list[TransferItem]) -> None:
+        self._rendered_transfer_items = list(items)
         self.transfer_table.setRowCount(len(items))
         for row, item in enumerate(items):
             server_cell = QTableWidgetItem(item.server_id)
@@ -1361,7 +1398,6 @@ class MainWindow(QMainWindow):
             self.transfer_table.setItem(row, 7, QTableWidgetItem(item.failure_reason or item.last_error or ""))
             self.transfer_table.setItem(row, 8, QTableWidgetItem(_status_text(item.status)))
             _apply_transfer_row_style(self.transfer_table, row, item.status)
-        self.transfer_summary_label.setText(_transfer_summary_text(items))
 
     def set_resource_snapshot(self, snapshot: ResourceSnapshot) -> None:
         self._last_resource_snapshot = snapshot
@@ -2505,6 +2541,18 @@ def _remaining_text(item: TransferItem) -> str:
 
 def _status_text(status: TransferStatus) -> str:
     return status.value.replace("_", " ").title()
+
+
+def _is_terminal_transfer_status(status: TransferStatus) -> bool:
+    return status in {
+        TransferStatus.COMPLETED,
+        TransferStatus.FAILED,
+        TransferStatus.CANCELED,
+    }
+
+
+def _transfer_render_key(item: TransferItem) -> tuple[str, str]:
+    return (item.task_id, item.id)
 
 
 def _apply_transfer_row_style(

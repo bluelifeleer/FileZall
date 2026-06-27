@@ -208,3 +208,42 @@ Expected: all tests pass except the environment-gated live SFTP skip.
 
 - Consider extracting `FileEntryTableModel`, `HoverRowTableView`, and compatibility item wrappers into a dedicated module once process-list virtualization starts.
 - Apply the same model/view strategy to the process list or begin transfer-center refresh throttling, depending on which user-visible lag is most severe during validation.
+
+## Immediate Task 5: Transfer Center Refresh Throttling
+
+**Files:**
+- Modify: `src/filezall_desktop/main_window.py`
+- Modify: `tests/desktop/test_main_window.py`
+
+- [x] **Step 1: Write failing throttling test**
+
+Add a test that renders an initial running transfer row, sends multiple rapid running progress updates, asserts the visible table is not rebuilt immediately, waits for the coalesced update, and then verifies a terminal completed status flushes immediately.
+
+- [x] **Step 2: Split state update from table rendering**
+
+Keep `_optimistic_transfer_items` and the transfer summary current on every `set_transfer_items()` call, but move table materialization into `_render_transfer_items()`.
+
+- [x] **Step 3: Add coalesced refresh timer**
+
+Use a single-shot `transfer_refresh_timer` to batch repeated non-terminal progress updates for the same rendered transfer item set. Store only the latest pending snapshot.
+
+- [x] **Step 4: Preserve immediate visibility for important changes**
+
+Render immediately when the table is empty, row count changes, transfer identity changes, or any item reaches a terminal status: completed, failed, or canceled.
+
+- [x] **Step 5: Run verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py -k coalesces_running_progress
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py -k "transfer_center or transfer_progress or upload or download or retry"
+.\.venv\Scripts\python.exe -m pytest
+```
+
+Expected: all tests pass except the environment-gated live SFTP skip.
+
+## Next Milestone Target
+
+- Continue with queue scheduler and transfer throughput polish: explicit per-server concurrency, retry backoff metadata, and clearer pause/resume/cancel state transitions.
+- Alternatively apply model/view virtualization to the process list if process rows become a larger UI bottleneck during validation.
