@@ -1981,9 +1981,11 @@ def test_heartbeat_failure_logs_once_until_recovered(qtbot) -> None:
 
 
 def test_main_window_diagnostics_include_connection_and_heartbeat_failures(qtbot) -> None:
+    now = datetime(2026, 6, 27, 12, 0, tzinfo=UTC)
     controller = FailingConnectController()
     window = MainWindow(controller=controller)
     qtbot.addWidget(window)
+    window.connection_recovery_clock = lambda: now
     window.connection_bar.host_edit.setText("example.com")
     window.connection_bar.username_edit.setText("deploy")
 
@@ -2004,6 +2006,12 @@ def test_main_window_diagnostics_include_connection_and_heartbeat_failures(qtbot
         "last_error": "connect failed",
         "heartbeat_failures": 1,
         "last_heartbeat_error": "Heartbeat failed: disconnected",
+        "recovery": {
+            "state": "waiting",
+            "attempt": 1,
+            "next_retry_at": "2026-06-27T12:00:02+00:00",
+            "last_error": "Heartbeat failed: disconnected",
+        },
     }
 
 

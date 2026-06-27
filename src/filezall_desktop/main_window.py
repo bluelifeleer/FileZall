@@ -49,6 +49,7 @@ from filezall_core import __version__
 from filezall_core.app_paths import resolve_app_paths
 from filezall_core.agent_deployment import classify_agent_error
 from filezall_core.agent_status import AgentStatusViewModel, view_model_for_agent
+from filezall_core.connection_recovery import ConnectionRecoveryState
 from filezall_core.diagnostics import DiagnosticPackageBuilder
 from filezall_core.log_service import TransferLogService
 from filezall_core.models import (
@@ -474,6 +475,8 @@ class MainWindow(QMainWindow):
         self._last_connection_error: str | None = None
         self._heartbeat_failure_count = 0
         self._last_heartbeat_error: str | None = None
+        self._connection_recovery = ConnectionRecoveryState()
+        self.connection_recovery_clock: Callable[[], datetime] = lambda: datetime.now(UTC)
         self._agent_installed: bool | None = False
         self._agent_version: str | None = None
         self._agent_update_available = False
@@ -1355,6 +1358,7 @@ class MainWindow(QMainWindow):
             transfer_items,
             now=self.transfer_status_clock(),
         )
+        recovery = self._connection_recovery.snapshot()
         return {
             "connection": {
                 "state": self.connection_state_label.property("connectionState"),
@@ -1367,6 +1371,14 @@ class MainWindow(QMainWindow):
                 "last_error": self._last_connection_error,
                 "heartbeat_failures": self._heartbeat_failure_count,
                 "last_heartbeat_error": self._last_heartbeat_error,
+                "recovery": {
+                    "state": recovery.state,
+                    "attempt": recovery.attempt,
+                    "next_retry_at": recovery.next_retry_at.isoformat()
+                    if recovery.next_retry_at
+                    else None,
+                    "last_error": recovery.last_error,
+                },
             },
             "resource_refresh": {
                 "running": self._resource_refresh_running,
@@ -2524,6 +2536,7 @@ class MainWindow(QMainWindow):
             return
         if ok:
             self._heartbeat_failed_logged = False
+            self._connection_recovery.record_success()
             self._set_connection_state("Connected", "green")
         else:
             self._log_heartbeat_failure("Heartbeat failed: disconnected")
@@ -2532,6 +2545,7 @@ class MainWindow(QMainWindow):
     def _log_heartbeat_failure(self, message: str) -> None:
         self._heartbeat_failure_count += 1
         self._last_heartbeat_error = message
+        self._connection_recovery.record_failure(message, now=self.connection_recovery_clock())
         if self._heartbeat_failed_logged:
             return
         self.append_log(message)

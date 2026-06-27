@@ -1085,3 +1085,50 @@ Expected: recovery backoff, readiness, blocking, and reset behavior pass.
   user-visible logs and diagnostic state.
 - Extend rate-limit behavior to downloads once remote clients expose download
   progress callbacks consistently.
+
+## Immediate Task 25: Expose Connection Recovery Diagnostics
+
+**Files:**
+- Modify: `src/filezall_desktop/main_window.py`
+- Modify: `tests/desktop/test_main_window.py`
+
+- [x] **Step 1: Extend heartbeat diagnostic test**
+
+Require the main-window diagnostic connection block to include recovery state,
+attempt count, next retry time, and last heartbeat error after a heartbeat
+failure.
+
+- [x] **Step 2: Initialize recovery state in the window**
+
+Create a `ConnectionRecoveryState` instance in `MainWindow` and expose a
+testable recovery clock for deterministic diagnostics.
+
+- [x] **Step 3: Update recovery state from heartbeat results**
+
+Record recovery failure state on heartbeat failures and reset recovery state on
+successful heartbeat checks while preserving existing status-light and log
+behavior.
+
+- [x] **Step 4: Export recovery diagnostics**
+
+Add the recovery snapshot to the existing diagnostic `connection` block so
+support packages show whether FileZall is idle, waiting, or blocked after
+connection loss.
+
+- [x] **Step 5: Run targeted verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\core\test_connection_recovery.py tests\desktop\test_main_window.py -k "connection or heartbeat or diagnostic_package" -vv
+```
+
+Expected: recovery state, connection diagnostics, heartbeat logging, and status
+light tests pass.
+
+## Next Milestone Target
+
+- Add explicit user-visible reconnect actions using the recovery state without
+  surprising automatic reconnect behavior.
+- Extend rate-limit behavior to downloads once remote clients expose download
+  progress callbacks consistently.
