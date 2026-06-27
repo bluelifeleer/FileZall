@@ -534,10 +534,9 @@ def test_agent_install_progress_updates_status_card(qtbot) -> None:
         timeout=3000,
     )
 
-    assert [label.text() for label in window.agent_status_card.step_labels] == [
-        "1. Agent install: uploading package",
-        "2. Agent install: health check passed",
-    ]
+    assert window.agent_status_card.step_labels == []
+    assert "Agent install: uploading package" in window.log_view.toPlainText()
+    assert "Agent install: health check passed" in window.log_view.toPlainText()
 
 
 def test_main_window_logs_agent_install_failure_from_background(qtbot) -> None:
@@ -653,7 +652,10 @@ def test_file_panels_use_full_row_selection_for_actions(qtbot) -> None:
     assert not window.local_panel.table.showGrid()
     assert window.local_panel.table.itemDelegate().uses_full_row_activity
     assert window.local_panel.table.itemDelegate().clears_cell_selection_paint
+    assert not window.local_panel.table.itemDelegate().fills_cell_activity_background
     assert window.local_panel.table.full_row_hover_color == hover_color_for_theme(window.current_theme)
+    assert window.local_panel.path_edit.sizePolicy().horizontalStretch() == 1
+    assert window.local_panel.path_edit.minimumWidth() >= 260
     window.local_panel.table.set_hovered_row(1)
     assert window.local_panel.table.hovered_row == 1
 
@@ -2254,6 +2256,8 @@ def test_main_window_displays_monitoring_status(qtbot) -> None:
     window.set_monitoring_status("Resource monitoring requires SSH or FileZall Agent.")
 
     assert window.monitoring_status_label.text() == "Resource monitoring requires SSH or FileZall Agent."
+    assert window.monitoring_status_label.isHidden()
+    assert window.resource_monitor_label.toolTip() == "Resource monitoring requires SSH or FileZall Agent."
     assert window.agent_status_label.text() == "Agent not installed"
     assert not window.resource_install_agent_button.isHidden()
 
@@ -2983,8 +2987,16 @@ def test_process_table_uses_full_row_activity_and_double_click_loads_detail(qtbo
     assert window.process_table.selectionMode() == QAbstractItemView.SelectionMode.SingleSelection
     assert window.process_table.hasMouseTracking()
     assert window.process_table.itemDelegate().uses_full_row_activity
+    assert not window.process_table.itemDelegate().fills_cell_activity_background
     window.process_table.set_hovered_row(0)
     assert window.process_table.hovered_row == 0
+    assert (
+        window.process_model.data(
+            window.process_model.index(0, 5),
+            Qt.ItemDataRole.ToolTipRole,
+        )
+        == "python app.py"
+    )
 
     window.process_table.cellDoubleClicked.emit(0, 2)
 
@@ -3152,6 +3164,7 @@ def test_resource_snapshot_updates_usage_chart_history(qtbot) -> None:
     ]
     assert window.resource_content_splitter.widget(0) is window.process_table
     assert window.resource_content_splitter.widget(1) is window.resource_chart
+    assert window.resource_content_splitter.sizes()[0] == window.resource_content_splitter.sizes()[1]
 
 
 def test_resource_usage_chart_exposes_network_series_and_sample_interaction(qtbot) -> None:

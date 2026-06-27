@@ -151,7 +151,7 @@ QPushButton[buttonRole="danger"]:pressed {{
 QToolButton#pathButton {{
     padding: 0px;
 }}
-QTableWidget {{
+QTableWidget, QTableView {{
     background-color: {colors["table_bg"]};
     alternate-background-color: {colors["panel_bg"]};
     color: {colors["text"]};
@@ -160,11 +160,12 @@ QTableWidget {{
     selection-background-color: {colors["accent"]};
     selection-color: #ffffff;
 }}
-QTableWidget::item {{
+QTableWidget::item, QTableView::item {{
     padding: 5px 8px;
     border: 0;
 }}
-QTableWidget::item:hover {{
+QTableWidget::item:hover, QTableView::item:hover,
+QTableWidget::item:selected, QTableView::item:selected {{
     background: transparent;
 }}
 QHeaderView::section {{

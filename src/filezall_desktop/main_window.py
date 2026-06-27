@@ -1146,6 +1146,7 @@ class MainWindow(QMainWindow):
         transfer_actions.addWidget(self.cancel_transfer_button)
         transfer_actions.addWidget(self.retry_transfer_button)
         self.monitoring_status_label = QLabel("", transfer_widget)
+        self.monitoring_status_label.hide()
         self.transfer_summary_label = QLabel("", transfer_widget)
 
         transfer_layout.addLayout(transfer_actions, stretch=0)
@@ -1168,6 +1169,7 @@ class MainWindow(QMainWindow):
         self.resource_monitor_label = QLabel("Resource Monitor", root)
         self.agent_status_card = AgentStatusCard(resource_widget)
         self.agent_status_card.show_danger_actions = False
+        self.agent_status_card.show_operation_steps = False
         resource_actions.addWidget(self.resource_monitor_label)
         resource_actions.addWidget(self.agent_status_label)
         resource_actions.addStretch(1)
@@ -1251,7 +1253,9 @@ class MainWindow(QMainWindow):
         self.resource_content_splitter = QSplitter(Qt.Orientation.Horizontal, resource_widget)
         self.resource_content_splitter.addWidget(self.process_table)
         self.resource_content_splitter.addWidget(self.resource_chart)
-        self.resource_content_splitter.setSizes([760, 360])
+        self.resource_content_splitter.setStretchFactor(0, 1)
+        self.resource_content_splitter.setStretchFactor(1, 1)
+        self.resource_content_splitter.setSizes([600, 600])
 
         resource_layout.addLayout(resource_actions, stretch=0)
         resource_layout.addWidget(self.agent_status_card, stretch=0)
@@ -1509,6 +1513,8 @@ class MainWindow(QMainWindow):
 
     def set_monitoring_status(self, message: str) -> None:
         self.monitoring_status_label.setText(message)
+        self.monitoring_status_label.hide()
+        self.resource_monitor_label.setToolTip(message)
         if "Agent" in message:
             self.set_agent_status(False)
             self.resource_install_agent_button.show()

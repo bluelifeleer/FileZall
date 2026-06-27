@@ -20,6 +20,8 @@ class AgentResourceService:
         self._proc_root = proc_root
         self._clock = clock
         self._previous_cpu_stat: str | None = self._read_cpu_stat()
+        self._previous_process_total: int | None = _cpu_total_from_stat(self._previous_cpu_stat)
+        self._previous_process_cpu_times: dict[int, int] = self._read_process_cpu_times()
         self._previous_network_sample: tuple[dict[str, int], float] | None = (
             self._read_network_sample()
         )
@@ -38,16 +40,36 @@ class AgentResourceService:
         if not self._proc_root.exists():
             return {"processes": []}
         memory_total = self._memory().get("total_bytes", 0)
+        current_cpu_stat = self._read_cpu_stat()
+        current_process_total = _cpu_total_from_stat(current_cpu_stat)
+        previous_process_total = self._previous_process_total
+        previous_process_cpu_times = self._previous_process_cpu_times
+        current_process_cpu_times: dict[int, int] = {}
         rows = []
         for child in self._proc_root.iterdir():
             if child.name.isdigit():
+                pid = int(child.name)
+                process_cpu_time = _process_cpu_time(child / "stat")
+                cpu_percent = 0.0
+                if process_cpu_time is not None:
+                    current_process_cpu_times[pid] = process_cpu_time
+                    cpu_percent = _process_cpu_percent(
+                        previous_process_cpu_times.get(pid),
+                        process_cpu_time,
+                        previous_process_total,
+                        current_process_total,
+                    )
                 rows.append(
                     _summary_from_process_dir(
                         child.name,
                         child,
                         memory_total_bytes=memory_total,
+                        cpu_percent=cpu_percent,
                     )
                 )
+        if current_process_total is not None:
+            self._previous_process_total = current_process_total
+            self._previous_process_cpu_times = current_process_cpu_times
         return {"processes": sorted(rows, key=lambda row: row["pid"])}
 
     def process_detail(self, pid: int) -> dict:
@@ -126,6 +148,18 @@ class AgentResourceService:
             return None
         return parse_net_dev(net_dev), self._clock()
 
+    def _read_process_cpu_times(self) -> dict[int, int]:
+        if not self._proc_root.exists():
+            return {}
+        times = {}
+        for child in self._proc_root.iterdir():
+            if not child.name.isdigit():
+                continue
+            process_cpu_time = _process_cpu_time(child / "stat")
+            if process_cpu_time is not None:
+                times[int(child.name)] = process_cpu_time
+        return times
+
     @staticmethod
     def _disk_usage(path: Path) -> dict:
         if not hasattr(os, "statvfs"):
@@ -176,6 +210,27 @@ def parse_proc_stat(previous: str, current: str) -> float:
     return round((total_delta - idle_delta) * 100 / total_delta, 1)
 
 
+def _cpu_total_from_stat(line: str | None) -> int | None:
+    if line is None:
+        return None
+    return sum(_cpu_values(line))
+
+
+def _process_cpu_percent(
+    previous_process_time: int | None,
+    current_process_time: int,
+    previous_total: int | None,
+    current_total: int | None,
+) -> float:
+    if previous_process_time is None or previous_total is None or current_total is None:
+        return 0.0
+    total_delta = current_total - previous_total
+    if total_delta <= 0:
+        return 0.0
+    process_delta = max(current_process_time - previous_process_time, 0)
+    return round(process_delta * 100 / total_delta, 1)
+
+
 def parse_net_dev(text: str) -> dict:
     rx_bytes = 0
     tx_bytes = 0
@@ -202,6 +257,7 @@ def _summary_from_process_dir(
     process_dir: Path,
     *,
     memory_total_bytes: int,
+    cpu_percent: float = 0.0,
     status: str | None = None,
 ) -> dict:
     status = status if status is not None else _read_text(process_dir / "status")
@@ -213,10 +269,26 @@ def _summary_from_process_dir(
         "pid": int(pid),
         "user": _status_user(status),
         "name": _status_text(status, "Name") or "",
-        "cpu_percent": 0.0,
+        "cpu_percent": cpu_percent,
         "memory_percent": memory_percent,
         "command_line": _command_line(process_dir / "cmdline"),
     }
+
+
+def _process_cpu_time(path: Path) -> int | None:
+    stat = _read_text(path).strip()
+    if not stat:
+        return None
+    command_end = stat.rfind(")")
+    if command_end < 0:
+        return None
+    fields = stat[command_end + 2 :].split()
+    if len(fields) <= 12:
+        return None
+    try:
+        return int(fields[11]) + int(fields[12])
+    except ValueError:
+        return None
 
 
 def _status_text(status: str, key: str) -> str | None:

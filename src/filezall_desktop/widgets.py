@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPushButton,
+    QSizePolicy,
     QStyledItemDelegate,
     QStyle,
     QStyleOptionViewItem,
@@ -353,27 +354,31 @@ class HoverRowTableView(QTableView):
 class HoverRowDelegate(QStyledItemDelegate):
     uses_full_row_activity = True
     clears_cell_selection_paint = True
+    fills_cell_activity_background = False
 
     def paint(self, painter, option, index) -> None:
         table = self.parent()
-        if hasattr(table, "hovered_row") and (
+        active = hasattr(table, "hovered_row") and (
             index.row() == table.hovered_row
             or option.state & QStyle.StateFlag.State_Selected
-        ):
+        )
+        if active:
             option = QStyleOptionViewItem(option)
             self.initStyleOption(option, index)
-            painter.save()
-            painter.fillRect(
-                option.rect,
-                QColor(
-                    table.full_row_hover_color
-                    if index.row() == table.hovered_row
-                    else table.full_row_selected_color
-                ),
-            )
-            painter.restore()
+            if index.column() == 0:
+                painter.save()
+                painter.fillRect(
+                    QRect(0, option.rect.top(), table.viewport().width(), option.rect.height()),
+                    QColor(
+                        table.full_row_hover_color
+                        if index.row() == table.hovered_row
+                        else table.full_row_selected_color
+                    ),
+                )
+                painter.restore()
             option.state &= ~QStyle.StateFlag.State_Selected
             option.state &= ~QStyle.StateFlag.State_HasFocus
+            option.state &= ~QStyle.StateFlag.State_MouseOver
             option.showDecorationSelected = False
         super().paint(painter, option, index)
 
@@ -610,6 +615,8 @@ class ProcessTableModel(QAbstractTableModel):
                 return getattr(process, "command_line", "")
         if role == Qt.ItemDataRole.UserRole:
             return process.pid
+        if role == Qt.ItemDataRole.ToolTipRole and column == 5:
+            return getattr(process, "command_line", "")
         return None
 
     def headerData(
@@ -669,6 +676,11 @@ class FilePanel(QWidget):
         header = QHBoxLayout()
         self.title = QLabel(title, self)
         self.path_edit = DirectoryHistoryComboBox(self)
+        self.path_edit.setMinimumWidth(260)
+        path_policy = self.path_edit.sizePolicy()
+        path_policy.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+        path_policy.setHorizontalStretch(1)
+        self.path_edit.setSizePolicy(path_policy)
         self.path_button = QToolButton(self)
         self.path_button.setObjectName("pathButton")
         self.path_button.setText(path_button_text)
@@ -696,7 +708,7 @@ class FilePanel(QWidget):
         self.load_progress_label = QLabel("", self)
 
         header.addWidget(self.title)
-        header.addWidget(self.path_edit)
+        header.addWidget(self.path_edit, stretch=1)
         header.addWidget(self.path_button)
         header.addWidget(self.refresh_button)
         header.addWidget(self.action_button)

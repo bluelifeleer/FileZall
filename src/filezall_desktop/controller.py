@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
@@ -75,6 +76,7 @@ class MainWindowController:
         self._connected_site: SiteProfile | None = None
         self._connected_secret: str | None = None
         self._remote_directory_cache: dict[tuple[str, str], list] = {}
+        self._remote_session_lock = threading.RLock()
 
     def load_saved_sites(self) -> None:
         if self._site_repository is None:
@@ -111,15 +113,17 @@ class MainWindowController:
         logs: list[str] = []
         site = self._save_site_if_configured(site, password, remember_secret)
         password = password or self._secret_for_site(site)
-        self._session = self._session_factory(site)
-        self._connected_site = site
-        self._connected_secret = password
-        self._remote_directory_cache.clear()
-        entries = self._session.connect_and_list_default(password=password)
-        self._cache_remote_directory(self._session.current_remote_path, entries)
+        with self._remote_session_lock:
+            self._session = self._session_factory(site)
+            self._connected_site = site
+            self._connected_secret = password
+            self._remote_directory_cache.clear()
+            entries = self._session.connect_and_list_default(password=password)
+            self._cache_remote_directory(self._session.current_remote_path, entries)
+            remote_path = self._session.current_remote_path
         result = {
             "entries": entries,
-            "remote_path": self._session.current_remote_path,
+            "remote_path": remote_path,
             "monitoring_status": resource_monitoring_message(site.protocol),
             "agent_status": None,
             "agent_status_sequence": [],
@@ -164,17 +168,18 @@ class MainWindowController:
         self._window.show_status(result["status"])
 
     def disconnect(self) -> None:
-        session = self._session
-        try:
-            if session is not None:
-                closer = getattr(session, "disconnect", None) or getattr(session, "close", None)
-                if closer is not None:
-                    closer()
-        finally:
-            self._session = None
-            self._connected_site = None
-            self._connected_secret = None
-            self._remote_directory_cache.clear()
+        with self._remote_session_lock:
+            session = self._session
+            try:
+                if session is not None:
+                    closer = getattr(session, "disconnect", None) or getattr(session, "close", None)
+                    if closer is not None:
+                        closer()
+            finally:
+                self._session = None
+                self._connected_site = None
+                self._connected_secret = None
+                self._remote_directory_cache.clear()
         self._window.show_status("Disconnected")
         self._log("Disconnected")
 
@@ -190,14 +195,16 @@ class MainWindowController:
             cached_entries = self._cached_remote_directory(path)
             if cached_entries is not None:
                 return cached_entries, path, f"Loaded remote directory {path}"
-        entries = self._require_session().list_directory(path)
-        self._cache_remote_directory(path, entries)
+        with self._remote_session_lock:
+            entries = self._require_session().list_directory(path)
+            self._cache_remote_directory(path, entries)
         return entries, path, f"Loaded remote directory {path}"
 
     def heartbeat(self) -> bool:
         try:
-            session = self._require_session()
-            session.list_directory(session.current_remote_path)
+            with self._remote_session_lock:
+                session = self._require_session()
+                session.list_directory(session.current_remote_path)
         except Exception:
             return False
         return True
@@ -218,7 +225,8 @@ class MainWindowController:
                 return
             self._queue_upload_file(local_path, remote_path, conflict_policy=conflict_policy)
             return
-        self._require_session().upload_file(local_path, remote_path)
+        with self._remote_session_lock:
+            self._require_session().upload_file(local_path, remote_path)
         self._invalidate_remote_directory_cache_for(remote_path.parent)
         self._window.show_status(f"Uploaded {local_path.name}")
         self._log(f"Uploaded {local_path} to {remote_path}")
@@ -236,7 +244,8 @@ class MainWindowController:
                 conflict_policy=conflict_policy,
             )
             return
-        self._require_session().download_file(remote_path, local_path)
+        with self._remote_session_lock:
+            self._require_session().download_file(remote_path, local_path)
         self._invalidate_remote_directory_cache_for(remote_path.parent)
         self._window.show_status(f"Downloaded {remote_path.name}")
         self._log(f"Downloaded {remote_path} to {local_path}")
@@ -249,7 +258,8 @@ class MainWindowController:
     ) -> None:
         if remote:
             remote_path = PurePosixPath(path)
-            self._require_session().delete_path(remote_path, is_dir=bool(is_dir))
+            with self._remote_session_lock:
+                self._require_session().delete_path(remote_path, is_dir=bool(is_dir))
             self._invalidate_remote_directory_cache_for(remote_path.parent, remote_path)
             message = f"Deleted remote path {remote_path}"
         else:
@@ -340,11 +350,12 @@ class MainWindowController:
                 progress_callback=lambda _item: self._publish_transfer_items(site.id),
             )
         else:
-            queue.run_next(
-                site.id,
-                client=client,
-                progress_callback=lambda _item: self._publish_transfer_items(site.id),
-            )
+            with self._remote_session_lock:
+                queue.run_next(
+                    site.id,
+                    client=client,
+                    progress_callback=lambda _item: self._publish_transfer_items(site.id),
+                )
         self._invalidate_remote_directory_cache_for(remote_path.parent)
         self._publish_transfer_items(site.id)
         self._window.show_status(f"Uploaded {local_path.name}")
@@ -370,7 +381,8 @@ class MainWindowController:
         client = getattr(session, "client", None)
         remote_size = 0
         if client is not None and hasattr(client, "remote_size"):
-            remote_size = client.remote_size(remote_path) or 0
+            with self._remote_session_lock:
+                remote_size = client.remote_size(remote_path) or 0
         item = task.create_item(
             item_id=f"item-{uuid4()}",
             relative_path=PurePosixPath(remote_path.name),
@@ -387,11 +399,12 @@ class MainWindowController:
                 progress_callback=lambda _item: self._publish_transfer_items(site.id),
             )
         else:
-            queue.run_next(
-                site.id,
-                client=client,
-                progress_callback=lambda _item: self._publish_transfer_items(site.id),
-            )
+            with self._remote_session_lock:
+                queue.run_next(
+                    site.id,
+                    client=client,
+                    progress_callback=lambda _item: self._publish_transfer_items(site.id),
+                )
         self._publish_transfer_items(site.id)
         self._window.show_status(f"Downloaded {remote_path.name}")
         self._log(f"Downloaded {remote_path} to {local_path}")
@@ -413,7 +426,8 @@ class MainWindowController:
     def create_directory(self, path: Path | PurePosixPath, remote: bool) -> None:
         if remote:
             target = PurePosixPath(path) / "New Folder"
-            self._require_session().make_directory(target)
+            with self._remote_session_lock:
+                self._require_session().make_directory(target)
             self._invalidate_remote_directory_cache_for(PurePosixPath(path), target)
             message = f"Created remote directory {target}"
         else:
@@ -426,7 +440,8 @@ class MainWindowController:
     def create_file(self, path: Path | PurePosixPath, remote: bool) -> None:
         if remote:
             target = PurePosixPath(path) / "New File.txt"
-            self._require_session().create_file(target)
+            with self._remote_session_lock:
+                self._require_session().create_file(target)
             self._invalidate_remote_directory_cache_for(PurePosixPath(path))
             message = f"Created remote file {target}"
         else:
@@ -445,10 +460,11 @@ class MainWindowController:
         if remote:
             remote_source = PurePosixPath(source_path)
             remote_destination = PurePosixPath(destination_path)
-            self._require_session().rename(
-                remote_source,
-                remote_destination,
-            )
+            with self._remote_session_lock:
+                self._require_session().rename(
+                    remote_source,
+                    remote_destination,
+                )
             self._invalidate_remote_directory_cache_for(
                 remote_source.parent,
                 remote_source,

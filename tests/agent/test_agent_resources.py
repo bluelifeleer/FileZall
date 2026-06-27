@@ -135,9 +135,58 @@ def test_agent_resource_service_processes_include_user_memory_and_command(tmp_pa
     assert detail["command_line"] == "python app.py --port 8000"
 
 
+def test_agent_resource_service_processes_report_cpu_between_samples(tmp_path: Path) -> None:
+    proc_root = tmp_path / "proc"
+    process_dir = proc_root / "123"
+    process_dir.mkdir(parents=True)
+    (proc_root / "stat").write_text("cpu  100 0 100 800 0 0 0 0 0 0\n", encoding="utf-8")
+    (proc_root / "meminfo").write_text("MemTotal: 1000 kB\nMemAvailable: 500 kB\n", encoding="utf-8")
+    (process_dir / "status").write_text(
+        "Name:\tpython\nUid:\t0\t0\t0\t0\nVmRSS:\t100 kB\n",
+        encoding="utf-8",
+    )
+    (process_dir / "cmdline").write_bytes(b"python\x00app.py\x00")
+    (process_dir / "stat").write_text(_process_stat(utime=10, stime=5), encoding="utf-8")
+    service = AgentResourceService(proc_root=proc_root)
+
+    (proc_root / "stat").write_text("cpu  150 0 150 900 0 0 0 0 0 0\n", encoding="utf-8")
+    (process_dir / "stat").write_text(_process_stat(utime=35, stime=10), encoding="utf-8")
+    summary = service.processes()["processes"][0]
+
+    assert summary["cpu_percent"] == 15.0
+
+
 def _net_dev(*, rx: int, tx: int) -> str:
     return f"""
 Inter-|   Receive                                                |  Transmit
  face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
   eth0: {rx} 8 0 0 0 0 0 0 {tx} 9 0 0 0 0 0 0
 """
+
+
+def _process_stat(*, utime: int, stime: int) -> str:
+    values = [
+        "123",
+        "(python)",
+        "S",
+        "1",
+        "1",
+        "1",
+        "0",
+        "-1",
+        "4194560",
+        "0",
+        "0",
+        "0",
+        "0",
+        str(utime),
+        str(stime),
+        "0",
+        "0",
+        "20",
+        "0",
+        "1",
+        "0",
+        "100",
+    ]
+    return " ".join(values) + "\n"

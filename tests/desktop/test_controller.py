@@ -1,3 +1,5 @@
+import threading
+import time
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
 
@@ -140,6 +142,25 @@ class FakeSession:
 
     def disconnect(self) -> None:
         self.disconnect_calls += 1
+
+
+class ConcurrentListSession(FakeSession):
+    def __init__(self) -> None:
+        super().__init__()
+        self.active_lists = 0
+        self.max_active_lists = 0
+        self._list_lock = threading.Lock()
+
+    def list_directory(self, path: PurePosixPath):
+        with self._list_lock:
+            self.active_lists += 1
+            self.max_active_lists = max(self.max_active_lists, self.active_lists)
+        try:
+            time.sleep(0.05)
+            return super().list_directory(path)
+        finally:
+            with self._list_lock:
+                self.active_lists -= 1
 
 
 class FakeRepository:
@@ -756,6 +777,53 @@ def test_controller_heartbeat_checks_current_remote_directory() -> None:
     session.fail_list = True
     assert controller.heartbeat() is False
     assert session.list_calls == [PurePosixPath("/home/deploy"), PurePosixPath("/home/deploy")]
+
+
+def test_controller_serializes_heartbeat_and_remote_directory_loads() -> None:
+    window = FakeWindow()
+    session = ConcurrentListSession()
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: session,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+    controller.connect(site, password="secret")
+    start = threading.Barrier(3)
+    errors = []
+
+    def run_heartbeat() -> None:
+        start.wait()
+        try:
+            controller.heartbeat()
+        except Exception as exc:  # pragma: no cover - test failure aid.
+            errors.append(exc)
+
+    def run_directory_load() -> None:
+        start.wait()
+        try:
+            controller.load_remote_directory(PurePosixPath("/home/deploy/releases"), force_refresh=True)
+        except Exception as exc:  # pragma: no cover - test failure aid.
+            errors.append(exc)
+
+    heartbeat_thread = threading.Thread(target=run_heartbeat)
+    directory_thread = threading.Thread(target=run_directory_load)
+    heartbeat_thread.start()
+    directory_thread.start()
+    start.wait()
+    heartbeat_thread.join(timeout=2)
+    directory_thread.join(timeout=2)
+
+    assert errors == []
+    assert session.max_active_lists == 1
 
 
 def test_controller_disconnects_active_session_and_clears_state() -> None:

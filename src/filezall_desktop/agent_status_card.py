@@ -13,6 +13,7 @@ class AgentStatusCard(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.show_danger_actions = True
+        self.show_operation_steps = True
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
         self.title_label = QLabel("Agent", self)
@@ -65,6 +66,8 @@ class AgentStatusCard(QWidget):
         self.step_labels = []
 
     def add_operation_step(self, message: str) -> None:
+        if not self.show_operation_steps:
+            return
         label = QLabel(f"{len(self.step_labels) + 1}. {message}", self)
         label.setWordWrap(True)
         self.step_labels.append(label)
