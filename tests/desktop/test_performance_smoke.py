@@ -4,7 +4,12 @@ from filezall_desktop.performance_smoke import compare_performance_reports, main
 
 
 def test_performance_smoke_reports_large_directory_and_transfer_queue(qtbot) -> None:
-    report = run_performance_smoke(directory_rows=8, transfer_rows=6)
+    report = run_performance_smoke(
+        directory_rows=8,
+        transfer_rows=6,
+        resource_samples=5,
+        log_rows=7,
+    )
 
     assert report["status"] == "passed"
     assert report["scenarios"]["large_directory"]["rows"] == 8
@@ -13,7 +18,15 @@ def test_performance_smoke_reports_large_directory_and_transfer_queue(qtbot) -> 
     assert report["scenarios"]["large_transfer_queue"]["rows"] == 6
     assert report["scenarios"]["large_transfer_queue"]["elapsed_ms"] >= 0
     assert report["scenarios"]["large_transfer_queue"]["passed"] is True
+    assert report["scenarios"]["repeated_resource_refresh"]["samples"] == 5
+    assert report["scenarios"]["repeated_resource_refresh"]["elapsed_ms"] >= 0
+    assert report["scenarios"]["repeated_resource_refresh"]["passed"] is True
+    assert report["scenarios"]["long_log_stream"]["rows"] == 7
+    assert report["scenarios"]["long_log_stream"]["elapsed_ms"] >= 0
+    assert report["scenarios"]["long_log_stream"]["passed"] is True
     assert report["diagnostic_state"]["transfer_queue"]["total"] == 6
+    assert report["diagnostic_state"]["logs"]["total_records"] == 7
+    assert report["diagnostic_state"]["resource_refresh"]["chart_samples"] == 5
 
 
 def test_performance_smoke_compares_report_to_baseline() -> None:
@@ -50,6 +63,8 @@ def test_performance_smoke_cli_writes_baseline_comparison(qtbot, tmp_path) -> No
                 "scenarios": {
                     "large_directory": {"elapsed_ms": 1000.0},
                     "large_transfer_queue": {"elapsed_ms": 1000.0},
+                    "repeated_resource_refresh": {"elapsed_ms": 1000.0},
+                    "long_log_stream": {"elapsed_ms": 1000.0},
                 }
             }
         ),
@@ -61,6 +76,10 @@ def test_performance_smoke_cli_writes_baseline_comparison(qtbot, tmp_path) -> No
             "--directory-rows",
             "3",
             "--transfer-rows",
+            "2",
+            "--resource-samples",
+            "2",
+            "--log-rows",
             "2",
             "--baseline",
             str(baseline_path),
@@ -75,4 +94,6 @@ def test_performance_smoke_cli_writes_baseline_comparison(qtbot, tmp_path) -> No
     assert set(report["baseline"]["comparison"]["scenarios"]) == {
         "large_directory",
         "large_transfer_queue",
+        "repeated_resource_refresh",
+        "long_log_stream",
     }

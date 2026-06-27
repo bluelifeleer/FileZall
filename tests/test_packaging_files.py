@@ -94,6 +94,8 @@ def test_performance_smoke_script_runs_desktop_smoke_module() -> None:
         "filezall_desktop.performance_smoke",
         "FILEZALL_PERF_DIRECTORY_ROWS",
         "FILEZALL_PERF_TRANSFER_ROWS",
+        "FILEZALL_PERF_RESOURCE_SAMPLES",
+        "FILEZALL_PERF_LOG_ROWS",
         "FILEZALL_PERF_BASELINE",
         "performance-smoke.json",
     ]:

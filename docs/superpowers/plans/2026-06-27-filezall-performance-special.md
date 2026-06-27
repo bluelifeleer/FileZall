@@ -637,3 +637,52 @@ performance smoke tests pass with the model/view table.
   performance coverage beyond file and transfer tables.
 - Start remote directory caching and explicit invalidation if real-server navigation
   still feels slow after UI-side table virtualization.
+
+## Immediate Task 15: Broaden Desktop Performance Smoke Scenarios
+
+**Files:**
+- Modify: `src/filezall_desktop/performance_smoke.py`
+- Modify: `scripts/performance-smoke.ps1`
+- Modify: `tests/desktop/test_performance_smoke.py`
+- Modify: `tests/test_packaging_files.py`
+
+- [x] **Step 1: Write failing smoke coverage tests**
+
+Extend the desktop smoke test so the report must include `repeated_resource_refresh`
+and `long_log_stream`, and require the script contract to expose environment variables
+for those sample sizes.
+
+- [x] **Step 2: Add repeated resource refresh scenario**
+
+Generate synthetic `ResourceSnapshot` samples and run the real
+`MainWindow.set_resource_snapshot()` path so labels, chart history, disk selectors,
+and process model updates are covered without a live server.
+
+- [x] **Step 3: Add long log stream scenario**
+
+Append synthetic log rows through `MainWindow.append_log()` so the real
+`TransferLogService` and `LogViewer.add_record()` path is measured.
+
+- [x] **Step 4: Wire CLI and PowerShell parameters**
+
+Add `--resource-samples` and `--log-rows` to the Python CLI, plus
+`FILEZALL_PERF_RESOURCE_SAMPLES` and `FILEZALL_PERF_LOG_ROWS` to the Windows script.
+
+- [x] **Step 5: Run targeted verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_performance_smoke.py -vv
+.\.venv\Scripts\python.exe -m filezall_desktop.performance_smoke --directory-rows 4 --transfer-rows 3 --resource-samples 3 --log-rows 4 --output .filezall-smoke-performance.json
+```
+
+Expected: the smoke report contains four scenarios and diagnostic state reflects the
+log count and resource chart sample count.
+
+## Next Milestone Target
+
+- Start remote directory caching with explicit invalidation on refresh, create/delete,
+  rename, upload, and download.
+- Add Agent batch listing only after the cache layer has tests around freshness and
+  invalidation semantics.

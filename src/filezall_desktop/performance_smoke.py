@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication
 
 from filezall_core.models import Direction, LocalFileEntry, Protocol, TransferItem, TransferStatus
 from filezall_core.performance import PerformanceBudget, measure_operation
+from filezall_core.resource_models import CpuStats, DiskUsage, MemoryStats, NetworkStats, ProcessSummary, ResourceSnapshot
 from filezall_desktop.main_window import MainWindow
 
 
@@ -27,8 +28,12 @@ def run_performance_smoke(
     *,
     directory_rows: int = 5_000,
     transfer_rows: int = 2_000,
+    resource_samples: int = 120,
+    log_rows: int = 5_000,
     directory_budget_ms: float = 1_500,
     transfer_budget_ms: float = 2_500,
+    resource_budget_ms: float = 1_500,
+    log_budget_ms: float = 1_500,
 ) -> dict:
     app = _ensure_app()
     window = MainWindow(controller=_SmokeController())
@@ -47,6 +52,19 @@ def run_performance_smoke(
         )
         app.processEvents()
 
+        resource_snapshots = _resource_snapshots(resource_samples)
+        resource_result = measure_operation(
+            "repeated_resource_refresh",
+            lambda: [window.set_resource_snapshot(snapshot) for snapshot in resource_snapshots],
+        )
+        app.processEvents()
+
+        log_result = measure_operation(
+            "long_log_stream",
+            lambda: [window.append_log(f"Smoke transfer log row {index}") for index in range(log_rows)],
+        )
+        app.processEvents()
+
         directory_check = PerformanceBudget(
             name="large_directory",
             max_elapsed_ms=directory_budget_ms,
@@ -55,9 +73,19 @@ def run_performance_smoke(
             name="large_transfer_queue",
             max_elapsed_ms=transfer_budget_ms,
         ).check(transfer_result)
+        resource_check = PerformanceBudget(
+            name="repeated_resource_refresh",
+            max_elapsed_ms=resource_budget_ms,
+        ).check(resource_result)
+        log_check = PerformanceBudget(
+            name="long_log_stream",
+            max_elapsed_ms=log_budget_ms,
+        ).check(log_result)
         scenarios = {
             "large_directory": _scenario_report(directory_check, directory_rows),
             "large_transfer_queue": _scenario_report(transfer_check, transfer_rows),
+            "repeated_resource_refresh": _scenario_report(resource_check, resource_samples, size_key="samples"),
+            "long_log_stream": _scenario_report(log_check, log_rows),
         }
         return {
             "status": "passed" if all(item["passed"] for item in scenarios.values()) else "failed",
@@ -74,8 +102,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run FileZall desktop performance smoke checks.")
     parser.add_argument("--directory-rows", type=int, default=5_000)
     parser.add_argument("--transfer-rows", type=int, default=2_000)
+    parser.add_argument("--resource-samples", type=int, default=120)
+    parser.add_argument("--log-rows", type=int, default=5_000)
     parser.add_argument("--directory-budget-ms", type=float, default=1_500)
     parser.add_argument("--transfer-budget-ms", type=float, default=2_500)
+    parser.add_argument("--resource-budget-ms", type=float, default=1_500)
+    parser.add_argument("--log-budget-ms", type=float, default=1_500)
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--output", type=Path, default=Path("performance-smoke.json"))
     args = parser.parse_args(argv)
@@ -83,8 +115,12 @@ def main(argv: list[str] | None = None) -> int:
     report = run_performance_smoke(
         directory_rows=args.directory_rows,
         transfer_rows=args.transfer_rows,
+        resource_samples=args.resource_samples,
+        log_rows=args.log_rows,
         directory_budget_ms=args.directory_budget_ms,
         transfer_budget_ms=args.transfer_budget_ms,
+        resource_budget_ms=args.resource_budget_ms,
+        log_budget_ms=args.log_budget_ms,
     )
     if args.baseline is not None:
         baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
@@ -180,9 +216,45 @@ def _transfer_items(count: int) -> list[TransferItem]:
     return items
 
 
-def _scenario_report(check, rows: int) -> dict:
+def _resource_snapshots(count: int) -> list[ResourceSnapshot]:
+    return [
+        ResourceSnapshot(
+            cpu=CpuStats(percent=float(index % 100)),
+            memory=MemoryStats(
+                total_bytes=16 * 1024 * 1024 * 1024,
+                used_bytes=(4 * 1024 * 1024 * 1024) + index * 1024,
+                available_bytes=(12 * 1024 * 1024 * 1024) - index * 1024,
+            ),
+            disks=[
+                DiskUsage(
+                    mount="/",
+                    total_bytes=256 * 1024 * 1024 * 1024,
+                    used_bytes=(80 * 1024 * 1024 * 1024) + index * 2048,
+                    available_bytes=(176 * 1024 * 1024 * 1024) - index * 2048,
+                )
+            ],
+            network=NetworkStats(
+                rx_bytes_per_sec=1024 * (index + 1),
+                tx_bytes_per_sec=2048 * (index + 1),
+            ),
+            processes=[
+                ProcessSummary(
+                    pid=1000 + process_index,
+                    user="smoke",
+                    name=f"process-{process_index}",
+                    cpu_percent=float((index + process_index) % 100),
+                    memory_percent=float(process_index % 20),
+                )
+                for process_index in range(20)
+            ],
+        )
+        for index in range(count)
+    ]
+
+
+def _scenario_report(check, rows: int, *, size_key: str = "rows") -> dict:
     return {
-        "rows": rows,
+        size_key: rows,
         "passed": check.passed,
         "elapsed_ms": check.elapsed_ms,
         "budget_ms": check.max_elapsed_ms,
