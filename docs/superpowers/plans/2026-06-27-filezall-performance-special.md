@@ -339,3 +339,45 @@ Expected: all tests pass except the environment-gated live SFTP skip.
 
 - Tighten pause/resume/cancel state transitions for in-flight items and ensure future asynchronous runners can interrupt or settle them predictably.
 - Consider surfacing retry countdown as a relative timer in the UI after the next transfer-center refresh pass.
+
+## Immediate Task 8: Transfer State Transition Consistency
+
+**Files:**
+- Modify: `src/filezall_core/queue.py`
+- Modify: `tests/core/test_queue.py`
+
+- [x] **Step 1: Write failing state transition tests**
+
+Add tests for retry-waiting items:
+- Pause converts `RETRYING` to `PAUSED` and clears `next_retry_at`.
+- Cancel converts retry-waiting items to `CANCELED` and clears `next_retry_at`.
+- Manual retry converts `RETRYING` to `PENDING`, clears retry metadata, and preserves the already-counted retry attempt.
+
+- [x] **Step 2: Update pause/resume transitions**
+
+Allow `RETRYING` items to be paused. Clear `next_retry_at` when pausing or resuming so no stale retry timer survives a user decision.
+
+- [x] **Step 3: Update cancel transition**
+
+Clear `next_retry_at` when canceling unfinished items so canceled rows never keep a retry schedule.
+
+- [x] **Step 4: Update manual retry transition**
+
+Let manual retry force both `FAILED` and `RETRYING` items to `PENDING`. Failed items keep the previous retry-count increment behavior; retry-waiting items preserve their existing retry count because the failed attempt was already counted.
+
+- [x] **Step 5: Run verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\core\test_queue.py -k "pauses_retrying or cancels_retrying or manual_retry_forces"
+.\.venv\Scripts\python.exe -m pytest tests\core\test_queue.py
+.\.venv\Scripts\python.exe -m pytest
+```
+
+Expected: all tests pass except the environment-gated live SFTP skip.
+
+## Next Milestone Target
+
+- Add relative retry countdown display in the transfer center.
+- Evaluate process-list model/view virtualization if resource monitoring with many processes is still visibly heavy.

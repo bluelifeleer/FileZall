@@ -57,6 +57,79 @@ def test_transfer_queue_retries_failed_items(tmp_path: Path) -> None:
     assert retried.last_error is None
 
 
+def test_transfer_queue_pauses_retrying_items_and_clears_retry_timer(tmp_path: Path) -> None:
+    queue, _client = _queue(tmp_path)
+    task = _upload_task(tmp_path)
+    retry_at = datetime(2026, 6, 27, 12, 0, tzinfo=UTC)
+    item = task.create_item("item-1", PurePosixPath("app.zip"), size_bytes=6)
+    queue.add_task(task, [item])
+    queue.repository.update_item_state(
+        "item-1",
+        TransferStatus.RETRYING,
+        last_error="network down",
+        failure_reason="network down",
+        retry_count=1,
+        next_retry_at=retry_at,
+    )
+
+    queue.pause_task("task-1")
+
+    paused = queue.list_items()[0]
+    assert paused.status is TransferStatus.PAUSED
+    assert paused.next_retry_at is None
+
+    queue.resume_task("task-1")
+
+    resumed = queue.list_items()[0]
+    assert resumed.status is TransferStatus.PENDING
+    assert resumed.next_retry_at is None
+
+
+def test_transfer_queue_cancels_retrying_items_and_clears_retry_timer(tmp_path: Path) -> None:
+    queue, _client = _queue(tmp_path)
+    task = _upload_task(tmp_path)
+    retry_at = datetime(2026, 6, 27, 12, 0, tzinfo=UTC)
+    item = task.create_item("item-1", PurePosixPath("app.zip"), size_bytes=6)
+    queue.add_task(task, [item])
+    queue.repository.update_item_state(
+        "item-1",
+        TransferStatus.RETRYING,
+        retry_count=1,
+        next_retry_at=retry_at,
+    )
+
+    queue.cancel_task("task-1")
+
+    canceled = queue.list_items()[0]
+    assert canceled.status is TransferStatus.CANCELED
+    assert canceled.next_retry_at is None
+
+
+def test_transfer_queue_manual_retry_forces_retrying_item_pending(tmp_path: Path) -> None:
+    queue, _client = _queue(tmp_path)
+    task = _upload_task(tmp_path)
+    retry_at = datetime(2026, 6, 27, 12, 0, tzinfo=UTC)
+    item = task.create_item("item-1", PurePosixPath("app.zip"), size_bytes=6)
+    queue.add_task(task, [item])
+    queue.repository.update_item_state(
+        "item-1",
+        TransferStatus.RETRYING,
+        last_error="network down",
+        failure_reason="network down",
+        retry_count=1,
+        next_retry_at=retry_at,
+    )
+
+    queue.retry_failed("task-1")
+
+    retried = queue.list_items()[0]
+    assert retried.status is TransferStatus.PENDING
+    assert retried.retry_count == 1
+    assert retried.last_error is None
+    assert retried.failure_reason is None
+    assert retried.next_retry_at is None
+
+
 def test_transfer_queue_runs_next_pending_item_for_server(tmp_path: Path) -> None:
     queue, client = _queue(tmp_path)
     task = _upload_task(tmp_path)

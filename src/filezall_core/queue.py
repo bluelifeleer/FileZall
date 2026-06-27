@@ -45,29 +45,50 @@ class TransferQueue:
 
     def pause_task(self, task_id: str) -> None:
         for item in self.repository.list_items(task_id):
-            if item.status in {TransferStatus.PENDING, TransferStatus.RUNNING}:
-                self.repository.update_item_state(item.id, TransferStatus.PAUSED)
+            if item.status in {
+                TransferStatus.PENDING,
+                TransferStatus.RUNNING,
+                TransferStatus.RETRYING,
+            }:
+                self.repository.update_item_state(
+                    item.id,
+                    TransferStatus.PAUSED,
+                    next_retry_at=None,
+                )
 
     def resume_task(self, task_id: str) -> None:
         for item in self.repository.list_items(task_id):
             if item.status is TransferStatus.PAUSED:
-                self.repository.update_item_state(item.id, TransferStatus.PENDING)
+                self.repository.update_item_state(
+                    item.id,
+                    TransferStatus.PENDING,
+                    next_retry_at=None,
+                )
 
     def cancel_task(self, task_id: str) -> None:
         for item in self.repository.list_items(task_id):
             if item.status is not TransferStatus.COMPLETED:
-                self.repository.update_item_state(item.id, TransferStatus.CANCELED)
+                self.repository.update_item_state(
+                    item.id,
+                    TransferStatus.CANCELED,
+                    next_retry_at=None,
+                )
 
     def retry_failed(self, task_id: str) -> None:
         for item in self.repository.list_items(task_id):
-            if item.status is TransferStatus.FAILED:
+            if item.status in {TransferStatus.FAILED, TransferStatus.RETRYING}:
+                retry_count = (
+                    item.retry_count + 1
+                    if item.status is TransferStatus.FAILED
+                    else item.retry_count
+                )
                 self.repository.update_item_state(
                     item.id,
                     TransferStatus.PENDING,
                     last_error=None,
                     failure_reason=None,
                     next_retry_at=None,
-                    retry_count=item.retry_count + 1,
+                    retry_count=retry_count,
                 )
 
     def can_start_transfer(self, server_id: str) -> bool:
