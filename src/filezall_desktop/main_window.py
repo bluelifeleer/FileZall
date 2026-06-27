@@ -72,7 +72,13 @@ from filezall_desktop.theme import (
     selected_color_for_theme,
     stylesheet_for_theme,
 )
-from filezall_desktop.widgets import ConnectionBar, FilePanel, HoverRowDelegate, HoverRowTableWidget
+from filezall_desktop.widgets import (
+    ConnectionBar,
+    FilePanel,
+    HoverRowDelegate,
+    HoverRowTableView,
+    HoverRowTableWidget,
+)
 
 
 class AgentActionWorker(QObject):
@@ -767,8 +773,8 @@ class MainWindow(QMainWindow):
             table.set_full_row_hover_color(hover_color)
             table.set_full_row_selected_color(selected_color)
 
-    def _full_row_activity_tables(self) -> list[HoverRowTableWidget]:
-        tables: list[HoverRowTableWidget] = []
+    def _full_row_activity_tables(self) -> list[HoverRowTableView | HoverRowTableWidget]:
+        tables: list[HoverRowTableView | HoverRowTableWidget] = []
         for panel in (getattr(self, "local_panel", None), getattr(self, "remote_panel", None)):
             if panel is not None:
                 tables.append(panel.table)

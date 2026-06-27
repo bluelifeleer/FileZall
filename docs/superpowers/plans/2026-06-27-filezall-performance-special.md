@@ -167,3 +167,44 @@ Expected: all selected tests pass.
 
 - Replace the file-panel visual table with `QTableView + FileEntryTableModel` behind a compatibility layer.
 - Preserve existing signals and helpers used by `MainWindow`: row selection, double-click, parent row, drag/drop, context menu, keyboard shortcuts, icon roles, and directory history.
+
+## Immediate Task 4: File Panel QTableView Virtualization
+
+**Files:**
+- Modify: `src/filezall_desktop/widgets.py`
+- Modify: `src/filezall_desktop/main_window.py`
+- Modify: `tests/desktop/test_file_entry_table_model.py`
+- Modify: `tests/desktop/test_main_window.py`
+
+- [x] **Step 1: Write failing view migration test**
+
+Add a test that asserts `FilePanel.table` is a `QTableView`, not a `QTableWidget`, and that it is backed by `FilePanel.entry_model`.
+
+- [x] **Step 2: Add compatibility view**
+
+Introduce `HoverRowTableView` with the small compatibility surface that existing `MainWindow` workflows use: `cellClicked`, `cellDoubleClicked`, `local_paths_dropped`, `item(row, column)`, `rowCount()`, `columnCount()`, `currentRow()`, `setCurrentCell()`, `setRangeSelected()`, and `horizontalHeaderItem()`.
+
+- [x] **Step 3: Move FilePanel to model/view rendering**
+
+Switch file panels to `QTableView + FileEntryTableModel`. Large directories now populate the model immediately and let Qt virtualize painting, replacing the previous timer-batched `QTableWidgetItem` materialization path.
+
+- [x] **Step 4: Preserve existing interactions**
+
+Keep full-row hover/selection painting, icons only in the first column, parent directory rows, placeholder rows, drag/drop, context menu, keyboard shortcuts, directory double-click navigation, and selected-row helpers.
+
+- [x] **Step 5: Run verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_file_entry_table_model.py
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py -k "file_panel or directory or selected or icon or shortcut or upload or download"
+.\.venv\Scripts\python.exe -m pytest
+```
+
+Expected: all tests pass except the environment-gated live SFTP skip.
+
+## Next Milestone 2 Target
+
+- Consider extracting `FileEntryTableModel`, `HoverRowTableView`, and compatibility item wrappers into a dedicated module once process-list virtualization starts.
+- Apply the same model/view strategy to the process list or begin transfer-center refresh throttling, depending on which user-visible lag is most severe during validation.

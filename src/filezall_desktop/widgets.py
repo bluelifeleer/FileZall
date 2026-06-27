@@ -3,7 +3,17 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path, PurePath
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPoint, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QAbstractTableModel,
+    QItemSelectionModel,
+    QModelIndex,
+    QPoint,
+    QRect,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -18,6 +28,7 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
     QStyle,
     QStyleOptionViewItem,
+    QTableView,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -159,13 +170,182 @@ class HoverRowTableWidget(QTableWidget):
         return rows
 
 
+class VirtualTableHeaderItem:
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def text(self) -> str:
+        return self._text
+
+
+class VirtualTableItem:
+    def __init__(self, model: QAbstractTableModel, row: int, column: int) -> None:
+        self._model = model
+        self._index = model.index(row, column)
+
+    def text(self) -> str:
+        value = self._model.data(self._index, Qt.ItemDataRole.DisplayRole)
+        return "" if value is None else str(value)
+
+    def data(self, role: int):
+        return self._model.data(self._index, role)
+
+    def icon(self) -> QIcon:
+        value = self._model.data(self._index, Qt.ItemDataRole.DecorationRole)
+        return value if isinstance(value, QIcon) else QIcon()
+
+
+class HoverRowTableView(QTableView):
+    cellClicked = Signal(int, int)
+    cellDoubleClicked = Signal(int, int)
+    local_paths_dropped = Signal(object)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.hovered_row = -1
+        self.full_row_hover_color = "#243244"
+        self.full_row_selected_color = "#2563eb"
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
+        self.setAcceptDrops(True)
+        self.setShowGrid(False)
+        self.clicked.connect(lambda index: self.cellClicked.emit(index.row(), index.column()))
+        self.doubleClicked.connect(
+            lambda index: self.cellDoubleClicked.emit(index.row(), index.column())
+        )
+
+    def set_full_row_hover_color(self, color: str) -> None:
+        self.full_row_hover_color = color
+        self.viewport().update()
+
+    def set_full_row_selected_color(self, color: str) -> None:
+        self.full_row_selected_color = color
+        self.viewport().update()
+
+    def set_hovered_row(self, row: int) -> None:
+        if row == self.hovered_row:
+            return
+        self.hovered_row = row
+        self.viewport().update()
+
+    def rowCount(self) -> int:
+        model = self.model()
+        return model.rowCount() if model else 0
+
+    def columnCount(self) -> int:
+        model = self.model()
+        return model.columnCount() if model else 0
+
+    def item(self, row: int, column: int) -> VirtualTableItem | None:
+        model = self.model()
+        if not model or row < 0 or column < 0:
+            return None
+        if row >= model.rowCount() or column >= model.columnCount():
+            return None
+        return VirtualTableItem(model, row, column)
+
+    def horizontalHeaderItem(self, section: int) -> VirtualTableHeaderItem:
+        model = self.model()
+        text = ""
+        if model:
+            value = model.headerData(
+                section,
+                Qt.Orientation.Horizontal,
+                Qt.ItemDataRole.DisplayRole,
+            )
+            text = "" if value is None else str(value)
+        return VirtualTableHeaderItem(text)
+
+    def setCurrentCell(self, row: int, column: int) -> None:
+        model = self.model()
+        if not model:
+            return
+        self.setCurrentIndex(model.index(row, column))
+
+    def currentRow(self) -> int:
+        index = self.currentIndex()
+        return index.row() if index.isValid() else -1
+
+    def setRangeSelected(self, selection_range, select: bool) -> None:
+        model = self.model()
+        selection_model = self.selectionModel()
+        if not model or not selection_model:
+            return
+        flags = (
+            QItemSelectionModel.SelectionFlag.Select
+            if select
+            else QItemSelectionModel.SelectionFlag.Deselect
+        ) | QItemSelectionModel.SelectionFlag.Rows
+        for row in range(selection_range.topRow(), selection_range.bottomRow() + 1):
+            selection_model.select(model.index(row, 0), flags)
+
+    def mouseMoveEvent(self, event) -> None:
+        index = self.indexAt(event.position().toPoint())
+        self.set_hovered_row(index.row() if index.isValid() else -1)
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self.set_hovered_row(-1)
+        super().leaveEvent(event)
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event) -> None:
+        if event.mimeData().hasUrls():
+            paths = [
+                Path(url.toLocalFile())
+                for url in event.mimeData().urls()
+                if url.isLocalFile()
+            ]
+            if paths:
+                self.local_paths_dropped.emit(paths)
+                event.acceptProposedAction()
+                return
+        super().dropEvent(event)
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        for row, color in self._active_row_colors():
+            first_rect = self.visualRect(self.model().index(row, 0))
+            last_rect = self.visualRect(self.model().index(row, self.columnCount() - 1))
+            if first_rect.isValid() and last_rect.isValid():
+                left = last_rect.right() + 1
+                if left >= self.viewport().width():
+                    continue
+                painter = QPainter(self.viewport())
+                trailing_rect = QRect(
+                    left,
+                    first_rect.top(),
+                    self.viewport().width() - left,
+                    first_rect.height(),
+                )
+                painter.fillRect(trailing_rect, QColor(color))
+                painter.end()
+
+    def _active_row_colors(self) -> list[tuple[int, str]]:
+        rows: list[tuple[int, str]] = []
+        selection_model = self.selectionModel()
+        if selection_model:
+            rows.extend(
+                (index.row(), self.full_row_selected_color)
+                for index in selection_model.selectedRows()
+            )
+        if self.hovered_row >= 0 and not any(row == self.hovered_row for row, _ in rows):
+            rows.append((self.hovered_row, self.full_row_hover_color))
+        return rows
+
+
 class HoverRowDelegate(QStyledItemDelegate):
     uses_full_row_activity = True
     clears_cell_selection_paint = True
 
     def paint(self, painter, option, index) -> None:
         table = self.parent()
-        if isinstance(table, HoverRowTableWidget) and (
+        if hasattr(table, "hovered_row") and (
             index.row() == table.hovered_row
             or option.state & QStyle.StateFlag.State_Selected
         ):
@@ -239,6 +419,7 @@ class FileEntryTableModel(QAbstractTableModel):
         self._directory_label = directory_label
         self._file_label = file_label
         self._entries = []
+        self._placeholder_text: str | None = None
 
     def set_texts(
         self,
@@ -257,12 +438,21 @@ class FileEntryTableModel(QAbstractTableModel):
 
     def set_entries(self, entries) -> None:
         self.beginResetModel()
+        self._placeholder_text = None
         self._entries = list(entries)
+        self.endResetModel()
+
+    def set_placeholder(self, text: str) -> None:
+        self.beginResetModel()
+        self._placeholder_text = text
+        self._entries = []
         self.endResetModel()
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         if parent.isValid():
             return 0
+        if self._placeholder_text is not None:
+            return 1
         return len(self._entries) + 1
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -275,6 +465,8 @@ class FileEntryTableModel(QAbstractTableModel):
             return None
         row = index.row()
         column = index.column()
+        if self._placeholder_text is not None:
+            return self._placeholder_data(column, role)
         if row == 0:
             return self._parent_data(column, role)
         entry = self._entry_at(row)
@@ -300,6 +492,19 @@ class FileEntryTableModel(QAbstractTableModel):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
         return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+
+    def _placeholder_data(self, column: int, role: int):
+        if role == Qt.ItemDataRole.DisplayRole:
+            return self._placeholder_text if column == 0 else ""
+        if role == Qt.ItemDataRole.UserRole:
+            return False
+        if role == _ROW_KIND_ROLE:
+            return "placeholder"
+        if role == ICON_KEY_ROLE and column == 0:
+            return _entry_icon_key(self._placeholder_text or "", False, "placeholder")
+        if role == Qt.ItemDataRole.DecorationRole and column == 0:
+            return _entry_icon(self._placeholder_text or "", False, "placeholder")
+        return None
 
     def _entry_at(self, row: int):
         index = row - 1
@@ -381,10 +586,10 @@ class FilePanel(QWidget):
         self.path_button.setToolTip("Choose or enter directory")
         self.refresh_button = QPushButton("Refresh", self)
         self.action_button = QPushButton(action_label, self)
-        self.table = HoverRowTableWidget(0, 4, self)
+        self.table = HoverRowTableView(self)
+        self.table.setModel(self.entry_model)
         self.table.setIconSize(QSize(22, 22))
         self.table.setItemDelegate(HoverRowDelegate(self.table))
-        self.table.setHorizontalHeaderLabels(["Name", "Size", "Type", "Modified"])
         header_view = self.table.horizontalHeader()
         header_view.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header_view.resizeSection(0, 220)
@@ -455,7 +660,6 @@ class FilePanel(QWidget):
         self.action_button.setText(action_label)
         self.path_button.setText(path_button_text)
         self.path_button.setToolTip(choose_directory_tooltip)
-        self.table.setHorizontalHeaderLabels(headers)
         self._transfer_action_label = transfer_label
         self._parent_label = parent_label
         self._directory_label = directory_label
@@ -479,48 +683,17 @@ class FilePanel(QWidget):
 
     def set_placeholder_row(self, text: str) -> None:
         self._cancel_pending_entry_batches()
-        self.entry_model.set_entries([])
-        self.table.setUpdatesEnabled(False)
-        self.table.setRowCount(1)
-        self.table.setItem(0, 0, _entry_item(text, False, show_icon=True))
-        self.table.setItem(0, 1, _entry_item("", False))
-        self.table.setItem(0, 2, _entry_item("", False))
-        self.table.setItem(0, 3, _entry_item("", False))
-        self.table.setUpdatesEnabled(True)
+        self.entry_model.set_placeholder(text)
+        self.clear_selection()
         self.load_progress_label.setText("")
 
     def set_entries(self, entries) -> None:
         entries = list(entries)
         self._cancel_pending_entry_batches()
         self.entry_model.set_entries(entries)
-        if len(entries) > self.large_directory_threshold:
-            self._start_batched_entries(entries)
-            return
-        self.table.setUpdatesEnabled(False)
-        try:
-            self.table.setRowCount(len(entries) + 1)
-            self._set_row(0, "..", "", self._parent_label, "", is_dir=True, row_kind="parent")
-            for row, entry in enumerate(entries, start=1):
-                self.table.setItem(row, 0, _entry_item(entry.name, entry.is_dir, show_icon=True))
-                self.table.setItem(row, 1, _entry_item(str(entry.size_bytes), entry.is_dir))
-                self.table.setItem(
-                    row,
-                    2,
-                    _entry_item(
-                        self._directory_label if entry.is_dir else self._file_label,
-                        entry.is_dir,
-                    ),
-                )
-                self.table.setItem(
-                    row,
-                    3,
-                    _entry_item(_format_time(entry.modified_time), entry.is_dir),
-                )
-            self.clear_selection()
-            self.load_progress_label.setText(f"{len(entries)} items" if entries else "")
-        finally:
-            self.table.setUpdatesEnabled(True)
-            self.table.viewport().update()
+        self.clear_selection()
+        self.load_progress_label.setText(f"{len(entries)} items" if entries else "")
+        self.table.viewport().update()
 
     def _start_batched_entries(self, entries: list) -> None:
         self.is_loading_entries = True
@@ -636,10 +809,7 @@ class FilePanel(QWidget):
         is_dir: bool,
         row_kind: str,
     ) -> None:
-        self.table.setItem(row, 0, _entry_item(name, is_dir, row_kind, show_icon=True))
-        self.table.setItem(row, 1, _entry_item(size, is_dir, row_kind))
-        self.table.setItem(row, 2, _entry_item(kind, is_dir, row_kind))
-        self.table.setItem(row, 3, _entry_item(modified, is_dir, row_kind))
+        return None
 
 
 def _format_time(value: datetime | None) -> str:

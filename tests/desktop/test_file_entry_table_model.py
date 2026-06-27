@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QTableView, QTableWidget
 
 from filezall_core.models import LocalFileEntry
 from filezall_desktop.widgets import ICON_KEY_ROLE, FileEntryTableModel, FilePanel
@@ -60,6 +61,15 @@ def test_file_panel_keeps_virtual_entry_model_in_sync_for_large_directories(qtbo
         panel.entry_model.index(10_000, 0),
         ICON_KEY_ROLE,
     ) == "file-text"
+
+
+def test_file_panel_uses_table_view_for_virtualized_file_rows(qtbot) -> None:
+    panel = FilePanel("Local Files", "Upload")
+    qtbot.addWidget(panel)
+
+    assert isinstance(panel.table, QTableView)
+    assert not isinstance(panel.table, QTableWidget)
+    assert panel.table.model() is panel.entry_model
 
 
 def test_file_panel_cancels_pending_batches_when_destroyed(qtbot) -> None:

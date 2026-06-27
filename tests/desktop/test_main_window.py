@@ -1721,7 +1721,7 @@ def test_file_panel_set_entries_clears_current_and_hover_rows(qtbot) -> None:
     assert window.local_panel.table.hovered_row == -1
 
 
-def test_file_panel_batches_large_directory_rendering(qtbot) -> None:
+def test_file_panel_virtualizes_large_directory_rendering(qtbot) -> None:
     window = MainWindow(controller=FakeController())
     qtbot.addWidget(window)
     entries = [
@@ -1740,16 +1740,9 @@ def test_file_panel_batches_large_directory_rendering(qtbot) -> None:
 
     window.local_panel.set_entries(entries)
 
-    assert window.local_panel.is_loading_entries is True
-    assert window.local_panel.table.rowCount() < len(entries) + 1
-    assert "Loading" in window.local_panel.load_progress_label.text()
-
-    qtbot.waitUntil(
-        lambda: window.local_panel.table.rowCount() == len(entries) + 1,
-        timeout=3000,
-    )
-
     assert window.local_panel.is_loading_entries is False
+    assert window.local_panel.table.rowCount() == len(entries) + 1
+    assert window.local_panel.entry_model.rowCount() == len(entries) + 1
     assert window.local_panel.load_progress_label.text() == "750 items"
 
 
