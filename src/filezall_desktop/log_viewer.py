@@ -69,7 +69,8 @@ class LogViewer(QWidget):
 
     def add_record(self, record: LogRecord) -> None:
         self._records.append(record)
-        self._refresh()
+        if self._record_matches_filter(record):
+            self._append_record_item(record)
 
     def set_category_filter(self, category: str) -> None:
         self._category_filter = category if category in LOG_CATEGORIES else "all"
@@ -102,13 +103,19 @@ class LogViewer(QWidget):
             return list(self._records)
         return [record for record in self._records if record.category == self._category_filter]
 
+    def _record_matches_filter(self, record: LogRecord) -> bool:
+        return self._category_filter == "all" or record.category == self._category_filter
+
     def _refresh(self) -> None:
         records = self._filtered_records()
         self.record_list.clear()
         for record in records:
-            item = QListWidgetItem(record.format())
-            item.setData(256, record)
-            self.record_list.addItem(item)
+            self._append_record_item(record)
+
+    def _append_record_item(self, record: LogRecord) -> None:
+        item = QListWidgetItem(record.format())
+        item.setData(256, record)
+        self.record_list.addItem(item)
 
     def _export_logs(self) -> None:
         if self._export_logs_callback is not None:

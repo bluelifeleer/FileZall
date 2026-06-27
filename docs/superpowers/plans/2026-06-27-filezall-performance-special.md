@@ -1,0 +1,131 @@
+# FileZall Performance Special Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Raise FileZall from feature-complete prototype performance toward commercial-grade responsiveness, transfer throughput visibility, and long-run stability.
+
+**Architecture:** Work in measured increments: first add reproducible performance baselines, then remove UI update hot spots, then replace high-volume widgets with model/view virtualization, then tune transfer and Agent paths. Each milestone must include focused tests and must not regress the existing FileZall workflows.
+
+**Tech Stack:** Python 3.12, PySide6, pytest, pytest-qt, SQLite-backed transfer queue, Paramiko/SFTP, FileZall Linux Agent.
+
+---
+
+## Milestone Order
+
+1. **Performance Baseline and Low-Risk UI Hot Spots**
+   - Add repeatable measurement utilities for operation duration and throughput.
+   - Add baseline tests for report structure and threshold metadata.
+   - Optimize `LogViewer.add_record()` so appending a log row does not rebuild the entire visible list.
+   - Keep all existing log filtering, copy, and export behavior.
+
+2. **File and Process List Virtualization**
+   - Introduce a `FileEntryTableModel` backed by plain Python row data.
+   - Move file panels from `QTableWidget` toward `QTableView + QAbstractTableModel`.
+   - Preserve row hover, full-row selection, icons, parent directory row, context menus, keyboard shortcuts, drag/drop, and directory history.
+   - Add tests for 10k+ row model operations without requiring every cell to be materialized as a widget item.
+
+3. **Transfer Center Refresh Throttling**
+   - Batch rapid transfer progress callbacks into timed UI updates.
+   - Preserve final completion/failure visibility immediately.
+   - Add tests proving repeated progress events coalesce into fewer table refreshes while final state is delivered.
+
+4. **Queue Scheduler and Transfer Throughput**
+   - Make queue concurrency explicit per server.
+   - Add retry backoff metadata and stable pause/resume/cancel state transitions.
+   - Add throughput snapshots for current speed, average speed, ETA, retry count, and failure reason.
+
+5. **Remote Directory and Agent Acceleration**
+   - Cache recent remote directory listings with explicit invalidation on refresh/create/delete/rename/upload/download.
+   - Add Agent-side recursive directory scan and batch stat endpoints.
+   - Use Agent batch listing when available and fall back to SFTP listing when Agent is unavailable.
+
+6. **Long-Run Diagnostics and Stress Verification**
+   - Add a diagnostic summary that captures UI refresh rate, queue size, recent errors, memory hints, and transfer counters.
+   - Add scripted smoke scenarios for large local directories, large transfer queues, repeated resource refresh, and long log streams.
+   - Keep live SFTP tests environment-gated and report skipped live tests clearly.
+
+## Execution Contract
+
+- Every milestone starts with a failing test for the behavior or performance contract.
+- Focused tests must pass before moving to the next milestone.
+- Full `.\.venv\Scripts\python.exe -m pytest` must pass before each commit.
+- If `tests\integration\test_sftp_live.py` skips because live environment variables are absent, report that skip as expected.
+- Commit each milestone separately with a message that names the performance area.
+
+## Immediate Task 1: Log Append Hot Spot
+
+**Files:**
+- Modify: `src/filezall_desktop/log_viewer.py`
+- Test: `tests/desktop/test_log_viewer.py`
+
+- [x] **Step 1: Write failing test**
+
+Add a test that selects an existing log row, appends another record, and asserts selection remains on the original row. The current implementation clears and rebuilds the list for every append, so the test should fail before the optimization.
+
+- [x] **Step 2: Run focused test**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_log_viewer.py -k preserves_selection
+```
+
+Expected: FAIL before implementation.
+
+- [x] **Step 3: Implement incremental append**
+
+Update `LogViewer.add_record()` so it appends a single visible `QListWidgetItem` when the new record matches the active filter. Only `set_category_filter()` should perform a full refresh.
+
+- [x] **Step 4: Run focused tests**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_log_viewer.py
+```
+
+Expected: all log viewer tests pass.
+
+## Immediate Task 2: Baseline Measurement Utility
+
+**Files:**
+- Create: `src/filezall_core/performance.py`
+- Create: `tests/core/test_performance.py`
+
+- [x] **Step 1: Write failing tests**
+
+Add tests for:
+- `measure_operation(name, operation)` returns elapsed milliseconds and operation result.
+- `PerformanceBudget.check(result)` reports pass/fail without raising.
+
+- [x] **Step 2: Run focused tests**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\core\test_performance.py
+```
+
+Expected: FAIL before implementation.
+
+- [x] **Step 3: Implement minimal measurement utilities**
+
+Create dataclasses for `PerformanceResult`, `PerformanceBudget`, and `PerformanceBudgetCheck`. Use `time.perf_counter()` and keep the module free of PySide dependencies so it can be reused by core and desktop tests.
+
+- [x] **Step 4: Run focused tests**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\core\test_performance.py
+```
+
+Expected: PASS.
+
+## Next Milestone Entry Criteria
+
+Start Milestone 2 only after:
+
+- Task 1 and Task 2 are committed.
+- Full pytest passes.
+- A short note is added to the final response with the baseline utility location and the next planned target: file list virtualization.

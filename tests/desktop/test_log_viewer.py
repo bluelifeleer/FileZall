@@ -49,3 +49,18 @@ def test_log_viewer_uses_one_visible_log_display(qtbot) -> None:
 
     assert viewer.record_list.isVisibleTo(viewer)
     assert not hasattr(viewer, "text_view")
+
+
+def test_log_viewer_incremental_append_preserves_selection(qtbot) -> None:
+    service = TransferLogService()
+    viewer = LogViewer()
+    qtbot.addWidget(viewer)
+    viewer.add_record(service.append_connection("Connected to Production"))
+    viewer.add_record(service.append_transfer("Uploaded app.txt"))
+    viewer.record_list.setCurrentRow(0)
+
+    viewer.add_record(service.append_transfer("Uploaded worker.js"))
+
+    assert viewer.record_list.count() == 3
+    assert viewer.record_list.currentRow() == 0
+    assert "Connected to Production" in viewer.record_list.currentItem().text()
