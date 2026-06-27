@@ -686,3 +686,51 @@ log count and resource chart sample count.
   rename, upload, and download.
 - Add Agent batch listing only after the cache layer has tests around freshness and
   invalidation semantics.
+
+## Immediate Task 16: Cache Remote Directory Listings With Explicit Invalidation
+
+**Files:**
+- Modify: `src/filezall_desktop/controller.py`
+- Modify: `src/filezall_desktop/main_window.py`
+- Modify: `tests/desktop/test_controller.py`
+
+- [x] **Step 1: Write remote cache freshness tests**
+
+Add controller tests proving repeated navigation reuses cached remote directory
+entries, explicit refresh bypasses the cache, and a remote upload invalidates the
+cached parent directory before the next list.
+
+- [x] **Step 2: Add controller-side directory cache**
+
+Cache remote directory entries per connected site and path in
+`MainWindowController.load_remote_directory()`. Reconnect and disconnect clear the
+cache, and the initial default directory returned by connect is cached.
+
+- [x] **Step 3: Invalidate cache on remote mutations**
+
+Invalidate affected remote paths for upload, download, delete, create directory,
+create file, and rename. Path invalidation removes both the exact cached directory
+and cached child directories for the same connection.
+
+- [x] **Step 4: Preserve explicit refresh semantics**
+
+Add `force_refresh` to controller directory loading and pass it from the remote
+Refresh/F5 path so user-triggered refreshes always hit the server.
+
+- [x] **Step 5: Run targeted verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_controller.py -k "cached_remote_directory or force_refresh_bypasses_remote_directory_cache or remote_mutations_invalidate" -vv
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py -k "remote_refresh or refresh_buttons or remote_directory or remote_history" -vv
+```
+
+Expected: controller cache semantics and main-window refresh/navigation flows pass.
+
+## Next Milestone Target
+
+- Add Agent batch listing support to reduce deep remote directory traversal round
+  trips after cache freshness and invalidation behavior is locked down.
+- Extend smoke coverage to include cached versus forced remote directory navigation
+  once a deterministic fake remote listing workload is available.

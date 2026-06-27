@@ -74,6 +74,7 @@ class MainWindowController:
         self._session: RemoteSession | None = None
         self._connected_site: SiteProfile | None = None
         self._connected_secret: str | None = None
+        self._remote_directory_cache: dict[tuple[str, str], list] = {}
 
     def load_saved_sites(self) -> None:
         if self._site_repository is None:
@@ -113,7 +114,9 @@ class MainWindowController:
         self._session = self._session_factory(site)
         self._connected_site = site
         self._connected_secret = password
+        self._remote_directory_cache.clear()
         entries = self._session.connect_and_list_default(password=password)
+        self._cache_remote_directory(self._session.current_remote_path, entries)
         result = {
             "entries": entries,
             "remote_path": self._session.current_remote_path,
@@ -171,17 +174,24 @@ class MainWindowController:
             self._session = None
             self._connected_site = None
             self._connected_secret = None
+            self._remote_directory_cache.clear()
         self._window.show_status("Disconnected")
         self._log("Disconnected")
 
-    def list_remote_directory(self, path: PurePosixPath) -> None:
-        entries, path, status = self.load_remote_directory(path)
+    def list_remote_directory(self, path: PurePosixPath, *, force_refresh: bool = False) -> None:
+        entries, path, status = self.load_remote_directory(path, force_refresh=force_refresh)
         self._window.set_remote_entries(entries, path)
         self._window.show_status(status)
         self._log(status)
 
-    def load_remote_directory(self, path: PurePosixPath):
+    def load_remote_directory(self, path: PurePosixPath, *, force_refresh: bool = False):
+        path = PurePosixPath(path)
+        if not force_refresh:
+            cached_entries = self._cached_remote_directory(path)
+            if cached_entries is not None:
+                return cached_entries, path, f"Loaded remote directory {path}"
         entries = self._require_session().list_directory(path)
+        self._cache_remote_directory(path, entries)
         return entries, path, f"Loaded remote directory {path}"
 
     def heartbeat(self) -> bool:
@@ -209,6 +219,7 @@ class MainWindowController:
             self._queue_upload_file(local_path, remote_path, conflict_policy=conflict_policy)
             return
         self._require_session().upload_file(local_path, remote_path)
+        self._invalidate_remote_directory_cache_for(remote_path.parent)
         self._window.show_status(f"Uploaded {local_path.name}")
         self._log(f"Uploaded {local_path} to {remote_path}")
 
@@ -219,6 +230,7 @@ class MainWindowController:
         conflict_policy: ConflictPolicy = ConflictPolicy.OVERWRITE,
     ) -> None:
         self._require_session().download_file(remote_path, local_path)
+        self._invalidate_remote_directory_cache_for(remote_path.parent)
         self._window.show_status(f"Downloaded {remote_path.name}")
         self._log(f"Downloaded {remote_path} to {local_path}")
 
@@ -231,6 +243,7 @@ class MainWindowController:
         if remote:
             remote_path = PurePosixPath(path)
             self._require_session().delete_path(remote_path, is_dir=bool(is_dir))
+            self._invalidate_remote_directory_cache_for(remote_path.parent, remote_path)
             message = f"Deleted remote path {remote_path}"
         else:
             local_path = Path(path)
@@ -277,6 +290,7 @@ class MainWindowController:
             for item in plan.items
         ]
         self._require_queue().add_task(task, items)
+        self._invalidate_remote_directory_cache_for(remote_path.parent, remote_path)
         self._publish_transfer_items(site.id)
         message = (
             f"Queued directory upload {local_path.name}: "
@@ -324,6 +338,7 @@ class MainWindowController:
                 client=client,
                 progress_callback=lambda _item: self._publish_transfer_items(site.id),
             )
+        self._invalidate_remote_directory_cache_for(remote_path.parent)
         self._publish_transfer_items(site.id)
         self._window.show_status(f"Uploaded {local_path.name}")
         self._log(f"Uploaded {local_path} to {remote_path}")
@@ -342,6 +357,7 @@ class MainWindowController:
         if remote:
             target = PurePosixPath(path) / "New Folder"
             self._require_session().make_directory(target)
+            self._invalidate_remote_directory_cache_for(PurePosixPath(path), target)
             message = f"Created remote directory {target}"
         else:
             target = _unique_local_child_path(Path(path), "New Folder", "")
@@ -354,6 +370,7 @@ class MainWindowController:
         if remote:
             target = PurePosixPath(path) / "New File.txt"
             self._require_session().create_file(target)
+            self._invalidate_remote_directory_cache_for(PurePosixPath(path))
             message = f"Created remote file {target}"
         else:
             target = _unique_local_child_path(Path(path), "New File", ".txt")
@@ -369,9 +386,17 @@ class MainWindowController:
         remote: bool,
     ) -> None:
         if remote:
+            remote_source = PurePosixPath(source_path)
+            remote_destination = PurePosixPath(destination_path)
             self._require_session().rename(
-                PurePosixPath(source_path),
-                PurePosixPath(destination_path),
+                remote_source,
+                remote_destination,
+            )
+            self._invalidate_remote_directory_cache_for(
+                remote_source.parent,
+                remote_source,
+                remote_destination.parent,
+                remote_destination,
             )
             message = f"Renamed remote path {source_path} to {destination_path}"
         else:
@@ -645,6 +670,42 @@ class MainWindowController:
             agent_token_ref=agent_token_ref,
         )
 
+    def _cache_remote_directory(self, path: PurePosixPath, entries: list) -> None:
+        self._remote_directory_cache[self._remote_directory_cache_key(path)] = list(entries)
+
+    def _cached_remote_directory(self, path: PurePosixPath) -> list | None:
+        entries = self._remote_directory_cache.get(self._remote_directory_cache_key(path))
+        if entries is None:
+            return None
+        return list(entries)
+
+    def _invalidate_remote_directory_cache_for(self, *paths: PurePosixPath) -> None:
+        if not self._remote_directory_cache:
+            return
+        site_key = self._remote_directory_cache_site_key()
+        if not paths:
+            self._remote_directory_cache = {
+                key: entries
+                for key, entries in self._remote_directory_cache.items()
+                if key[0] != site_key
+            }
+            return
+        prefixes = {str(PurePosixPath(path)) for path in paths}
+        for key in list(self._remote_directory_cache):
+            key_site, cached_path = key
+            if key_site != site_key:
+                continue
+            if any(_remote_cache_path_matches(cached_path, prefix) for prefix in prefixes):
+                del self._remote_directory_cache[key]
+
+    def _remote_directory_cache_key(self, path: PurePosixPath) -> tuple[str, str]:
+        return self._remote_directory_cache_site_key(), str(PurePosixPath(path))
+
+    def _remote_directory_cache_site_key(self) -> str:
+        if self._connected_site is not None:
+            return self._connected_site.id
+        return f"session:{id(self._require_session())}"
+
     def _require_session(self) -> RemoteSession:
         if self._session is None:
             raise RuntimeError("Remote session is not connected")
@@ -726,3 +787,10 @@ def _unique_local_child_path(parent: Path, stem: str, suffix: str) -> Path:
         if not candidate.exists():
             return candidate
         index += 1
+
+
+def _remote_cache_path_matches(cached_path: str, prefix: str) -> bool:
+    if prefix == "/":
+        return cached_path.startswith("/")
+    normalized = prefix.rstrip("/")
+    return cached_path == normalized or cached_path.startswith(f"{normalized}/")

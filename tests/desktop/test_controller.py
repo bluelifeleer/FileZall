@@ -92,6 +92,7 @@ class FakeSession:
         self.files = []
         self.fail_list = False
         self.disconnect_calls = 0
+        self.directory_entries = {}
 
     def connect_and_list_default(self, password=None):
         self.password = password
@@ -127,7 +128,7 @@ class FakeSession:
         self.list_calls.append(path)
         if self.fail_list:
             raise RuntimeError("connection lost")
-        return []
+        return list(self.directory_entries.get(path, []))
 
     def capture(self, command: str) -> str:
         self.captures.append(command)
@@ -472,6 +473,133 @@ def test_controller_connects_remote_and_transfers_one_file(tmp_path: Path) -> No
     assert session.password == "secret"
     assert session.uploads == [(tmp_path / "local.txt", PurePosixPath("/home/deploy/local.txt"))]
     assert session.downloads == [(PurePosixPath("/home/deploy/app.log"), tmp_path / "app.log")]
+
+
+def test_controller_reuses_cached_remote_directory_entries() -> None:
+    window = FakeWindow()
+    session = FakeSession()
+    first_entry = RemoteFileEntry(
+        path=PurePosixPath("/home/deploy/releases/v1"),
+        name="v1",
+        is_dir=True,
+        size_bytes=0,
+        modified_time=None,
+    )
+    session.directory_entries[PurePosixPath("/home/deploy/releases")] = [first_entry]
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: session,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+    controller.list_remote_directory(PurePosixPath("/home/deploy/releases"))
+    session.directory_entries[PurePosixPath("/home/deploy/releases")] = []
+    controller.list_remote_directory(PurePosixPath("/home/deploy/releases"))
+
+    assert session.list_calls == [PurePosixPath("/home/deploy/releases")]
+    assert window.remote_entries == ([first_entry], PurePosixPath("/home/deploy/releases"))
+
+
+def test_controller_force_refresh_bypasses_remote_directory_cache() -> None:
+    window = FakeWindow()
+    session = FakeSession()
+    stale_entry = RemoteFileEntry(
+        path=PurePosixPath("/home/deploy/releases/v1"),
+        name="v1",
+        is_dir=True,
+        size_bytes=0,
+        modified_time=None,
+    )
+    fresh_entry = RemoteFileEntry(
+        path=PurePosixPath("/home/deploy/releases/v2"),
+        name="v2",
+        is_dir=True,
+        size_bytes=0,
+        modified_time=None,
+    )
+    remote_path = PurePosixPath("/home/deploy/releases")
+    session.directory_entries[remote_path] = [stale_entry]
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: session,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+    controller.load_remote_directory(remote_path)
+    session.directory_entries[remote_path] = [fresh_entry]
+    entries, loaded_path, _status = controller.load_remote_directory(remote_path, force_refresh=True)
+
+    assert entries == [fresh_entry]
+    assert loaded_path == remote_path
+    assert session.list_calls == [remote_path, remote_path]
+
+
+def test_controller_remote_mutations_invalidate_cached_directories(tmp_path: Path) -> None:
+    window = FakeWindow()
+    session = FakeSession()
+    remote_path = PurePosixPath("/home/deploy/releases")
+    stale_entry = RemoteFileEntry(
+        path=remote_path / "old.txt",
+        name="old.txt",
+        is_dir=False,
+        size_bytes=1,
+        modified_time=None,
+    )
+    fresh_entry = RemoteFileEntry(
+        path=remote_path / "new.txt",
+        name="new.txt",
+        is_dir=False,
+        size_bytes=1,
+        modified_time=None,
+    )
+    session.directory_entries[remote_path] = [stale_entry]
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: session,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+    controller.list_remote_directory(remote_path)
+    session.directory_entries[remote_path] = [fresh_entry]
+    local_file = tmp_path / "new.txt"
+    local_file.write_text("fresh", encoding="utf-8")
+
+    controller.upload_file(local_file, remote_path / "new.txt")
+    controller.list_remote_directory(remote_path)
+
+    assert session.uploads == [(local_file, remote_path / "new.txt")]
+    assert session.list_calls == [remote_path, remote_path]
+    assert window.remote_entries == ([fresh_entry], remote_path)
 
 
 def test_controller_upload_file_adds_pending_item_and_updates_transfer_list(

@@ -2007,7 +2007,7 @@ class MainWindow(QMainWindow):
     def _handle_remote_refresh_clicked(self) -> None:
         self.remote_panel.clear_selection()
         remote_path = self._remote_path_from_field()
-        self._load_remote_directory(remote_path)
+        self._load_remote_directory(remote_path, force_refresh=True)
 
     def _handle_local_history_selected(self, path_text: str) -> None:
         self.local_panel.clear_selection()
@@ -2067,7 +2067,7 @@ class MainWindow(QMainWindow):
         self.local_panel.path_edit.add_history(str(path))
         self.controller.load_local_directory(path)
 
-    def _load_remote_directory(self, path: PurePosixPath) -> None:
+    def _load_remote_directory(self, path: PurePosixPath, *, force_refresh: bool = False) -> None:
         if self._remote_directory_loading:
             self.show_status("Remote directory load already in progress")
             return
@@ -2075,13 +2075,13 @@ class MainWindow(QMainWindow):
         self._set_remote_loading(True, path)
         if not hasattr(self.controller, "load_remote_directory"):
             try:
-                self.controller.list_remote_directory(path)
+                self._list_remote_directory_from_controller(path, force_refresh)
             finally:
                 self._set_remote_loading(False, path)
             return
         self._remote_directory_loading = True
         thread = QThread(self)
-        worker = RemoteDirectoryWorker(lambda: self.controller.load_remote_directory(path))
+        worker = RemoteDirectoryWorker(lambda: self._load_remote_directory_from_controller(path, force_refresh))
         worker.moveToThread(thread)
         self._active_remote_directory_load = (thread, worker, path)
         self._remote_directory_workers.append((thread, worker, path))
@@ -2097,6 +2097,22 @@ class MainWindow(QMainWindow):
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         thread.start()
+
+    def _load_remote_directory_from_controller(self, path: PurePosixPath, force_refresh: bool):
+        try:
+            return self.controller.load_remote_directory(path, force_refresh=force_refresh)
+        except TypeError as exc:
+            if "force_refresh" not in str(exc):
+                raise
+            return self.controller.load_remote_directory(path)
+
+    def _list_remote_directory_from_controller(self, path: PurePosixPath, force_refresh: bool) -> None:
+        try:
+            self.controller.list_remote_directory(path, force_refresh=force_refresh)
+        except TypeError as exc:
+            if "force_refresh" not in str(exc):
+                raise
+            self.controller.list_remote_directory(path)
 
     def _set_remote_loading(self, loading: bool, path: PurePosixPath) -> None:
         enabled = not loading
