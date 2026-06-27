@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QThread, QTimer, Signal, Slot
@@ -487,6 +488,10 @@ class MainWindow(QMainWindow):
         self.transfer_refresh_timer.setInterval(75)
         self.transfer_refresh_timer.setSingleShot(True)
         self.transfer_refresh_timer.timeout.connect(self._flush_pending_transfer_items)
+        self.transfer_status_clock: Callable[[], datetime] = lambda: datetime.now(UTC)
+        self.transfer_retry_countdown_timer = QTimer(self)
+        self.transfer_retry_countdown_timer.setInterval(1_000)
+        self.transfer_retry_countdown_timer.timeout.connect(self._refresh_transfer_retry_countdowns)
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
@@ -1419,8 +1424,37 @@ class MainWindow(QMainWindow):
             self.transfer_table.setItem(row, 5, QTableWidgetItem(_remaining_text(item)))
             self.transfer_table.setItem(row, 6, QTableWidgetItem(str(item.retry_count)))
             self.transfer_table.setItem(row, 7, QTableWidgetItem(item.failure_reason or item.last_error or ""))
-            self.transfer_table.setItem(row, 8, QTableWidgetItem(_transfer_status_text(item)))
+            self.transfer_table.setItem(
+                row,
+                8,
+                QTableWidgetItem(_transfer_status_text(item, now=self.transfer_status_clock())),
+            )
             _apply_transfer_row_style(self.transfer_table, row, item.status)
+        self._sync_transfer_retry_countdown_timer()
+
+    def _refresh_transfer_retry_countdowns(self) -> None:
+        if not self._rendered_transfer_items:
+            self.transfer_retry_countdown_timer.stop()
+            return
+        now = self.transfer_status_clock()
+        for row, item in enumerate(self._rendered_transfer_items):
+            status_item = self.transfer_table.item(row, 8)
+            if status_item is not None:
+                status_item.setText(_transfer_status_text(item, now=now))
+        self._sync_transfer_retry_countdown_timer(now=now)
+
+    def _sync_transfer_retry_countdown_timer(self, now: datetime | None = None) -> None:
+        now = now or self.transfer_status_clock()
+        has_future_retry = any(
+            item.status is TransferStatus.RETRYING
+            and item.next_retry_at is not None
+            and item.next_retry_at > now
+            for item in self._rendered_transfer_items
+        )
+        if has_future_retry and not self.transfer_retry_countdown_timer.isActive():
+            self.transfer_retry_countdown_timer.start()
+        elif not has_future_retry and self.transfer_retry_countdown_timer.isActive():
+            self.transfer_retry_countdown_timer.stop()
 
     def set_resource_snapshot(self, snapshot: ResourceSnapshot) -> None:
         self._last_resource_snapshot = snapshot
@@ -2570,9 +2604,12 @@ def _status_text(status: TransferStatus) -> str:
     return status.value.replace("_", " ").title()
 
 
-def _transfer_status_text(item: TransferItem) -> str:
+def _transfer_status_text(item: TransferItem, *, now: datetime | None = None) -> str:
     if item.status is TransferStatus.RETRYING and item.next_retry_at is not None:
-        return f"Retrying at {item.next_retry_at.isoformat(timespec='seconds')}"
+        if now is not None and item.next_retry_at > now:
+            seconds = max(int((item.next_retry_at - now).total_seconds()), 1)
+            return f"Retrying in {seconds}s"
+        return "Retrying now"
     return _status_text(item.status)
 
 

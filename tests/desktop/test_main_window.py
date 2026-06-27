@@ -2501,6 +2501,7 @@ def test_transfer_center_renders_retry_and_failure_reason(qtbot, tmp_path) -> No
 def test_transfer_center_shows_next_retry_time(qtbot, tmp_path) -> None:
     window = MainWindow(controller=FakeController())
     qtbot.addWidget(window)
+    window.transfer_status_clock = lambda: datetime(2026, 6, 27, 12, 0, tzinfo=UTC)
     item = TransferItem(
         id="item-1",
         task_id="task-1",
@@ -2519,7 +2520,45 @@ def test_transfer_center_shows_next_retry_time(qtbot, tmp_path) -> None:
 
     window.set_transfer_items([item])
 
-    assert window.transfer_table.item(0, 8).text() == "Retrying at 2026-06-27T12:00:02+00:00"
+    assert window.transfer_table.item(0, 8).text() == "Retrying in 2s"
+
+
+def test_transfer_center_shows_relative_retry_countdown(qtbot, tmp_path) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    now = datetime(2026, 6, 27, 12, 0, tzinfo=UTC)
+    window.transfer_status_clock = lambda: now
+    item = TransferItem(
+        id="item-1",
+        task_id="task-1",
+        server_id="site-1",
+        direction=Direction.UPLOAD,
+        source_path=tmp_path / "app.zip",
+        destination_path=PurePosixPath("/home/deploy/app.zip"),
+        temporary_path=PurePosixPath("/home/deploy/.filezall.app.zip.part"),
+        size_bytes=100,
+        protocol=Protocol.SFTP,
+        status=TransferStatus.RETRYING,
+        retry_count=1,
+        failure_reason="network down",
+        next_retry_at=datetime(2026, 6, 27, 12, 0, 2, tzinfo=UTC),
+    )
+
+    window.set_transfer_items([item])
+
+    assert window.transfer_table.item(0, 8).text() == "Retrying in 2s"
+    assert window.transfer_retry_countdown_timer.isActive()
+
+    now = datetime(2026, 6, 27, 12, 0, 1, tzinfo=UTC)
+    window._refresh_transfer_retry_countdowns()
+
+    assert window.transfer_table.item(0, 8).text() == "Retrying in 1s"
+
+    now = datetime(2026, 6, 27, 12, 0, 2, tzinfo=UTC)
+    window._refresh_transfer_retry_countdowns()
+
+    assert window.transfer_table.item(0, 8).text() == "Retrying now"
+    assert not window.transfer_retry_countdown_timer.isActive()
 
 
 def test_dragging_local_files_to_remote_queues_upload(qtbot, tmp_path) -> None:

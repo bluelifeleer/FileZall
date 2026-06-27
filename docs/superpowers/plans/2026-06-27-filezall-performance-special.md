@@ -381,3 +381,41 @@ Expected: all tests pass except the environment-gated live SFTP skip.
 
 - Add relative retry countdown display in the transfer center.
 - Evaluate process-list model/view virtualization if resource monitoring with many processes is still visibly heavy.
+
+## Immediate Task 9: Relative Retry Countdown Display
+
+**Files:**
+- Modify: `src/filezall_desktop/main_window.py`
+- Modify: `tests/desktop/test_main_window.py`
+
+- [x] **Step 1: Write failing countdown test**
+
+Add a transfer-center test that sets a controlled UI clock, renders a retrying transfer with `next_retry_at`, and expects the status column to show `Retrying in 2s` instead of an absolute timestamp.
+
+- [x] **Step 2: Add retry countdown timer**
+
+Add a `transfer_retry_countdown_timer` owned by `MainWindow`. Start it only when the rendered transfer snapshot contains a future `RETRYING` item, and stop it when no future retry timers remain.
+
+- [x] **Step 3: Render relative retry text**
+
+Update transfer status text so future retry times display as `Retrying in Ns`; due retry rows display `Retrying now`.
+
+- [x] **Step 4: Refresh status cells without rebuilding transfer rows**
+
+On countdown timer ticks, update only the status-column text for the already-rendered transfer rows. Keep the existing coalesced transfer table rendering path unchanged.
+
+- [x] **Step 5: Run verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py -k "next_retry_time or relative_retry_countdown or retry_and_failure"
+.\.venv\Scripts\python.exe -m pytest
+```
+
+Expected: all tests pass except the environment-gated live SFTP skip.
+
+## Next Milestone Target
+
+- Evaluate process-list model/view virtualization if resource monitoring with many processes is still visibly heavy.
+- Add a diagnostics bundle if performance validation starts producing local-only crash or latency evidence.
