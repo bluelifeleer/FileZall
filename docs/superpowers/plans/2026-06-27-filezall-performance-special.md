@@ -1050,3 +1050,38 @@ pass.
 - Add bounded reconnect-state-machine tests and implementation.
 - Extend rate-limit behavior to downloads once the remote clients expose download
   progress callbacks consistently.
+
+## Immediate Task 24: Add Bounded Connection Recovery State
+
+**Files:**
+- Add: `src/filezall_core/connection_recovery.py`
+- Add: `tests/core/test_connection_recovery.py`
+
+- [x] **Step 1: Write recovery state tests**
+
+Add tests proving repeated failures schedule bounded exponential backoff, block
+after the maximum attempt count, report readiness only when the retry time is
+due, and reset cleanly after success.
+
+- [x] **Step 2: Implement recovery state model**
+
+Add `ConnectionRecoveryState` and immutable snapshots for `idle`, `waiting`,
+and `blocked` states. Keep the module independent from UI behavior so it can be
+integrated safely into heartbeat handling later.
+
+- [x] **Step 3: Run targeted verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\core\test_connection_recovery.py -vv
+```
+
+Expected: recovery backoff, readiness, blocking, and reset behavior pass.
+
+## Next Milestone Target
+
+- Integrate the bounded recovery state into heartbeat handling with explicit
+  user-visible logs and diagnostic state.
+- Extend rate-limit behavior to downloads once remote clients expose download
+  progress callbacks consistently.
