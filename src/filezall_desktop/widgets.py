@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path, PurePath
 
-from PySide6.QtCore import QModelIndex, QPoint, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -223,6 +223,124 @@ class DirectoryHistoryComboBox(QComboBox):
             self.history_selected.emit(text)
 
 
+class FileEntryTableModel(QAbstractTableModel):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        headers: list[str] | None = None,
+        parent_label: str = "Parent Directory",
+        directory_label: str = "Directory",
+        file_label: str = "File",
+    ) -> None:
+        super().__init__(parent)
+        self._headers = headers or ["Name", "Size", "Type", "Modified"]
+        self._parent_label = parent_label
+        self._directory_label = directory_label
+        self._file_label = file_label
+        self._entries = []
+
+    def set_texts(
+        self,
+        *,
+        headers: list[str],
+        parent_label: str,
+        directory_label: str,
+        file_label: str,
+    ) -> None:
+        self.beginResetModel()
+        self._headers = headers
+        self._parent_label = parent_label
+        self._directory_label = directory_label
+        self._file_label = file_label
+        self.endResetModel()
+
+    def set_entries(self, entries) -> None:
+        self.beginResetModel()
+        self._entries = list(entries)
+        self.endResetModel()
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        if parent.isValid():
+            return 0
+        return len(self._entries) + 1
+
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        if parent.isValid():
+            return 0
+        return 4
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        row = index.row()
+        column = index.column()
+        if row == 0:
+            return self._parent_data(column, role)
+        entry = self._entry_at(row)
+        if entry is None:
+            return None
+        return self._entry_data(entry, column, role)
+
+    def headerData(
+        self,
+        section: int,
+        orientation: Qt.Orientation,
+        role: int = Qt.ItemDataRole.DisplayRole,
+    ):
+        if (
+            orientation == Qt.Orientation.Horizontal
+            and role == Qt.ItemDataRole.DisplayRole
+            and 0 <= section < len(self._headers)
+        ):
+            return self._headers[section]
+        return super().headerData(section, orientation, role)
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        if not index.isValid():
+            return Qt.ItemFlag.NoItemFlags
+        return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+
+    def _entry_at(self, row: int):
+        index = row - 1
+        if 0 <= index < len(self._entries):
+            return self._entries[index]
+        return None
+
+    def _parent_data(self, column: int, role: int):
+        if role == Qt.ItemDataRole.DisplayRole:
+            return ["..", "", self._parent_label, ""][column] if 0 <= column < 4 else None
+        if role == Qt.ItemDataRole.UserRole:
+            return True
+        if role == _ROW_KIND_ROLE:
+            return "parent"
+        if role == ICON_KEY_ROLE and column == 0:
+            return "parent-dir"
+        if role == Qt.ItemDataRole.DecorationRole and column == 0:
+            return _entry_icon("..", True, "parent")
+        return None
+
+    def _entry_data(self, entry, column: int, role: int):
+        if role == Qt.ItemDataRole.DisplayRole:
+            if column == 0:
+                return entry.name
+            if column == 1:
+                return str(entry.size_bytes)
+            if column == 2:
+                return self._directory_label if entry.is_dir else self._file_label
+            if column == 3:
+                return _format_time(entry.modified_time)
+        if role == Qt.ItemDataRole.UserRole:
+            return entry.is_dir
+        if role == _ROW_KIND_ROLE:
+            return "entry"
+        if role == ICON_KEY_ROLE and column == 0:
+            return _entry_icon_key(entry.name, entry.is_dir, "entry")
+        if role == Qt.ItemDataRole.DecorationRole and column == 0:
+            return _entry_icon(entry.name, entry.is_dir, "entry")
+        return None
+
+
 class FilePanel(QWidget):
     def __init__(
         self,
@@ -242,6 +360,15 @@ class FilePanel(QWidget):
         self._entry_batch_generation = 0
         self._pending_entries = []
         self._pending_entry_index = 0
+        self._entry_batch_timer = QTimer(self)
+        self._entry_batch_timer.setSingleShot(True)
+        self._entry_batch_timer.timeout.connect(self._append_scheduled_entry_batch)
+        self.entry_model = FileEntryTableModel(
+            self,
+            parent_label=self._parent_label,
+            directory_label=self._directory_label,
+            file_label=self._file_label,
+        )
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
         self.title = QLabel(title, self)
@@ -333,6 +460,12 @@ class FilePanel(QWidget):
         self._parent_label = parent_label
         self._directory_label = directory_label
         self._file_label = file_label
+        self.entry_model.set_texts(
+            headers=headers,
+            parent_label=parent_label,
+            directory_label=directory_label,
+            file_label=file_label,
+        )
         self.transfer_action.setText(transfer_label)
         self.delete_action.setText(delete_label)
         self.rename_action.setText(rename_label)
@@ -346,6 +479,7 @@ class FilePanel(QWidget):
 
     def set_placeholder_row(self, text: str) -> None:
         self._cancel_pending_entry_batches()
+        self.entry_model.set_entries([])
         self.table.setUpdatesEnabled(False)
         self.table.setRowCount(1)
         self.table.setItem(0, 0, _entry_item(text, False, show_icon=True))
@@ -358,6 +492,7 @@ class FilePanel(QWidget):
     def set_entries(self, entries) -> None:
         entries = list(entries)
         self._cancel_pending_entry_batches()
+        self.entry_model.set_entries(entries)
         if len(entries) > self.large_directory_threshold:
             self._start_batched_entries(entries)
             return
@@ -432,14 +567,19 @@ class FilePanel(QWidget):
         if end < len(entries):
             self.load_progress_label.setText(f"Loading {end}/{len(entries)} items...")
             self.table.viewport().update()
-            QTimer.singleShot(0, lambda generation=generation: self._append_entry_batch(generation))
+            self._entry_batch_timer.start(0)
             return
         self.is_loading_entries = False
         self._pending_entries = []
         self.load_progress_label.setText(f"{len(entries)} items")
         self.table.viewport().update()
 
+    def _append_scheduled_entry_batch(self) -> None:
+        self._append_entry_batch(self._entry_batch_generation)
+
     def _cancel_pending_entry_batches(self) -> None:
+        if hasattr(self, "_entry_batch_timer"):
+            self._entry_batch_timer.stop()
         self._entry_batch_generation += 1
         self.is_loading_entries = False
         self._pending_entries = []

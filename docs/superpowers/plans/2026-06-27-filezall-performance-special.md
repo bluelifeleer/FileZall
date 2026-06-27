@@ -129,3 +129,41 @@ Start Milestone 2 only after:
 - Task 1 and Task 2 are committed.
 - Full pytest passes.
 - A short note is added to the final response with the baseline utility location and the next planned target: file list virtualization.
+
+## Immediate Task 3: File Entry Table Model Bridge
+
+**Files:**
+- Modify: `src/filezall_desktop/widgets.py`
+- Test: `tests/desktop/test_file_entry_table_model.py`
+
+- [x] **Step 1: Write failing model test**
+
+Add a test that loads 10,000 file entries into `FileEntryTableModel` and reads display, type, time, directory, and icon-key roles without requiring `QTableWidgetItem` materialization.
+
+- [x] **Step 2: Implement table model**
+
+Introduce `FileEntryTableModel` backed by plain entry objects. Keep it independent from the existing `QTableWidget` rendering path so the next migration can swap the view without changing file-entry data formatting again.
+
+- [x] **Step 3: Write failing FilePanel bridge test**
+
+Add a test that calls `FilePanel.set_entries()` with 10,000 entries and asserts the panel keeps the virtual model in sync while the current table behavior remains available.
+
+- [x] **Step 4: Bridge FilePanel to the virtual model**
+
+Create `FilePanel.entry_model`, update it from `set_entries()`, clear it for placeholder rows, and keep translated labels synchronized through `set_texts()`.
+
+- [x] **Step 5: Run focused regression tests**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_file_entry_table_model.py
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py -k "file_panel or directory or selected or icon"
+```
+
+Expected: all selected tests pass.
+
+## Next Milestone 2 Target
+
+- Replace the file-panel visual table with `QTableView + FileEntryTableModel` behind a compatibility layer.
+- Preserve existing signals and helpers used by `MainWindow`: row selection, double-click, parent row, drag/drop, context menu, keyboard shortcuts, icon roles, and directory history.
