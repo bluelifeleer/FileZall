@@ -160,6 +160,38 @@ def test_transfer_runner_reports_upload_chunk_progress(tmp_path: Path) -> None:
     assert progress_updates[-1].status == TransferStatus.COMPLETED
 
 
+def test_transfer_runner_throttles_upload_progress_when_limit_is_set(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    task = TransferTask(
+        id="task-1",
+        server_id="site-1",
+        direction=Direction.UPLOAD,
+        source_path=tmp_path,
+        destination_path=PurePosixPath("/home/deploy"),
+        protocol=Protocol.SFTP,
+        conflict_policy=ConflictPolicy.OVERWRITE,
+    )
+    item = task.create_item("item-1", PurePosixPath("app.zip"), size_bytes=8)
+    local_file = tmp_path / "app.zip"
+    local_file.write_bytes(b"abcdefgh")
+    repository.save_task(task, [item])
+    clock = FakeThrottleClock()
+    sleeps = []
+
+    result = TransferRunner(
+        repository,
+        throttle_clock=clock,
+        sleeper=sleeps.append,
+    ).run_item(
+        item,
+        TwoStepProgressRemoteClient(),
+        bytes_per_second_limit=4,
+    )
+
+    assert result.status is TransferStatus.COMPLETED
+    assert sleeps == [1.0, 1.0]
+
+
 class FailingRemoteClient(FakeRemoteClient):
     def __init__(self) -> None:
         super().__init__(entries={}, home=PurePosixPath("/home/deploy"))
@@ -188,6 +220,30 @@ class ProgressingRemoteClient(FakeRemoteClient):
         if progress_callback is not None:
             progress_callback(4)
         super().upload_file_range(local_path, remote_path, offset)
+
+
+class TwoStepProgressRemoteClient(FakeRemoteClient):
+    def __init__(self) -> None:
+        super().__init__(entries={}, home=PurePosixPath("/home/deploy"))
+
+    def upload_file_range(
+        self,
+        local_path: Path,
+        remote_path: PurePosixPath,
+        offset: int,
+        progress_callback=None,
+    ) -> None:
+        if progress_callback is not None:
+            progress_callback(4)
+            progress_callback(8)
+
+
+class FakeThrottleClock:
+    def __init__(self) -> None:
+        self.value = 0.0
+
+    def __call__(self) -> float:
+        return self.value
 
 
 def _repository(tmp_path: Path) -> TransferRepository:

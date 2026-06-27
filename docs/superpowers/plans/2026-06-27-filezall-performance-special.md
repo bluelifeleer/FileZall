@@ -1004,3 +1004,49 @@ new defaults.
   covered by measurable scenarios.
 - Continue transfer-runner tuning for pause/resume consistency and rate-limit
   enforcement.
+
+## Immediate Task 23: Enforce Upload Rate Limit in Transfer Runner
+
+**Files:**
+- Modify: `src/filezall_core/transfer_runner.py`
+- Modify: `src/filezall_core/queue.py`
+- Modify: `tests/core/test_transfer_runner.py`
+
+- [x] **Step 1: Write runner throttling test**
+
+Add a transfer runner test with an injected clock and sleeper proving upload
+progress is delayed when `bytes_per_second_limit` is set.
+
+- [x] **Step 2: Add testable throttle hooks**
+
+Allow `TransferRunner` to receive a throttle clock and sleeper, defaulting to
+real monotonic time and `sleep`, so production behavior can be tested without
+slowing the suite.
+
+- [x] **Step 3: Throttle upload progress**
+
+Apply a small transfer throttle around upload progress callbacks. The throttle
+calculates expected elapsed time from transferred bytes and configured limit,
+then sleeps only for the missing time.
+
+- [x] **Step 4: Wire queue settings to runner**
+
+Pass `TransferQueue.settings.bytes_per_second_limit` into `TransferRunner.run_item()`
+so the existing transfer limit controls affect queued uploads.
+
+- [x] **Step 5: Run targeted verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\core\test_transfer_runner.py tests\core\test_queue.py -vv
+```
+
+Expected: upload throttling, transfer metrics, retry, and queue concurrency tests
+pass.
+
+## Next Milestone Target
+
+- Add bounded reconnect-state-machine tests and implementation.
+- Extend rate-limit behavior to downloads once the remote clients expose download
+  progress callbacks consistently.

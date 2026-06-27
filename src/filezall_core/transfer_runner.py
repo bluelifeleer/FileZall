@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
+from time import monotonic, sleep
 
 from filezall_core.models import Direction, TransferItem, TransferStatus
 from filezall_core.protocols import RemoteFileClient
@@ -12,14 +13,22 @@ from filezall_core.transfer_repository import TransferRepository
 
 
 class TransferRunner:
-    def __init__(self, repository: TransferRepository) -> None:
+    def __init__(
+        self,
+        repository: TransferRepository,
+        throttle_clock: Callable[[], float] = monotonic,
+        sleeper: Callable[[float], None] = sleep,
+    ) -> None:
         self._repository = repository
+        self._throttle_clock = throttle_clock
+        self._sleeper = sleeper
 
     def run_item(
         self,
         item: TransferItem,
         client: RemoteFileClient,
         progress_callback: Callable[[TransferItem], None] | None = None,
+        bytes_per_second_limit: int | None = None,
     ) -> TransferItem:
         try:
             self._update_progress(
@@ -29,7 +38,12 @@ class TransferRunner:
                 progress_callback=progress_callback,
             )
             if item.direction is Direction.UPLOAD:
-                self._run_upload(item, client, progress_callback)
+                self._run_upload(
+                    item,
+                    client,
+                    progress_callback,
+                    bytes_per_second_limit=bytes_per_second_limit,
+                )
             else:
                 self._run_download(item, client)
             current = self._repository.get_item(item.id) or item
@@ -62,6 +76,7 @@ class TransferRunner:
         item: TransferItem,
         client: RemoteFileClient,
         progress_callback: Callable[[TransferItem], None] | None = None,
+        bytes_per_second_limit: int | None = None,
     ) -> None:
         if not isinstance(item.source_path, Path):
             raise TypeError("Upload source path must be local")
@@ -75,15 +90,24 @@ class TransferRunner:
             TransferStatus.RUNNING,
             progress_callback=progress_callback,
         )
+        throttle = _TransferThrottle(
+            offset,
+            bytes_per_second_limit,
+            clock=self._throttle_clock,
+            sleeper=self._sleeper,
+        )
         client.upload_file_range(
             item.source_path,
             remote_part,
             offset,
-            progress_callback=lambda bytes_transferred: self._update_progress(
-                item,
-                bytes_transferred,
-                TransferStatus.RUNNING,
-                progress_callback=progress_callback,
+            progress_callback=lambda bytes_transferred: (
+                throttle.wait(bytes_transferred),
+                self._update_progress(
+                    item,
+                    bytes_transferred,
+                    TransferStatus.RUNNING,
+                    progress_callback=progress_callback,
+                ),
             ),
         )
         client.rename(remote_part, item.destination_path)
@@ -155,3 +179,31 @@ class TransferRunner:
 
 def _remote_path(path: Path | PurePosixPath) -> PurePosixPath | None:
     return path if isinstance(path, PurePosixPath) else None
+
+
+class _TransferThrottle:
+    def __init__(
+        self,
+        offset: int,
+        bytes_per_second_limit: int | None,
+        *,
+        clock: Callable[[], float],
+        sleeper: Callable[[float], None],
+    ) -> None:
+        self._offset = offset
+        self._limit = bytes_per_second_limit
+        self._clock = clock
+        self._sleeper = sleeper
+        self._started_at = clock()
+        self._slept_seconds = 0.0
+
+    def wait(self, bytes_transferred: int) -> None:
+        if self._limit is None or self._limit <= 0:
+            return
+        transferred = max(bytes_transferred - self._offset, 0)
+        expected_elapsed = transferred / self._limit
+        elapsed = (self._clock() - self._started_at) + self._slept_seconds
+        delay = expected_elapsed - elapsed
+        if delay > 0:
+            self._sleeper(delay)
+            self._slept_seconds += delay

@@ -146,6 +146,7 @@ class TransferQueue:
                 item,
                 transfer_client,
                 progress_callback=progress_callback,
+                bytes_per_second_limit=self.settings.bytes_per_second_limit,
             )
         except Exception as exc:
             reason = str(exc)
