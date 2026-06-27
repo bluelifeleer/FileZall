@@ -74,6 +74,8 @@ class FakeController:
         self.retried = []
         self.resource_refreshes = 0
         self.process_details = []
+        self.process_stops = []
+        self.process_restarts = []
         self.agent_installs = 0
         self.agent_uninstalls = 0
         self.heartbeat_results = []
@@ -134,6 +136,12 @@ class FakeController:
 
     def show_process_detail(self, pid) -> None:
         self.process_details.append(pid)
+
+    def stop_process(self, pid) -> None:
+        self.process_stops.append(pid)
+
+    def restart_process(self, pid) -> None:
+        self.process_restarts.append(pid)
 
     def install_agent_with_progress(self, progress=None) -> AgentInstallResult:
         self.agent_installs += 1
@@ -517,6 +525,51 @@ def test_main_window_uses_draggable_splitters_for_major_regions(qtbot) -> None:
 
     assert window.main_splitter.count() == 3
     assert window.file_splitter.count() == 2
+
+
+def test_main_window_uses_single_unified_log_region(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    assert window.transfer_splitter.count() == 2
+    assert window.transfer_splitter.widget(1) is window.log_viewer
+    assert window.log_view is window.log_viewer
+    assert not hasattr(window, "simple_log_view")
+
+    window.append_log("Connected to Production", category="connection")
+    window.append_log("Uploaded app.txt", category="transfer")
+
+    assert "Connected to Production" in window.log_view.toPlainText()
+    assert "Uploaded app.txt" in window.log_view.toPlainText()
+
+
+def test_settings_menu_opens_dialog_for_theme_language_and_transfer_settings(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    _use_english(window)
+
+    menu_titles = [action.text() for action in window.menuBar().actions()]
+    assert "Settings" in menu_titles
+    assert "Theme" not in menu_titles
+    assert "Language" not in menu_titles
+
+    window.settings_action.trigger()
+
+    assert window.settings_dialog is not None
+    assert window.settings_dialog.isVisible()
+    assert window.settings_dialog.theme_selector.currentText() == "System"
+    assert window.settings_dialog.language_selector.currentText() == "English"
+
+    window.settings_dialog.theme_selector.setCurrentText("Dark")
+    window.settings_dialog.language_selector.setCurrentText("简体中文")
+    window.settings_dialog.concurrency_spin.setValue(4)
+    window.settings_dialog.limit_spin.setValue(256)
+    window.settings_dialog.apply_button.click()
+
+    assert window.current_theme == "dark"
+    assert window.current_language == "zh_CN"
+    assert window.transfer_settings.max_concurrent == 4
+    assert window.transfer_settings.bytes_per_second_limit == 256 * 1024
 
 
 def test_file_panels_use_full_row_selection_for_actions(qtbot) -> None:
@@ -1073,7 +1126,8 @@ def test_main_window_has_theme_menu_actions(qtbot) -> None:
     _use_english(window)
 
     menus = {action.text(): action.menu() for action in window.menuBar().actions()}
-    assert "Theme" in menus
+    assert "Settings" in menus
+    assert window.theme_menu in [action.menu() for action in window.settings_menu.actions()]
     theme_actions = {
         action.text(): action
         for action in window.theme_menu.actions()
@@ -1140,7 +1194,8 @@ def test_main_window_has_language_menu_actions(qtbot) -> None:
     qtbot.addWidget(window)
 
     menus = {action.text(): action.menu() for action in window.menuBar().actions()}
-    assert "语言" in menus
+    assert "设置" in menus
+    assert window.language_menu in [action.menu() for action in window.settings_menu.actions()]
     language_actions = {action.text(): action for action in window.language_menu.actions()}
 
     assert set(language_actions) == {"System", "English", "简体中文"}
@@ -2235,6 +2290,50 @@ def test_main_window_renders_transfer_rows_and_queue_action_buttons(qtbot, tmp_p
     assert controller.retried == ["task-1"]
 
 
+def test_direct_upload_and_download_show_immediate_transfer_progress_rows(qtbot, tmp_path) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    (local_root / "app.txt").write_text("hello", encoding="utf-8")
+    window.local_panel.path_edit.setText(str(local_root))
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.local_panel.set_entries(
+        [
+            type(
+                "Entry",
+                (),
+                {"name": "app.txt", "is_dir": False, "size_bytes": 5, "modified_time": None},
+            )(),
+        ]
+    )
+    window.remote_panel.set_entries(
+        [
+            type(
+                "Entry",
+                (),
+                {"name": "remote.log", "is_dir": False, "size_bytes": 12, "modified_time": None},
+            )(),
+        ]
+    )
+
+    window.local_panel.table.selectRow(1)
+    qtbot.mouseClick(window.local_panel.action_button, Qt.MouseButton.LeftButton)
+    assert window.transfer_table.rowCount() == 1
+    assert window.transfer_table.item(0, 1).text() == "upload"
+    assert window.transfer_table.item(0, 2).text() == "app.txt"
+    assert window.transfer_table.item(0, 3).text() == "0%"
+    assert window.transfer_table.item(0, 8).text() == "Pending"
+
+    window.remote_panel.table.selectRow(1)
+    qtbot.mouseClick(window.remote_panel.action_button, Qt.MouseButton.LeftButton)
+    assert window.transfer_table.rowCount() == 2
+    assert window.transfer_table.item(1, 1).text() == "download"
+    assert window.transfer_table.item(1, 2).text() == "remote.log"
+    assert window.transfer_table.item(1, 3).text() == "0%"
+
+
 def test_transfer_center_shows_directory_progress(qtbot, tmp_path) -> None:
     window = MainWindow(controller=FakeController())
     qtbot.addWidget(window)
@@ -2455,6 +2554,78 @@ def test_main_window_renders_resource_snapshot_and_process_detail(qtbot) -> None
     assert controller.process_details == [123]
     assert "python app.py" in window.process_detail_label.text()
     assert "threads: 8" in window.process_detail_label.text()
+
+
+def test_process_table_uses_full_row_activity_and_double_click_loads_detail(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.set_resource_snapshot(
+        ResourceSnapshot(
+            cpu=CpuStats(percent=12.5),
+            memory=MemoryStats(total_bytes=100, used_bytes=50, available_bytes=50),
+            disks=[],
+            network=NetworkStats(rx_bytes_per_sec=0, tx_bytes_per_sec=0),
+            processes=[ProcessSummary(pid=123, user="deploy", name="python", cpu_percent=1.5, memory_percent=2.5)],
+        )
+    )
+
+    assert window.process_table.selectionBehavior() == QAbstractItemView.SelectionBehavior.SelectRows
+    assert window.process_table.selectionMode() == QAbstractItemView.SelectionMode.SingleSelection
+    assert window.process_table.hasMouseTracking()
+    assert window.process_table.itemDelegate().uses_full_row_activity
+    window.process_table.set_hovered_row(0)
+    assert window.process_table.hovered_row == 0
+
+    window.process_table.cellDoubleClicked.emit(0, 2)
+
+    assert controller.process_details == [123]
+
+
+def test_process_context_and_detail_actions_stop_restart_and_copy_pid(qtbot) -> None:
+    controller = FakeController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.set_resource_snapshot(
+        ResourceSnapshot(
+            cpu=CpuStats(percent=12.5),
+            memory=MemoryStats(total_bytes=100, used_bytes=50, available_bytes=50),
+            disks=[],
+            network=NetworkStats(rx_bytes_per_sec=0, tx_bytes_per_sec=0),
+            processes=[ProcessSummary(pid=123, user="deploy", name="python", cpu_percent=1.5, memory_percent=2.5)],
+        )
+    )
+    window.process_table.selectRow(0)
+
+    window.process_stop_action.trigger()
+    window.process_restart_action.trigger()
+    window.process_copy_pid_action.trigger()
+
+    assert controller.process_stops == [123]
+    assert controller.process_restarts == [123]
+    assert window.last_copied_text == "123"
+
+    window.set_process_detail(
+        ProcessDetail(
+            pid=123,
+            user="deploy",
+            name="python",
+            cpu_percent=1.5,
+            memory_percent=2.5,
+            command_line="python app.py",
+            start_time="2026-06-25T12:00:00Z",
+            thread_count=8,
+            status="sleeping",
+        )
+    )
+
+    window.process_detail_stop_button.click()
+    window.process_detail_restart_button.click()
+    window.process_detail_copy_pid_button.click()
+
+    assert controller.process_stops == [123, 123]
+    assert controller.process_restarts == [123, 123]
+    assert window.last_copied_text == "123"
 
 
 def test_resource_monitor_has_time_range_and_process_filters(qtbot) -> None:

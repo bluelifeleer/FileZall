@@ -265,6 +265,7 @@ class FakeAgentInstallService:
         self.uninstall_calls = []
         self.resource_calls = []
         self.detail_calls = []
+        self.signal_calls = []
         self.installed_checks = []
         self.installed = False
         self.detect_result = None
@@ -326,6 +327,9 @@ class FakeAgentInstallService:
     def process_detail(self, site, pid, password, runner=None):
         self.detail_calls.append((site, pid, password, runner))
         return self.detail
+
+    def signal_process(self, site, pid, signal, password, runner=None):
+        self.signal_calls.append((site, pid, signal, password, runner))
 
 
 def test_controller_loads_local_directory(tmp_path: Path) -> None:
@@ -1081,6 +1085,48 @@ def test_controller_refreshes_resources_through_installed_agent_when_no_monitor_
         (controller._connected_site, 456, "secret", controller._session.client)
     ]
     assert window.process_detail == service.detail
+
+
+def test_controller_stops_and_restarts_process_through_installed_agent() -> None:
+    window = FakeWindow()
+    service = FakeAgentInstallService(
+        AgentInstallResult(
+            success=True,
+            commands_run=8,
+            verified=True,
+            agent_token_ref="site-1:agent-token",
+        )
+    )
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: FakeSession(),
+        agent_install_service=service,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    controller.connect(site, password="secret")
+    result = controller.install_agent_with_progress()
+    controller.complete_agent_install(result)
+    controller.stop_process(456)
+    controller.restart_process(456)
+
+    assert service.signal_calls == [
+        (controller._connected_site, 456, "TERM", "secret", controller._session.client),
+        (controller._connected_site, 456, "HUP", "secret", controller._session.client),
+    ]
+    assert window.statuses[-2:] == [
+        "Stop signal sent to process 456",
+        "Restart signal sent to process 456",
+    ]
 
 
 def test_controller_uninstalls_agent_for_connected_site() -> None:

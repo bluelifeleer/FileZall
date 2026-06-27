@@ -41,3 +41,11 @@ def test_log_viewer_exposes_export_actions(qtbot) -> None:
     qtbot.mouseClick(viewer.export_diagnostics_button, Qt.MouseButton.LeftButton)
 
     assert triggered == ["logs", "diagnostics"]
+
+
+def test_log_viewer_uses_one_visible_log_display(qtbot) -> None:
+    viewer = LogViewer()
+    qtbot.addWidget(viewer)
+
+    assert viewer.record_list.isVisibleTo(viewer)
+    assert not hasattr(viewer, "text_view")

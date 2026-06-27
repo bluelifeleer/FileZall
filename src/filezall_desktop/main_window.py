@@ -6,9 +6,13 @@ from pathlib import Path, PurePosixPath
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QActionGroup, QColor, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QFileDialog,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -68,7 +72,7 @@ from filezall_desktop.theme import (
     selected_color_for_theme,
     stylesheet_for_theme,
 )
-from filezall_desktop.widgets import ConnectionBar, FilePanel
+from filezall_desktop.widgets import ConnectionBar, FilePanel, HoverRowDelegate, HoverRowTableWidget
 
 
 class AgentActionWorker(QObject):
@@ -118,6 +122,76 @@ class RemoteDirectoryWorker(QObject):
             self.succeeded.emit(self._action())
         except Exception as exc:
             self.failed.emit(str(exc))
+
+
+class SettingsDialog(QDialog):
+    def __init__(self, window: "MainWindow") -> None:
+        super().__init__(window)
+        self._window = window
+        self.setWindowTitle("Settings")
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        self.theme_selector = QComboBox(self)
+        for theme_name, label in THEME_LABELS.items():
+            self.theme_selector.addItem(label, theme_name)
+        self.theme_selector.setCurrentIndex(
+            max(self.theme_selector.findData(window.current_theme), 0)
+        )
+
+        self.language_selector = QComboBox(self)
+        for language_name, label in LANGUAGE_LABELS.items():
+            self.language_selector.addItem(label, language_name)
+        self.language_selector.setCurrentIndex(
+            max(self.language_selector.findData(window.current_language), 0)
+        )
+
+        self.density_selector = QComboBox(self)
+        for density_name in ("compact", "standard", "comfortable"):
+            self.density_selector.addItem(window._text(f"density.{density_name}"), density_name)
+        self.density_selector.setCurrentIndex(
+            max(self.density_selector.findData(window.file_list_density), 0)
+        )
+
+        self.concurrency_spin = QSpinBox(self)
+        self.concurrency_spin.setRange(1, 16)
+        self.concurrency_spin.setValue(window.transfer_settings.max_concurrent)
+
+        self.limit_spin = QSpinBox(self)
+        self.limit_spin.setRange(0, 1024 * 1024)
+        limit = window.transfer_settings.bytes_per_second_limit or 0
+        self.limit_spin.setValue(int(limit / 1024) if limit else 0)
+
+        form.addRow("Theme", self.theme_selector)
+        form.addRow("Language", self.language_selector)
+        form.addRow("List density", self.density_selector)
+        form.addRow("Transfer concurrency", self.concurrency_spin)
+        form.addRow("Transfer limit KB/s", self.limit_spin)
+        layout.addLayout(form)
+
+        self.button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Apply
+            | QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        self.apply_button = self.button_box.button(QDialogButtonBox.StandardButton.Apply)
+        self.button_box.accepted.connect(self._accept)
+        self.button_box.rejected.connect(self.reject)
+        self.apply_button.clicked.connect(self.apply_settings)
+        layout.addWidget(self.button_box)
+
+    def apply_settings(self) -> None:
+        self._window._apply_theme(str(self.theme_selector.currentData()))
+        self._window._apply_language(str(self.language_selector.currentData()))
+        self._window._apply_file_list_density(str(self.density_selector.currentData()))
+        self._window.transfer_concurrency_spin.setValue(self.concurrency_spin.value())
+        self._window.transfer_limit_spin.setValue(self.limit_spin.value())
+        self._window._handle_transfer_settings_changed()
+
+    def _accept(self) -> None:
+        self.apply_settings()
+        self.accept()
 
 
 class ResourceUsageChart(QWidget):
@@ -377,6 +451,7 @@ class MainWindow(QMainWindow):
         self._active_resource_refresh = None
         self._resource_refresh_running = False
         self._last_resource_snapshot: ResourceSnapshot | None = None
+        self._current_process_detail_pid: int | None = None
         self._remote_directory_workers = []
         self._active_remote_directory_load = None
         self._remote_directory_loading = False
@@ -384,6 +459,8 @@ class MainWindow(QMainWindow):
         self.current_theme = SYSTEM_THEME
         self.current_language = SYSTEM_LANGUAGE
         self.last_copied_text = ""
+        self.settings_dialog: SettingsDialog | None = None
+        self._optimistic_transfer_items: list[TransferItem] = []
         self.transfer_settings = TransferSettings()
         self.getting_started_dialog: GettingStartedDialog | None = None
         self.site_manager_dialog: SiteManagerDialog | None = None
@@ -392,8 +469,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 800)
         self._build_session_menu()
         self._build_help_menu()
-        self._build_theme_menu()
-        self._build_language_menu()
+        self._build_settings_menu()
         self._build_logs_menu()
         self._build_toolbar()
         self._build_central_layout()
@@ -608,9 +684,28 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
-    def _build_theme_menu(self) -> None:
+    def _build_settings_menu(self) -> None:
+        self.settings_menu = QMenu("Settings", self)
+        self.menuBar().addMenu(self.settings_menu)
+        self.settings_action = self.settings_menu.addAction("Open Settings")
+        self.settings_action.triggered.connect(self._show_settings_dialog)
+        self.settings_menu.addSeparator()
+        self._build_theme_menu(parent_menu=self.settings_menu)
+        self._build_language_menu(parent_menu=self.settings_menu)
+
+    def _show_settings_dialog(self) -> None:
+        if self.settings_dialog is None:
+            self.settings_dialog = SettingsDialog(self)
+        self.settings_dialog.show()
+        self.settings_dialog.raise_()
+        self.settings_dialog.activateWindow()
+
+    def _build_theme_menu(self, parent_menu: QMenu | None = None) -> None:
         self.theme_menu = QMenu("Theme", self)
-        self.menuBar().addMenu(self.theme_menu)
+        if parent_menu is None:
+            self.menuBar().addMenu(self.theme_menu)
+        else:
+            parent_menu.addMenu(self.theme_menu)
         self.theme_action_group = QActionGroup(self)
         self.theme_action_group.setExclusive(True)
         self.system_theme_action = self._add_theme_action(SYSTEM_THEME)
@@ -668,14 +763,26 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(stylesheet_for_theme(theme_name))
         hover_color = hover_color_for_theme(theme_name)
         selected_color = selected_color_for_theme(theme_name)
+        for table in self._full_row_activity_tables():
+            table.set_full_row_hover_color(hover_color)
+            table.set_full_row_selected_color(selected_color)
+
+    def _full_row_activity_tables(self) -> list[HoverRowTableWidget]:
+        tables: list[HoverRowTableWidget] = []
         for panel in (getattr(self, "local_panel", None), getattr(self, "remote_panel", None)):
             if panel is not None:
-                panel.table.set_full_row_hover_color(hover_color)
-                panel.table.set_full_row_selected_color(selected_color)
+                tables.append(panel.table)
+        process_table = getattr(self, "process_table", None)
+        if isinstance(process_table, HoverRowTableWidget):
+            tables.append(process_table)
+        return tables
 
-    def _build_language_menu(self) -> None:
+    def _build_language_menu(self, parent_menu: QMenu | None = None) -> None:
         self.language_menu = QMenu("Language", self)
-        self.menuBar().addMenu(self.language_menu)
+        if parent_menu is None:
+            self.menuBar().addMenu(self.language_menu)
+        else:
+            parent_menu.addMenu(self.language_menu)
         self.language_action_group = QActionGroup(self)
         self.language_action_group.setExclusive(True)
         self.system_language_action = self._add_language_action(SYSTEM_LANGUAGE)
@@ -709,6 +816,9 @@ class MainWindow(QMainWindow):
         self.site_manager_action.setText(self._text("session.site_manager"))
         self.site_manager_action.setStatusTip(self._text("session.site_manager_tip"))
         self.help_menu.setTitle(self._text("menu.help"))
+        if hasattr(self, "settings_menu"):
+            self.settings_menu.setTitle(self._text("menu.settings"))
+            self.settings_action.setText(self._text("settings.open"))
         self.theme_menu.setTitle(self._text("menu.theme"))
         for action in getattr(self, "density_action_group", QActionGroup(self)).actions():
             action.setText(self._text(action.property("textKey")))
@@ -964,9 +1074,30 @@ class MainWindow(QMainWindow):
         resource_values.addWidget(self.network_label)
         resource_values.addWidget(self.network_value_label)
 
-        self.process_table = QTableWidget(0, 5, root)
+        self.process_table = HoverRowTableWidget(0, 5, root)
+        self.process_table.setItemDelegate(HoverRowDelegate(self.process_table))
         self.process_table.setHorizontalHeaderLabels(["PID", "User", "Name", "CPU", "Memory"])
+        self.process_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.process_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.process_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.process_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.process_menu = QMenu(self.process_table)
+        self.process_detail_action = self.process_menu.addAction("Process Detail")
+        self.process_stop_action = self.process_menu.addAction("Stop Process")
+        self.process_restart_action = self.process_menu.addAction("Restart Process")
+        self.process_copy_pid_action = self.process_menu.addAction("Copy Process ID")
         self.process_detail_label = QLabel("", root)
+        self.process_detail_stop_button = QPushButton("Stop Process", root)
+        self.process_detail_restart_button = QPushButton("Restart Process", root)
+        self.process_detail_copy_pid_button = QPushButton("Copy Process ID", root)
+        self.process_detail_actions = QWidget(root)
+        process_detail_actions_layout = QHBoxLayout(self.process_detail_actions)
+        process_detail_actions_layout.setContentsMargins(0, 0, 0, 0)
+        process_detail_actions_layout.addWidget(self.process_detail_label, stretch=1)
+        process_detail_actions_layout.addWidget(self.process_detail_copy_pid_button)
+        process_detail_actions_layout.addWidget(self.process_detail_restart_button)
+        process_detail_actions_layout.addWidget(self.process_detail_stop_button)
+        self.process_detail_actions.hide()
         self.resource_chart = ResourceUsageChart(root)
         self.resource_content_splitter = QSplitter(Qt.Orientation.Horizontal, resource_widget)
         self.resource_content_splitter.addWidget(self.process_table)
@@ -978,7 +1109,7 @@ class MainWindow(QMainWindow):
         resource_layout.addLayout(resource_controls, stretch=0)
         resource_layout.addLayout(resource_values, stretch=0)
         resource_layout.addWidget(self.resource_content_splitter, stretch=1)
-        resource_layout.addWidget(self.process_detail_label, stretch=0)
+        resource_layout.addWidget(self.process_detail_actions, stretch=0)
 
         self.main_splitter.addWidget(self.file_splitter)
         self.main_splitter.addWidget(transfer_widget)
@@ -1085,6 +1216,9 @@ class MainWindow(QMainWindow):
             self.resource_uninstall_agent_button: "danger",
             self.resource_refresh_button: "neutral",
             self.process_detail_button: "neutral",
+            self.process_detail_copy_pid_button: "neutral",
+            self.process_detail_restart_button: "warning",
+            self.process_detail_stop_button: "danger",
         }
         for button, role in role_map.items():
             button.setProperty("buttonRole", role)
@@ -1206,6 +1340,7 @@ class MainWindow(QMainWindow):
             self.set_agent_status(True, version=version)
 
     def set_transfer_items(self, items: list[TransferItem]) -> None:
+        self._optimistic_transfer_items = list(items)
         self.transfer_table.setRowCount(len(items))
         for row, item in enumerate(items):
             server_cell = QTableWidgetItem(item.server_id)
@@ -1292,10 +1427,12 @@ class MainWindow(QMainWindow):
         return sorted(processes, key=lambda process: process.cpu_percent, reverse=True)
 
     def set_process_detail(self, detail: ProcessDetail) -> None:
+        self._current_process_detail_pid = detail.pid
         self.process_detail_label.setText(
             f"PID {detail.pid} {detail.name} | user: {detail.user} | "
             f"status: {detail.status} | threads: {detail.thread_count} | {detail.command_line}"
         )
+        self.process_detail_actions.show()
 
     def set_site_profiles(self, sites, secret_lookup=None) -> None:
         self.site_profiles = list(sites)
@@ -1359,6 +1496,15 @@ class MainWindow(QMainWindow):
         self.agent_status_card.primary_action_requested.connect(self._handle_install_agent_clicked)
         self.agent_status_card.danger_action_requested.connect(self._handle_uninstall_agent_clicked)
         self.process_detail_button.clicked.connect(self._handle_process_detail_clicked)
+        self.process_table.cellDoubleClicked.connect(self._handle_process_cell_double_clicked)
+        self.process_table.customContextMenuRequested.connect(self._show_process_context_menu)
+        self.process_detail_action.triggered.connect(self._handle_process_detail_clicked)
+        self.process_stop_action.triggered.connect(self._handle_process_stop_clicked)
+        self.process_restart_action.triggered.connect(self._handle_process_restart_clicked)
+        self.process_copy_pid_action.triggered.connect(self._handle_process_copy_pid_clicked)
+        self.process_detail_stop_button.clicked.connect(self._handle_process_stop_clicked)
+        self.process_detail_restart_button.clicked.connect(self._handle_process_restart_clicked)
+        self.process_detail_copy_pid_button.clicked.connect(self._handle_process_copy_pid_clicked)
         self.disk_partition_selector.currentTextChanged.connect(self._refresh_resource_disk_text)
         self.process_sort_selector.currentTextChanged.connect(self._refresh_process_table)
         self.process_filter_edit.textChanged.connect(self._refresh_process_table)
@@ -1858,23 +2004,66 @@ class MainWindow(QMainWindow):
             policy = self._conflict_policy_for_name(self.remote_panel, local_name)
             if policy is None:
                 continue
+            remote_path = self._remote_path_from_field() / local_name
+            self._append_transfer_preview(local_path, remote_path, Direction.UPLOAD)
             self.controller.upload_file(
                 local_path,
-                self._remote_path_from_field() / local_name,
+                remote_path,
                 conflict_policy=policy,
             )
 
     def _handle_download_clicked(self) -> None:
         local_root = Path(self.local_panel.path_edit.text().strip() or Path.home())
         for remote_name in self.remote_panel.selected_names():
-            policy = self._local_conflict_policy(local_root / remote_name)
+            remote_path = self._remote_path_from_field() / remote_name
+            local_path = local_root / remote_name
+            policy = self._local_conflict_policy(local_path)
             if policy is None:
                 continue
+            self._append_transfer_preview(remote_path, local_path, Direction.DOWNLOAD)
             self.controller.download_file(
-                self._remote_path_from_field() / remote_name,
-                local_root / remote_name,
+                remote_path,
+                local_path,
                 conflict_policy=policy,
             )
+
+    def _append_transfer_preview(
+        self,
+        source_path: Path | PurePosixPath,
+        destination_path: Path | PurePosixPath,
+        direction: Direction,
+    ) -> None:
+        size = self._transfer_preview_size(source_path, direction)
+        task_id = f"ui-{direction.value}-{len(self._optimistic_transfer_items) + 1}"
+        item = TransferItem(
+            id=f"{task_id}-item",
+            task_id=task_id,
+            server_id=self._site_from_fields().id,
+            direction=direction,
+            source_path=source_path,
+            destination_path=destination_path,
+            temporary_path=destination_path.with_name(f".filezall.{destination_path.name}.part"),
+            size_bytes=size,
+            protocol=_protocol_from_label(self.connection_bar.protocol_selector.currentText()),
+            bytes_transferred=0,
+            status=TransferStatus.PENDING,
+        )
+        self.set_transfer_items([*self._optimistic_transfer_items, item])
+
+    def _transfer_preview_size(self, source_path: Path | PurePosixPath, direction: Direction) -> int:
+        if direction is Direction.UPLOAD and isinstance(source_path, Path) and source_path.is_file():
+            return source_path.stat().st_size
+        panel = self.remote_panel if direction is Direction.DOWNLOAD else self.local_panel
+        selected_rows = [row for row in panel.selected_rows() if not panel.is_parent_at(row)]
+        if not selected_rows:
+            return 0
+        size_item = panel.table.item(selected_rows[0], 1)
+        if size_item is None:
+            return 0
+        try:
+            return int(size_item.text())
+        except ValueError:
+            return 0
 
     def _conflict_policy_for_name(self, panel, destination_name: str) -> ConflictPolicy | None:
         if not self._panel_has_entry_named(panel, destination_name):
@@ -2032,8 +2221,46 @@ class MainWindow(QMainWindow):
             self.controller.retry_transfer(task_id)
 
     def _handle_process_detail_clicked(self) -> None:
-        if pid := self._selected_process_id():
+        if pid := self._active_process_id():
             self.controller.show_process_detail(pid)
+
+    def _handle_process_cell_double_clicked(self, row: int, _column: int) -> None:
+        self.process_table.selectRow(row)
+        self._handle_process_detail_clicked()
+
+    def _show_process_context_menu(self, position) -> None:
+        row = self.process_table.indexAt(position).row()
+        if row >= 0:
+            self.process_table.selectRow(row)
+        self.process_menu.exec(self.process_table.viewport().mapToGlobal(position))
+
+    def _handle_process_stop_clicked(self) -> None:
+        if pid := self._active_process_id():
+            try:
+                self.controller.stop_process(pid)
+            except Exception as exc:
+                self.show_status(str(exc))
+                self.append_log(f"Stop process failed: {exc}", category="error", level="error")
+                return
+            self.append_log(f"Stop process requested: {pid}", category="resource")
+
+    def _handle_process_restart_clicked(self) -> None:
+        if pid := self._active_process_id():
+            try:
+                self.controller.restart_process(pid)
+            except Exception as exc:
+                self.show_status(str(exc))
+                self.append_log(f"Restart process failed: {exc}", category="error", level="error")
+                return
+            self.append_log(f"Restart process requested: {pid}", category="resource")
+
+    def _handle_process_copy_pid_clicked(self) -> None:
+        if pid := self._active_process_id():
+            text = str(pid)
+            self.last_copied_text = text
+            QApplication.clipboard().setText(text)
+            self.show_status(f"Copied process ID {text}")
+            self.append_log(f"Copied process ID {text}", category="resource")
 
     def _handle_resource_refresh_tick(self) -> None:
         if self._resource_refresh_running:
@@ -2222,6 +2449,9 @@ class MainWindow(QMainWindow):
             return None
         item = self.process_table.item(selected[0].row(), 0)
         return int(item.data(Qt.ItemDataRole.UserRole)) if item else None
+
+    def _active_process_id(self) -> int | None:
+        return self._selected_process_id() or self._current_process_detail_pid
 
 
 def _path_name(path: Path | PurePosixPath) -> str:

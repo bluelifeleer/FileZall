@@ -429,3 +429,30 @@ def test_agent_deployment_service_reads_resource_snapshot_through_remote_agent()
     assert snapshot.cpu.percent == 12.5
     assert snapshot.memory.used_bytes == 400
     assert runner.captures == [AgentDeploymentService.agent_get_command("stored-token", "/resources")]
+
+
+def test_agent_deployment_service_sends_process_signals_over_ssh() -> None:
+    runner = FakeRunner()
+    credentials = FakeCredentials()
+    repository = FakeRepository()
+    service = AgentDeploymentService(
+        package_builder=lambda: Path("unused.tar.gz"),
+        runner_factory=lambda site, password: runner,
+        credential_service=credentials,
+        site_repository=repository,
+        token_factory=lambda: "generated-token",
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+    )
+
+    service.signal_process(site, 123, "TERM", password="secret")
+    service.signal_process(site, 123, "HUP", password="secret")
+
+    assert runner.commands == ["kill -TERM 123", "kill -HUP 123"]

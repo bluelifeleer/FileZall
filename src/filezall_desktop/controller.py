@@ -438,6 +438,28 @@ class MainWindowController:
             self._window.set_process_detail(detail)
             self._window.show_status(f"Loaded process detail {pid}")
 
+    def stop_process(self, pid: int) -> None:
+        self._signal_process(pid, "TERM", f"Stop signal sent to process {pid}")
+
+    def restart_process(self, pid: int) -> None:
+        self._signal_process(pid, "HUP", f"Restart signal sent to process {pid}")
+
+    def _signal_process(self, pid: int, signal: str, status: str) -> None:
+        if self._agent_install_service is None or not hasattr(
+            self._agent_install_service,
+            "signal_process",
+        ):
+            raise RuntimeError("Process actions require an installed FileZall Agent.")
+        self._agent_install_service.signal_process(
+            self._require_connected_site(),
+            pid,
+            signal,
+            self._connected_secret,
+            runner=self._connected_agent_runner(),
+        )
+        self._window.show_status(status)
+        self._log(status)
+
     def install_agent_with_progress(self, progress_callback=None):
         if self._agent_install_service is None:
             raise RuntimeError("Agent installation is not configured.")

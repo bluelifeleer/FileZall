@@ -390,6 +390,25 @@ class AgentDeploymentService:
             self._agent_get_json(site, password, f"/processes/{pid}", runner=runner)
         )
 
+    def signal_process(
+        self,
+        site: SiteProfile,
+        pid: int,
+        signal: str,
+        password: str | None = None,
+        runner: AgentDeployRunner | None = None,
+    ) -> None:
+        normalized_signal = signal.upper()
+        if normalized_signal not in {"TERM", "HUP"}:
+            raise ValueError(f"Unsupported process signal: {signal}")
+        owns_runner = runner is None
+        runner = runner or self._runner_factory(site, password)
+        try:
+            runner.run(f"kill -{normalized_signal} {int(pid)}")
+        finally:
+            if owns_runner:
+                runner.close()
+
     def _agent_get_json(
         self,
         site: SiteProfile,

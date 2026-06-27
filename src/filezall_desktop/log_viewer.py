@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QListWidget,
     QListWidgetItem,
-    QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -52,11 +51,6 @@ class LogViewer(QWidget):
         self.record_list = QListWidget(self)
         layout.addWidget(self.record_list)
 
-        self.text_view = QPlainTextEdit(self)
-        self.text_view.setReadOnly(True)
-        self.text_view.setMaximumBlockCount(1000)
-        layout.addWidget(self.text_view)
-
         self.category_filter.currentTextChanged.connect(self.set_category_filter)
         self.copy_error_button.clicked.connect(self.copy_selected_error)
         self.export_logs_button.clicked.connect(self._export_logs)
@@ -94,10 +88,11 @@ class LogViewer(QWidget):
             self.clipboard().setText(record.message)
 
     def toPlainText(self) -> str:
-        return self.text_view.toPlainText()
+        return "\n".join(record.format() for record in self._filtered_records())
 
     def appendPlainText(self, text: str) -> None:
-        self.text_view.appendPlainText(text)
+        item = QListWidgetItem(text)
+        self.record_list.addItem(item)
 
     def clipboard(self):
         return QApplication.clipboard()
@@ -110,7 +105,6 @@ class LogViewer(QWidget):
     def _refresh(self) -> None:
         records = self._filtered_records()
         self.record_list.clear()
-        self.text_view.setPlainText("\n".join(record.format() for record in records))
         for record in records:
             item = QListWidgetItem(record.format())
             item.setData(256, record)
