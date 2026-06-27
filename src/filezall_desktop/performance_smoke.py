@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
@@ -146,7 +147,7 @@ def run_performance_smoke(
         smoke_controller.heartbeat_results = [False] * heartbeat_samples
         heartbeat_result = measure_operation(
             "heartbeat_failure_diagnostics",
-            lambda: [window._handle_heartbeat_tick() for _index in range(heartbeat_samples)],
+            lambda: _run_heartbeat_samples(window, app, heartbeat_samples),
         )
         app.processEvents()
 
@@ -302,6 +303,16 @@ def _ensure_app() -> QApplication:
         return app
     _APP = QApplication([])
     return _APP
+
+
+def _run_heartbeat_samples(window: MainWindow, app: QApplication, samples: int) -> None:
+    for _index in range(samples):
+        window._handle_heartbeat_tick()
+        deadline = time.monotonic() + 2.0
+        while window._heartbeat_running and time.monotonic() < deadline:
+            app.processEvents()
+        if window._heartbeat_running:
+            raise TimeoutError("heartbeat smoke sample did not finish")
 
 
 def _local_entries(count: int) -> list[LocalFileEntry]:

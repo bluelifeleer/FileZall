@@ -173,6 +173,21 @@ class FakeController:
         return self.heartbeat_results.pop(0) if self.heartbeat_results else True
 
 
+class SlowRemoteController(FakeController):
+    def __init__(self, delay_seconds: float = 0.25) -> None:
+        super().__init__()
+        self.delay_seconds = delay_seconds
+
+    def delete_path(self, path, remote: bool, is_dir: bool | None = None) -> None:
+        if remote:
+            time.sleep(self.delay_seconds)
+        super().delete_path(path, remote, is_dir)
+
+    def heartbeat(self) -> bool:
+        time.sleep(self.delay_seconds)
+        return super().heartbeat()
+
+
 class FakeSettings:
     def __init__(self, dismissed: bool = False) -> None:
         self.dismissed = dismissed
@@ -1727,6 +1742,7 @@ def test_file_panel_context_actions_route_to_controller(qtbot, tmp_path) -> None
     window.remote_panel.queue_action.trigger()
     window.remote_panel.delete_action.trigger()
 
+    qtbot.waitUntil(lambda: len(controller.deleted) == 2, timeout=3000)
     assert controller.queued[0] == (local_root / "app.txt", PurePosixPath("/home/deploy/app.txt"), Direction.UPLOAD)
     assert controller.deleted[0] == (local_root / "app.txt", False, False)
     assert controller.created_dirs[0] == (local_root, False)
@@ -1774,10 +1790,30 @@ def test_file_panel_delete_actions_pass_directory_state(qtbot, tmp_path) -> None
     window.local_panel.delete_action.trigger()
     window.remote_panel.delete_action.trigger()
 
+    qtbot.waitUntil(lambda: len(controller.deleted) == 2, timeout=3000)
     assert controller.deleted == [
         (local_root / "local-dir", False, True),
         (PurePosixPath("/home/deploy/logs"), True, True),
     ]
+
+
+def test_remote_delete_action_runs_without_blocking_ui(qtbot) -> None:
+    controller = SlowRemoteController()
+    window = MainWindow(
+        controller=controller,
+        delete_confirmer=lambda _parent, _names, _remote: True,
+    )
+    qtbot.addWidget(window)
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.remote_panel.set_placeholder_row("remote.txt")
+    window.remote_panel.table.selectRow(0)
+
+    started_at = time.perf_counter()
+    window.remote_panel.delete_action.trigger()
+
+    assert time.perf_counter() - started_at < 0.12
+    qtbot.waitUntil(lambda: len(controller.deleted) == 1, timeout=3000)
+    assert controller.deleted[0] == (PurePosixPath("/home/deploy/remote.txt"), True, False)
 
 
 def test_file_panel_rename_actions_route_to_controller(qtbot, tmp_path) -> None:
@@ -1799,6 +1835,7 @@ def test_file_panel_rename_actions_route_to_controller(qtbot, tmp_path) -> None:
     window.local_panel.rename_action.trigger()
     window.remote_panel.rename_action.trigger()
 
+    qtbot.waitUntil(lambda: len(controller.renamed) == 2, timeout=3000)
     assert controller.renamed == [
         (local_root / "app.txt", local_root / "renamed.txt", False),
         (PurePosixPath("/home/deploy/remote.txt"), PurePosixPath("/home/deploy/renamed.txt"), True),
@@ -1967,10 +2004,12 @@ def test_heartbeat_updates_status_light_after_connection(qtbot) -> None:
     qtbot.addWidget(window)
 
     window._handle_heartbeat_tick()
+    qtbot.waitUntil(lambda: window.connection_state_label.toolTip() == "Connected", timeout=3000)
     assert window.connection_state_label.toolTip() == "Connected"
     assert "green" in window.connection_state_label.styleSheet()
 
     window._handle_heartbeat_tick()
+    qtbot.waitUntil(lambda: window.connection_state_label.toolTip() == "Disconnected", timeout=3000)
     assert window.connection_state_label.toolTip() == "Disconnected"
     assert "red" in window.connection_state_label.styleSheet()
 
@@ -1985,6 +2024,19 @@ def test_heartbeat_check_blinks_status_light_at_detection_frequency(qtbot) -> No
 
     assert window.connection_state_label.property("lastBlinkColor") == "goldenrod"
     assert window.connection_state_label.property("blinkCount") == 1
+
+
+def test_heartbeat_runs_without_blocking_ui(qtbot) -> None:
+    controller = SlowRemoteController()
+    controller.heartbeat_results = [True]
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+
+    started_at = time.perf_counter()
+    window._handle_heartbeat_tick()
+
+    assert time.perf_counter() - started_at < 0.12
+    qtbot.waitUntil(lambda: window.connection_state_label.toolTip() == "Connected", timeout=3000)
 
 
 def test_disconnect_button_calls_controller_logs_and_stops_heartbeat(qtbot) -> None:
@@ -2015,10 +2067,23 @@ def test_heartbeat_failure_logs_once_until_recovered(qtbot) -> None:
 
     window._handle_heartbeat_tick()
     window._handle_heartbeat_tick()
+    qtbot.waitUntil(
+        lambda: window.log_view.toPlainText().count("Heartbeat failed: disconnected") == 1,
+        timeout=3000,
+    )
     assert window.log_view.toPlainText().count("Heartbeat failed: disconnected") == 1
 
     window._handle_heartbeat_tick()
+    qtbot.waitUntil(lambda: window._heartbeat_running is False, timeout=3000)
+    assert window.log_view.toPlainText().count("Heartbeat failed: disconnected") == 1
+
     window._handle_heartbeat_tick()
+    qtbot.waitUntil(lambda: window.connection_state_label.toolTip() == "Connected", timeout=3000)
+    window._handle_heartbeat_tick()
+    qtbot.waitUntil(
+        lambda: window.log_view.toPlainText().count("Heartbeat failed: disconnected") == 2,
+        timeout=3000,
+    )
     assert window.log_view.toPlainText().count("Heartbeat failed: disconnected") == 2
 
 
@@ -2035,6 +2100,7 @@ def test_main_window_diagnostics_include_connection_and_heartbeat_failures(qtbot
 
     controller.heartbeat_results = [False]
     window._handle_heartbeat_tick()
+    qtbot.waitUntil(lambda: window._heartbeat_failure_count == 1, timeout=3000)
     state = window._diagnostic_state_snapshot()
 
     assert state["connection"] == {
@@ -3034,6 +3100,31 @@ def test_resource_monitor_has_time_range_and_process_filters(qtbot) -> None:
     window.process_filter_edit.setText("ng")
     assert window.process_table.rowCount() == 1
     assert window.process_table.item(0, 2).text() == "nginx"
+
+
+def test_process_table_pid_header_sorts_by_pid(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    window.set_resource_snapshot(
+        ResourceSnapshot(
+            cpu=CpuStats(percent=12.5),
+            memory=MemoryStats(total_bytes=100, used_bytes=50, available_bytes=50),
+            disks=[],
+            network=NetworkStats(rx_bytes_per_sec=0, tx_bytes_per_sec=0),
+            processes=[
+                ProcessSummary(pid=30, user="root", name="nginx", cpu_percent=80.0, memory_percent=3.0),
+                ProcessSummary(pid=7, user="deploy", name="python", cpu_percent=5.0, memory_percent=60.0),
+                ProcessSummary(pid=19, user="mysql", name="mysqld", cpu_percent=20.0, memory_percent=25.0),
+            ],
+        )
+    )
+
+    window.process_table.horizontalHeader().sectionClicked.emit(0)
+    assert [window.process_table.item(row, 0).text() for row in range(3)] == ["7", "19", "30"]
+
+    window.process_table.horizontalHeader().sectionClicked.emit(0)
+    assert [window.process_table.item(row, 0).text() for row in range(3)] == ["30", "19", "7"]
 
 
 def test_resource_snapshot_updates_usage_chart_history(qtbot) -> None:

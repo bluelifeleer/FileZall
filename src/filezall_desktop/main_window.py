@@ -543,6 +543,12 @@ class MainWindow(QMainWindow):
         self._remote_directory_workers = []
         self._active_remote_directory_load = None
         self._remote_directory_loading = False
+        self._remote_operation_workers = []
+        self._heartbeat_workers = []
+        self._active_heartbeat_check = None
+        self._heartbeat_running = False
+        self._process_sort_column = "CPU"
+        self._process_sort_descending = True
         self._transfer_workers = []
         self.file_list_density = "standard"
         self.current_theme = SYSTEM_THEME
@@ -1220,6 +1226,8 @@ class MainWindow(QMainWindow):
         self.process_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.process_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.process_table.horizontalHeader().setStretchLastSection(True)
+        self.process_table.horizontalHeader().setSortIndicatorShown(True)
+        self.process_table.horizontalHeader().setSortIndicator(3, Qt.SortOrder.DescendingOrder)
         self.process_menu = QMenu(self.process_table)
         self.process_detail_action = self.process_menu.addAction("Process Detail")
         self.process_stop_action = self.process_menu.addAction("Stop Process")
@@ -1684,14 +1692,76 @@ class MainWindow(QMainWindow):
                 or filter_text in process.name.lower()
                 or filter_text in getattr(process, "command_line", "").lower()
             ]
-        sort_mode = self.process_sort_selector.currentText()
+        sort_mode = self._process_sort_column
         if sort_mode == "Memory":
-            return sorted(processes, key=lambda process: process.memory_percent, reverse=True)
+            return sorted(
+                processes,
+                key=lambda process: process.memory_percent,
+                reverse=self._process_sort_descending,
+            )
         if sort_mode == "PID":
-            return sorted(processes, key=lambda process: process.pid)
+            return sorted(
+                processes,
+                key=lambda process: process.pid,
+                reverse=self._process_sort_descending,
+            )
         if sort_mode == "Name":
-            return sorted(processes, key=lambda process: process.name.lower())
-        return sorted(processes, key=lambda process: process.cpu_percent, reverse=True)
+            return sorted(
+                processes,
+                key=lambda process: process.name.lower(),
+                reverse=self._process_sort_descending,
+            )
+        if sort_mode == "User":
+            return sorted(
+                processes,
+                key=lambda process: process.user.lower(),
+                reverse=self._process_sort_descending,
+            )
+        if sort_mode == "Command":
+            return sorted(
+                processes,
+                key=lambda process: getattr(process, "command_line", "").lower(),
+                reverse=self._process_sort_descending,
+            )
+        return sorted(
+            processes,
+            key=lambda process: process.cpu_percent,
+            reverse=self._process_sort_descending,
+        )
+
+    def _set_process_sort(self, column: str, descending: bool) -> None:
+        self._process_sort_column = column
+        self._process_sort_descending = descending
+        indicator_column = {
+            "PID": 0,
+            "User": 1,
+            "Name": 2,
+            "CPU": 3,
+            "Memory": 4,
+            "Command": 5,
+        }.get(column, 3)
+        order = Qt.SortOrder.DescendingOrder if descending else Qt.SortOrder.AscendingOrder
+        self.process_table.horizontalHeader().setSortIndicator(indicator_column, order)
+        self._refresh_process_table()
+
+    def _handle_process_header_clicked(self, section: int) -> None:
+        column = {
+            0: "PID",
+            1: "User",
+            2: "Name",
+            3: "CPU",
+            4: "Memory",
+            5: "Command",
+        }.get(section, "CPU")
+        default_descending = column in {"CPU", "Memory"}
+        descending = default_descending
+        if self._process_sort_column == column:
+            descending = not self._process_sort_descending
+        self._set_process_sort(column, descending)
+
+    def _handle_process_sort_selected(self, sort_mode: str) -> None:
+        descending = sort_mode in {"CPU", "Memory"}
+        self._set_process_sort(sort_mode, descending)
 
     def set_process_detail(self, detail: ProcessDetail) -> None:
         self._current_process_detail_pid = detail.pid
@@ -1773,6 +1843,7 @@ class MainWindow(QMainWindow):
         self.process_detail_button.clicked.connect(self._handle_process_detail_clicked)
         self.process_table.cellDoubleClicked.connect(self._handle_process_cell_double_clicked)
         self.process_table.customContextMenuRequested.connect(self._show_process_context_menu)
+        self.process_table.horizontalHeader().sectionClicked.connect(self._handle_process_header_clicked)
         self.process_detail_action.triggered.connect(self._handle_process_detail_clicked)
         self.process_stop_action.triggered.connect(self._handle_process_stop_clicked)
         self.process_restart_action.triggered.connect(self._handle_process_restart_clicked)
@@ -1782,7 +1853,7 @@ class MainWindow(QMainWindow):
         self.process_detail_copy_pid_button.clicked.connect(self._handle_process_copy_pid_clicked)
         self.process_detail_clear_button.clicked.connect(self.clear_process_detail)
         self.disk_partition_selector.currentTextChanged.connect(self._refresh_resource_disk_text)
-        self.process_sort_selector.currentTextChanged.connect(self._refresh_process_table)
+        self.process_sort_selector.currentTextChanged.connect(self._handle_process_sort_selected)
         self.process_filter_edit.textChanged.connect(self._refresh_process_table)
 
     def closeEvent(self, event) -> None:
@@ -1818,6 +1889,13 @@ class MainWindow(QMainWindow):
             if isinstance(thread, QThread) and thread.isRunning():
                 threads.append(thread)
         for thread, _worker in self._transfer_workers:
+            if isinstance(thread, QThread) and thread.isRunning():
+                threads.append(thread)
+        for thread, _worker, _path in self._remote_operation_workers:
+            if isinstance(thread, QThread) and thread.isRunning():
+                threads.append(thread)
+        if self._active_heartbeat_check is not None:
+            thread, _worker = self._active_heartbeat_check
             if isinstance(thread, QThread) and thread.isRunning():
                 threads.append(thread)
         return threads
@@ -2307,6 +2385,61 @@ class MainWindow(QMainWindow):
         thread.quit()
         thread.wait(1000)
 
+    def _start_remote_operation(
+        self,
+        label: str,
+        action: Callable[[], None],
+        refresh_path: PurePosixPath | None,
+    ) -> None:
+        self.append_log(f"Remote operation started: {label}")
+        self.show_status(f"Remote operation started: {label}")
+        thread = QThread(self)
+        worker = TransferOperationWorker(label, action)
+        worker.moveToThread(thread)
+        self._remote_operation_workers.append((thread, worker, refresh_path))
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(self._finish_remote_operation, Qt.ConnectionType.QueuedConnection)
+        worker.failed.connect(self._fail_remote_operation, Qt.ConnectionType.QueuedConnection)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    @Slot(str)
+    def _finish_remote_operation(self, label: str) -> None:
+        thread = self.sender().thread() if self.sender() is not None else None
+        refresh_path = self._remote_operation_refresh_path(thread)
+        message = f"Remote operation finished: {label}"
+        self.show_status(message)
+        self.append_log(message)
+        self._cleanup_remote_operation_worker(thread)
+        if refresh_path is not None:
+            self._load_remote_directory(refresh_path, force_refresh=True)
+
+    @Slot(str)
+    def _fail_remote_operation(self, error: str) -> None:
+        thread = self.sender().thread() if self.sender() is not None else None
+        self._append_background_failure("remote operation", error)
+        message = f"Remote operation failed: {error}"
+        self.show_status(message)
+        self.append_log(message)
+        self._cleanup_remote_operation_worker(thread)
+
+    def _remote_operation_refresh_path(self, thread: QThread | None) -> PurePosixPath | None:
+        for active_thread, _worker, refresh_path in self._remote_operation_workers:
+            if active_thread is thread:
+                return refresh_path
+        return None
+
+    def _cleanup_remote_operation_worker(self, thread: QThread | None) -> None:
+        remaining = []
+        for active_thread, worker, refresh_path in self._remote_operation_workers:
+            if active_thread is thread:
+                active_thread.quit()
+                active_thread.wait(1000)
+            else:
+                remaining.append((active_thread, worker, refresh_path))
+        self._remote_operation_workers = remaining
+
     def _handle_upload_clicked(self) -> None:
         local_root = Path(self.local_panel.path_edit.text().strip() or Path.home())
         for local_name in self.local_panel.selected_names():
@@ -2525,12 +2658,21 @@ class MainWindow(QMainWindow):
         entries = self._selected_panel_entries(self.remote_panel)
         if not entries or not self._delete_confirmer(self, [name for name, _is_dir in entries], True):
             return
-        for remote_name, is_dir in entries:
-            self.controller.delete_path(
-                self._remote_path_from_field() / remote_name,
-                remote=True,
-                is_dir=is_dir,
-            )
+        remote_root = self._remote_path_from_field()
+
+        def delete_entries() -> None:
+            for remote_name, is_dir in entries:
+                self.controller.delete_path(
+                    remote_root / remote_name,
+                    remote=True,
+                    is_dir=is_dir,
+                )
+
+        self._start_remote_operation(
+            f"delete {len(entries)} item(s)",
+            delete_entries,
+            refresh_path=remote_root,
+        )
 
     def _selected_panel_entries(self, panel) -> list[tuple[str, bool]]:
         entries = []
@@ -2559,8 +2701,13 @@ class MainWindow(QMainWindow):
         new_name = self._rename_prompt(self, name)
         if not new_name:
             return
-        source = self._remote_path_from_field() / name
-        self.controller.rename_path(source, source.parent / new_name, remote=True)
+        remote_root = self._remote_path_from_field()
+        source = remote_root / name
+        self._start_remote_operation(
+            f"rename {name}",
+            lambda: self.controller.rename_path(source, source.parent / new_name, remote=True),
+            refresh_path=remote_root,
+        )
 
     def _handle_local_copy_path_action(self) -> None:
         paths = [str(self._local_root() / name) for name in self.local_panel.selected_names()]
@@ -2583,13 +2730,23 @@ class MainWindow(QMainWindow):
         self.controller.create_directory(self._local_root(), remote=False)
 
     def _handle_remote_create_dir_action(self) -> None:
-        self.controller.create_directory(self._remote_path_from_field(), remote=True)
+        remote_root = self._remote_path_from_field()
+        self._start_remote_operation(
+            "create directory",
+            lambda: self.controller.create_directory(remote_root, remote=True),
+            refresh_path=remote_root,
+        )
 
     def _handle_local_create_file_action(self) -> None:
         self.controller.create_file(self._local_root(), remote=False)
 
     def _handle_remote_create_file_action(self) -> None:
-        self.controller.create_file(self._remote_path_from_field(), remote=True)
+        remote_root = self._remote_path_from_field()
+        self._start_remote_operation(
+            "create file",
+            lambda: self.controller.create_file(remote_root, remote=True),
+            refresh_path=remote_root,
+        )
 
     def _handle_pause_transfer_clicked(self) -> None:
         if task_id := self._selected_transfer_task_id():
@@ -2709,20 +2866,55 @@ class MainWindow(QMainWindow):
         thread.wait(1000)
 
     def _handle_heartbeat_tick(self) -> None:
-        self._blink_connection_state("goldenrod")
-        try:
-            ok = self.controller.heartbeat()
-        except Exception as exc:
-            self._log_heartbeat_failure(f"Heartbeat failed: {exc}")
-            self._set_connection_state(f"Disconnected: {exc}", "red")
+        if self._heartbeat_running:
             return
-        if ok:
-            self._heartbeat_failed_logged = False
-            self._connection_recovery.record_success()
-            self._set_connection_state("Connected", "green")
-        else:
-            self._log_heartbeat_failure("Heartbeat failed: disconnected")
-            self._set_connection_state("Disconnected", "red")
+        self._blink_connection_state("goldenrod")
+        self._heartbeat_running = True
+        thread = QThread(self)
+        worker = ResourceRefreshWorker(lambda: self.controller.heartbeat())
+        worker.moveToThread(thread)
+        self._active_heartbeat_check = (thread, worker)
+        self._heartbeat_workers.append((thread, worker))
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(self._finish_heartbeat_check, Qt.ConnectionType.QueuedConnection)
+        worker.failed.connect(self._fail_heartbeat_check, Qt.ConnectionType.QueuedConnection)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    @Slot(object)
+    def _finish_heartbeat_check(self, ok) -> None:
+        try:
+            if ok:
+                self._heartbeat_failed_logged = False
+                self._connection_recovery.record_success()
+                self._set_connection_state("Connected", "green")
+            else:
+                self._log_heartbeat_failure("Heartbeat failed: disconnected")
+                self._set_connection_state("Disconnected", "red")
+        finally:
+            self._cleanup_heartbeat_worker()
+
+    @Slot(str)
+    def _fail_heartbeat_check(self, error: str) -> None:
+        try:
+            self._log_heartbeat_failure(f"Heartbeat failed: {error}")
+            self._set_connection_state(f"Disconnected: {error}", "red")
+        finally:
+            self._cleanup_heartbeat_worker()
+
+    def _cleanup_heartbeat_worker(self) -> None:
+        self._heartbeat_running = False
+        if self._active_heartbeat_check is None:
+            return
+        thread, worker = self._active_heartbeat_check
+        self._active_heartbeat_check = None
+        try:
+            self._heartbeat_workers.remove((thread, worker))
+        except ValueError:
+            pass
+        thread.quit()
+        thread.wait(1000)
 
     def _log_heartbeat_failure(self, message: str) -> None:
         self._heartbeat_failure_count += 1
