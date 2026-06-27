@@ -875,3 +875,48 @@ failure details.
 - Add reconnect/timeout classification metrics around connection and heartbeat
   failures.
 - Use the new retry diagnostics before changing transfer concurrency defaults.
+
+## Immediate Task 20: Add Connection and Heartbeat Diagnostics
+
+**Files:**
+- Modify: `src/filezall_desktop/main_window.py`
+- Modify: `tests/desktop/test_main_window.py`
+
+- [x] **Step 1: Write connection diagnostics test**
+
+Add a main-window test proving a failed connection and heartbeat failure are
+represented in the diagnostic state with current connection state, heartbeat
+timer status, attempt/failure counts, and last error messages.
+
+- [x] **Step 2: Track connection counters**
+
+Record connection attempts, failed connection count, and the latest classified
+connection error for synchronous and background connection paths.
+
+- [x] **Step 3: Track heartbeat failures**
+
+Record heartbeat failure count and latest heartbeat failure message while
+preserving existing log de-duplication behavior.
+
+- [x] **Step 4: Export structured diagnostic state**
+
+Add a `connection` block to the main-window diagnostic snapshot with status
+light state, tooltip, running flag, heartbeat timer state, counters, and recent
+errors.
+
+- [x] **Step 5: Run targeted verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py -k "connection or heartbeat or diagnostic_package" -vv
+```
+
+Expected: existing connection status light behavior still passes and diagnostic
+state includes structured connection/heartbeat failure details.
+
+## Next Milestone Target
+
+- Use retry and connection diagnostics to tune transfer concurrency defaults.
+- Add timeout/reconnect stress scenarios to performance smoke before changing
+  runtime defaults.

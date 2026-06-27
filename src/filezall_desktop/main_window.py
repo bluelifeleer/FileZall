@@ -469,6 +469,11 @@ class MainWindow(QMainWindow):
         self._site_repository = site_repository or getattr(controller, "_site_repository", None)
         self._should_confirm_remember_secret = controller is None
         self._heartbeat_failed_logged = False
+        self._connection_attempt_count = 0
+        self._connection_failure_count = 0
+        self._last_connection_error: str | None = None
+        self._heartbeat_failure_count = 0
+        self._last_heartbeat_error: str | None = None
         self._agent_installed: bool | None = False
         self._agent_version: str | None = None
         self._agent_update_available = False
@@ -1351,6 +1356,18 @@ class MainWindow(QMainWindow):
             now=self.transfer_status_clock(),
         )
         return {
+            "connection": {
+                "state": self.connection_state_label.property("connectionState"),
+                "tooltip": self.connection_state_label.toolTip(),
+                "running": self._connection_running,
+                "heartbeat_timer_active": self.heartbeat_timer.isActive(),
+                "heartbeat_interval_ms": self.heartbeat_timer.interval(),
+                "attempts": self._connection_attempt_count,
+                "failures": self._connection_failure_count,
+                "last_error": self._last_connection_error,
+                "heartbeat_failures": self._heartbeat_failure_count,
+                "last_heartbeat_error": self._last_heartbeat_error,
+            },
             "resource_refresh": {
                 "running": self._resource_refresh_running,
                 "timer_active": self.resource_refresh_timer.isActive(),
@@ -1707,6 +1724,7 @@ class MainWindow(QMainWindow):
             elif self._should_confirm_remember_secret:
                 remember_secret = _confirm_remember_secret(self)
         connect_site = site or self._site_from_fields()
+        self._connection_attempt_count += 1
         self.append_log(
             f"Connecting to {connect_site.host}:{connect_site.port} as {connect_site.username}"
         )
@@ -1723,6 +1741,8 @@ class MainWindow(QMainWindow):
             )
         except Exception as exc:
             message = classify_connection_error(str(exc))
+            self._connection_failure_count += 1
+            self._last_connection_error = message
             self.append_log(f"Connection failed: {message}")
             self._set_connection_state("Failed", "red")
             self.heartbeat_timer.stop()
@@ -1730,6 +1750,7 @@ class MainWindow(QMainWindow):
             self.show_status(message)
             return
         self._heartbeat_failed_logged = False
+        self._last_connection_error = None
         self._set_connection_state("Connected", "green")
         self.heartbeat_timer.start()
         self.resource_refresh_timer.start()
@@ -1768,6 +1789,7 @@ class MainWindow(QMainWindow):
     def _finish_connection(self, result) -> None:
         self._publish_connection_result(result)
         self._heartbeat_failed_logged = False
+        self._last_connection_error = None
         self._set_connection_state("Connected", "green")
         if self._connection_test_running and self.getting_started_dialog is not None:
             self.getting_started_dialog.set_status(self._text("getting_started.connection_ok"))
@@ -1784,6 +1806,8 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _fail_connection(self, error: str) -> None:
         message = classify_connection_error(error)
+        self._connection_failure_count += 1
+        self._last_connection_error = message
         self._append_background_failure("connection", message)
         self.append_log(f"Connection failed: {message}")
         if self._connection_test_running and self.getting_started_dialog is not None:
@@ -2506,6 +2530,8 @@ class MainWindow(QMainWindow):
             self._set_connection_state("Disconnected", "red")
 
     def _log_heartbeat_failure(self, message: str) -> None:
+        self._heartbeat_failure_count += 1
+        self._last_heartbeat_error = message
         if self._heartbeat_failed_logged:
             return
         self.append_log(message)

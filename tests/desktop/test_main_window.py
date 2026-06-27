@@ -1976,6 +1976,33 @@ def test_heartbeat_failure_logs_once_until_recovered(qtbot) -> None:
     assert window.log_view.toPlainText().count("Heartbeat failed: disconnected") == 2
 
 
+def test_main_window_diagnostics_include_connection_and_heartbeat_failures(qtbot) -> None:
+    controller = FailingConnectController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.connection_bar.host_edit.setText("example.com")
+    window.connection_bar.username_edit.setText("deploy")
+
+    qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
+
+    controller.heartbeat_results = [False]
+    window._handle_heartbeat_tick()
+    state = window._diagnostic_state_snapshot()
+
+    assert state["connection"] == {
+        "state": "disconnected",
+        "tooltip": "Disconnected",
+        "running": False,
+        "heartbeat_timer_active": False,
+        "heartbeat_interval_ms": 10000,
+        "attempts": 1,
+        "failures": 1,
+        "last_error": "connect failed",
+        "heartbeat_failures": 1,
+        "last_heartbeat_error": "Heartbeat failed: disconnected",
+    }
+
+
 def test_background_worker_failures_get_diagnostic_log_context(qtbot) -> None:
     window = MainWindow(controller=FailingSnapshotController())
     qtbot.addWidget(window)
