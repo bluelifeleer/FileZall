@@ -76,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--transfer-rows", type=int, default=2_000)
     parser.add_argument("--directory-budget-ms", type=float, default=1_500)
     parser.add_argument("--transfer-budget-ms", type=float, default=2_500)
+    parser.add_argument("--baseline", type=Path)
     parser.add_argument("--output", type=Path, default=Path("performance-smoke.json"))
     args = parser.parse_args(argv)
 
@@ -85,10 +86,51 @@ def main(argv: list[str] | None = None) -> int:
         directory_budget_ms=args.directory_budget_ms,
         transfer_budget_ms=args.transfer_budget_ms,
     )
+    if args.baseline is not None:
+        baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
+        report["baseline"] = {
+            "path": str(args.baseline),
+            "comparison": compare_performance_reports(report, baseline),
+        }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
     return 0 if report["status"] == "passed" else 1
+
+
+def compare_performance_reports(
+    current: dict,
+    baseline: dict,
+    *,
+    tolerance_percent: float = 5.0,
+) -> dict:
+    scenarios = {}
+    statuses = []
+    baseline_scenarios = baseline.get("scenarios", {})
+    for name, current_scenario in current.get("scenarios", {}).items():
+        baseline_scenario = baseline_scenarios.get(name)
+        if baseline_scenario is None:
+            scenarios[name] = {"status": "new"}
+            statuses.append("new")
+            continue
+        current_ms = float(current_scenario.get("elapsed_ms", 0.0))
+        baseline_ms = float(baseline_scenario.get("elapsed_ms", 0.0))
+        delta_ms = current_ms - baseline_ms
+        delta_percent = (delta_ms / baseline_ms * 100) if baseline_ms else 0.0
+        status = _comparison_status(delta_percent, tolerance_percent)
+        scenarios[name] = {
+            "status": status,
+            "baseline_ms": baseline_ms,
+            "current_ms": current_ms,
+            "delta_ms": delta_ms,
+            "delta_percent": delta_percent,
+        }
+        statuses.append(status)
+    return {
+        "status": _overall_comparison_status(statuses),
+        "tolerance_percent": tolerance_percent,
+        "scenarios": scenarios,
+    }
 
 
 def _ensure_app() -> QApplication:
@@ -146,6 +188,22 @@ def _scenario_report(check, rows: int) -> dict:
         "budget_ms": check.max_elapsed_ms,
         "message": check.message,
     }
+
+
+def _comparison_status(delta_percent: float, tolerance_percent: float) -> str:
+    if delta_percent > tolerance_percent:
+        return "regressed"
+    if delta_percent < -tolerance_percent:
+        return "improved"
+    return "unchanged"
+
+
+def _overall_comparison_status(statuses: list[str]) -> str:
+    if any(status == "regressed" for status in statuses):
+        return "regressed"
+    if statuses and all(status == "improved" for status in statuses):
+        return "improved"
+    return "unchanged"
 
 
 if __name__ == "__main__":

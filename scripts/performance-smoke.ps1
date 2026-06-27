@@ -9,13 +9,24 @@ if (-not (Test-Path -LiteralPath $Python)) {
 $DirectoryRows = if ($env:FILEZALL_PERF_DIRECTORY_ROWS) { $env:FILEZALL_PERF_DIRECTORY_ROWS } else { "5000" }
 $TransferRows = if ($env:FILEZALL_PERF_TRANSFER_ROWS) { $env:FILEZALL_PERF_TRANSFER_ROWS } else { "2000" }
 $Output = if ($env:FILEZALL_PERF_OUTPUT) { $env:FILEZALL_PERF_OUTPUT } else { Join-Path $RepoRoot "performance-smoke.json" }
+$Baseline = $env:FILEZALL_PERF_BASELINE
 
 Write-Host "Running FileZall performance smoke"
 Write-Host "Directory rows: $DirectoryRows"
 Write-Host "Transfer rows: $TransferRows"
 Write-Host "Output: $Output"
+if ($Baseline) {
+    Write-Host "Baseline: $Baseline"
+}
 
-& $Python -m filezall_desktop.performance_smoke `
-    --directory-rows $DirectoryRows `
-    --transfer-rows $TransferRows `
-    --output $Output
+$Args = @(
+    "-m", "filezall_desktop.performance_smoke",
+    "--directory-rows", $DirectoryRows,
+    "--transfer-rows", $TransferRows,
+    "--output", $Output
+)
+if ($Baseline) {
+    $Args += @("--baseline", $Baseline)
+}
+
+& $Python @Args

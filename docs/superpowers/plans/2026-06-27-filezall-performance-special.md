@@ -549,3 +549,47 @@ and `diagnostic_state`.
   whether a change improved or worsened UI responsiveness.
 - Continue transfer-center virtualization work if large queue smoke shows QTableWidget
   rendering remains the next hot path.
+
+## Immediate Task 13: Performance Smoke Baseline Comparison
+
+**Files:**
+- Modify: `src/filezall_desktop/performance_smoke.py`
+- Modify: `scripts/performance-smoke.ps1`
+- Modify: `tests/desktop/test_performance_smoke.py`
+- Modify: `tests/test_packaging_files.py`
+
+- [x] **Step 1: Write failing baseline comparison tests**
+
+Add tests requiring smoke reports to compare current scenario timing against a prior
+baseline report, including per-scenario status, delta milliseconds, and delta percent.
+Add a CLI test proving `--baseline` writes the comparison into the output report.
+
+- [x] **Step 2: Implement comparison semantics**
+
+Compare matching scenarios by `elapsed_ms`. Mark scenarios as `improved`, `unchanged`,
+or `regressed` using a small tolerance, and mark the overall comparison as `regressed`
+if any scenario regresses.
+
+- [x] **Step 3: Wire CLI and PowerShell baseline options**
+
+Add `--baseline` to the Python CLI and `FILEZALL_PERF_BASELINE` to
+`scripts/performance-smoke.ps1` so Windows smoke runs can compare against a saved
+`performance-smoke.json`.
+
+- [x] **Step 4: Run targeted verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_performance_smoke.py tests\test_packaging_files.py::test_performance_smoke_script_runs_desktop_smoke_module -vv
+.\.venv\Scripts\python.exe -m filezall_desktop.performance_smoke --directory-rows 4 --transfer-rows 3 --baseline .filezall-smoke-baseline.json --output .filezall-smoke-current.json
+```
+
+Expected: tests pass and the generated report contains `baseline.comparison`.
+
+## Next Milestone Target
+
+- Use the smoke report to decide whether the transfer center should move from
+  `QTableWidget` to `QTableView + model`.
+- Add repeated resource-refresh and long-log-stream smoke scenarios if UI stalls are
+  observed outside file and transfer tables.
