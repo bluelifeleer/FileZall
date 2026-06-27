@@ -247,3 +247,46 @@ Expected: all tests pass except the environment-gated live SFTP skip.
 
 - Continue with queue scheduler and transfer throughput polish: explicit per-server concurrency, retry backoff metadata, and clearer pause/resume/cancel state transitions.
 - Alternatively apply model/view virtualization to the process list if process rows become a larger UI bottleneck during validation.
+
+## Immediate Task 6: Per-Server Queue Concurrency
+
+**Files:**
+- Modify: `src/filezall_core/transfer_settings.py`
+- Modify: `src/filezall_core/queue.py`
+- Modify: `src/filezall_desktop/main_window.py`
+- Modify: `src/filezall_desktop/i18n.py`
+- Modify: `tests/core/test_queue.py`
+- Modify: `tests/desktop/test_main_window.py`
+
+- [x] **Step 1: Write failing scheduler test**
+
+Add a queue test that reserves one slot for `site-1` with `max_concurrent=2` and `max_concurrent_per_server=1`, verifies another `site-1` item is blocked, and verifies a `site-2` item can still run.
+
+- [x] **Step 2: Add transfer setting**
+
+Extend `TransferSettings` with `max_concurrent_per_server`. Keep the default compatible by treating `None` as the global max concurrency.
+
+- [x] **Step 3: Implement queue slot accounting**
+
+Add `can_start_transfer()`, `reserve_slot()`, and `release_slot()` to track global running count and per-server running count. Route `run_next()` through the same slot accounting.
+
+- [x] **Step 4: Expose per-server concurrency in UI**
+
+Add a per-server concurrency spin box to the transfer center and settings dialog. Wire it into `TransferSettings` and localize the label.
+
+- [x] **Step 5: Run verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\core\test_queue.py
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py -k "settings_menu_opens_dialog or concurrency_and_limit_controls"
+.\.venv\Scripts\python.exe -m pytest
+```
+
+Expected: all tests pass except the environment-gated live SFTP skip.
+
+## Next Milestone Target
+
+- Add retry backoff metadata so retrying transfers expose next-attempt timing instead of immediately looping without user-visible timing.
+- Tighten pause/resume/cancel state transitions for in-flight items if the transfer runner becomes asynchronous.

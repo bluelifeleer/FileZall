@@ -142,6 +142,45 @@ def test_queue_respects_concurrency_limit(tmp_path: Path) -> None:
     assert queue.settings.bytes_per_second_limit == 2048
 
 
+def test_queue_limits_concurrency_per_server_without_blocking_other_servers(
+    tmp_path: Path,
+) -> None:
+    queue, client = _queue(
+        tmp_path,
+        settings=TransferSettings(max_concurrent=2, max_concurrent_per_server=1),
+    )
+    site_1_task = _upload_task(tmp_path)
+    site_2_task = TransferTask(
+        id="task-2",
+        server_id="site-2",
+        direction=Direction.UPLOAD,
+        source_path=tmp_path,
+        destination_path=PurePosixPath("/home/deploy"),
+        protocol=Protocol.SFTP,
+        conflict_policy=ConflictPolicy.OVERWRITE,
+    )
+    (tmp_path / "app.zip").write_bytes(b"abcdef")
+    (tmp_path / "other.zip").write_bytes(b"ghijkl")
+    site_1_item = site_1_task.create_item("item-1", PurePosixPath("app.zip"), size_bytes=6)
+    site_2_item = site_2_task.create_item("item-2", PurePosixPath("other.zip"), size_bytes=6)
+    queue.add_task(site_1_task, [site_1_item])
+    queue.add_task(site_2_task, [site_2_item])
+
+    assert queue.reserve_slot("site-1") is True
+
+    blocked = queue.run_next("site-1")
+    allowed = queue.run_next("site-2")
+
+    assert blocked is None
+    assert allowed is not None
+    assert allowed.status is TransferStatus.COMPLETED
+    assert client.range_uploads == [
+        (tmp_path / "other.zip", PurePosixPath("/home/deploy/.filezall.other.zip.part"), 0)
+    ]
+
+    queue.release_slot("site-1")
+
+
 def test_queue_records_retry_state_and_failure_reason(tmp_path: Path) -> None:
     database = tmp_path / "filezall.sqlite3"
     initialize_database(database)

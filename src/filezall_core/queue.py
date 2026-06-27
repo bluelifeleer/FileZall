@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Callable
 
 from filezall_core.models import TransferItem, TransferStatus, TransferTask
@@ -23,6 +24,7 @@ class TransferQueue:
         self._client_factory = client_factory
         self.settings = settings or TransferSettings()
         self._running_count = 0
+        self._running_count_by_server: dict[str, int] = defaultdict(int)
         self._max_attempts = max_attempts
 
     def add_task(self, task: TransferTask, items: list[TransferItem]) -> None:
@@ -64,18 +66,40 @@ class TransferQueue:
                     retry_count=item.retry_count + 1,
                 )
 
+    def can_start_transfer(self, server_id: str) -> bool:
+        if self._running_count >= self.settings.max_concurrent:
+            return False
+        max_per_server = (
+            self.settings.max_concurrent
+            if self.settings.max_concurrent_per_server is None
+            else self.settings.max_concurrent_per_server
+        )
+        return self._running_count_by_server[server_id] < max_per_server
+
+    def reserve_slot(self, server_id: str) -> bool:
+        if not self.can_start_transfer(server_id):
+            return False
+        self._running_count += 1
+        self._running_count_by_server[server_id] += 1
+        return True
+
+    def release_slot(self, server_id: str) -> None:
+        if self._running_count > 0:
+            self._running_count -= 1
+        if self._running_count_by_server[server_id] > 0:
+            self._running_count_by_server[server_id] -= 1
+
     def run_next(
         self,
         server_id: str,
         client: RemoteFileClient | None = None,
         progress_callback: Callable[[TransferItem], None] | None = None,
     ) -> TransferItem | None:
-        if self._running_count >= self.settings.max_concurrent:
-            return None
         for item in self.repository.list_all_items(status=TransferStatus.PENDING):
             if item.server_id == server_id:
+                if not self.reserve_slot(server_id):
+                    return None
                 transfer_client = client or self._client_factory(server_id)
-                self._running_count += 1
                 try:
                     return self._run_item_with_retries(
                         item,
@@ -83,7 +107,7 @@ class TransferQueue:
                         progress_callback=progress_callback,
                     )
                 finally:
-                    self._running_count -= 1
+                    self.release_slot(server_id)
         return None
 
     def _run_item_with_retries(

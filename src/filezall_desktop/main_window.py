@@ -163,6 +163,13 @@ class SettingsDialog(QDialog):
         self.concurrency_spin.setRange(1, 16)
         self.concurrency_spin.setValue(window.transfer_settings.max_concurrent)
 
+        self.per_server_concurrency_spin = QSpinBox(self)
+        self.per_server_concurrency_spin.setRange(1, 16)
+        self.per_server_concurrency_spin.setValue(
+            window.transfer_settings.max_concurrent_per_server
+            or window.transfer_settings.max_concurrent
+        )
+
         self.limit_spin = QSpinBox(self)
         self.limit_spin.setRange(0, 1024 * 1024)
         limit = window.transfer_settings.bytes_per_second_limit or 0
@@ -172,6 +179,7 @@ class SettingsDialog(QDialog):
         form.addRow("Language", self.language_selector)
         form.addRow("List density", self.density_selector)
         form.addRow("Transfer concurrency", self.concurrency_spin)
+        form.addRow("Per-server concurrency", self.per_server_concurrency_spin)
         form.addRow("Transfer limit KB/s", self.limit_spin)
         layout.addLayout(form)
 
@@ -192,6 +200,9 @@ class SettingsDialog(QDialog):
         self._window._apply_language(str(self.language_selector.currentData()))
         self._window._apply_file_list_density(str(self.density_selector.currentData()))
         self._window.transfer_concurrency_spin.setValue(self.concurrency_spin.value())
+        self._window.transfer_per_server_concurrency_spin.setValue(
+            self.per_server_concurrency_spin.value()
+        )
         self._window.transfer_limit_spin.setValue(self.limit_spin.value())
         self._window._handle_transfer_settings_changed()
 
@@ -917,6 +928,9 @@ class MainWindow(QMainWindow):
             )
             self.transfer_center_label.setText(self._text("transfer.center"))
             self.transfer_concurrency_label.setText(self._text("transfer.concurrency"))
+            self.transfer_per_server_concurrency_label.setText(
+                self._text("transfer.per_server")
+            )
             self.transfer_limit_label.setText(self._text("transfer.limit_kbps"))
             self.transfer_logs_label.setText(self._text("transfer.logs"))
             self.pause_transfer_button.setText(self._text("transfer.pause"))
@@ -1003,6 +1017,13 @@ class MainWindow(QMainWindow):
         self.transfer_concurrency_spin = QSpinBox(root)
         self.transfer_concurrency_spin.setRange(1, 16)
         self.transfer_concurrency_spin.setValue(self.transfer_settings.max_concurrent)
+        self.transfer_per_server_concurrency_label = QLabel("Per server", root)
+        self.transfer_per_server_concurrency_spin = QSpinBox(root)
+        self.transfer_per_server_concurrency_spin.setRange(1, 16)
+        self.transfer_per_server_concurrency_spin.setValue(
+            self.transfer_settings.max_concurrent_per_server
+            or self.transfer_settings.max_concurrent
+        )
         self.transfer_limit_label = QLabel("Limit KB/s", root)
         self.transfer_limit_spin = QSpinBox(root)
         self.transfer_limit_spin.setRange(0, 1024 * 1024)
@@ -1010,6 +1031,8 @@ class MainWindow(QMainWindow):
         transfer_actions.addWidget(self.transfer_center_label)
         transfer_actions.addWidget(self.transfer_concurrency_label)
         transfer_actions.addWidget(self.transfer_concurrency_spin)
+        transfer_actions.addWidget(self.transfer_per_server_concurrency_label)
+        transfer_actions.addWidget(self.transfer_per_server_concurrency_spin)
         transfer_actions.addWidget(self.transfer_limit_label)
         transfer_actions.addWidget(self.transfer_limit_spin)
         transfer_actions.addStretch(1)
@@ -1527,6 +1550,9 @@ class MainWindow(QMainWindow):
         self.remote_panel.table.local_paths_dropped.connect(self._handle_remote_drop)
         self.local_panel.table.local_paths_dropped.connect(lambda _paths: self._handle_local_drop())
         self.transfer_concurrency_spin.valueChanged.connect(self._handle_transfer_settings_changed)
+        self.transfer_per_server_concurrency_spin.valueChanged.connect(
+            self._handle_transfer_settings_changed
+        )
         self.transfer_limit_spin.valueChanged.connect(self._handle_transfer_settings_changed)
         self.pause_transfer_button.clicked.connect(self._handle_pause_transfer_clicked)
         self.resume_transfer_button.clicked.connect(self._handle_resume_transfer_clicked)
@@ -2148,6 +2174,7 @@ class MainWindow(QMainWindow):
         limit = self.transfer_limit_spin.value()
         self.transfer_settings = TransferSettings(
             max_concurrent=self.transfer_concurrency_spin.value(),
+            max_concurrent_per_server=self.transfer_per_server_concurrency_spin.value(),
             bytes_per_second_limit=limit * 1024 if limit > 0 else None,
         )
 
