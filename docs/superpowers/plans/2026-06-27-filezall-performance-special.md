@@ -503,3 +503,49 @@ Expected: both new diagnostic-state tests pass.
 - Add a scripted performance smoke command that exercises large transfer queues and
   large directory render paths without needing a live server.
 - Use the new diagnostic snapshot as the artifact for future slow-path reports.
+
+## Immediate Task 12: Scripted Desktop Performance Smoke
+
+**Files:**
+- Create: `src/filezall_desktop/performance_smoke.py`
+- Create: `scripts/performance-smoke.ps1`
+- Modify: `pyproject.toml`
+- Modify: `tests/desktop/test_performance_smoke.py`
+- Modify: `tests/test_packaging_files.py`
+
+- [x] **Step 1: Write failing smoke tests**
+
+Add a desktop smoke test that requires a report for large-directory and large-transfer
+queue scenarios, plus a script-contract test requiring the PowerShell entry point to
+call the Python smoke module.
+
+- [x] **Step 2: Implement desktop smoke module**
+
+Create synthetic `LocalFileEntry` and `TransferItem` data, run the actual Qt desktop
+render paths with an offscreen `QApplication`, measure elapsed time with the existing
+performance helpers, and include the live diagnostic state snapshot in the report.
+
+- [x] **Step 3: Add runnable command entry points**
+
+Add `filezall-performance-smoke` to `pyproject.toml` and add
+`scripts/performance-smoke.ps1` for Windows validation. Support environment overrides
+for directory rows, transfer rows, and output path.
+
+- [x] **Step 4: Run targeted verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_performance_smoke.py tests\test_packaging_files.py::test_performance_smoke_script_runs_desktop_smoke_module -vv
+.\.venv\Scripts\python.exe -m filezall_desktop.performance_smoke --directory-rows 20 --transfer-rows 15 --output .filezall-smoke-performance.json
+```
+
+Expected: tests pass and the module writes a JSON report with `status`, `scenarios`,
+and `diagnostic_state`.
+
+## Next Milestone Target
+
+- Add smoke-report trend comparison or baseline thresholds so repeated runs can show
+  whether a change improved or worsened UI responsiveness.
+- Continue transfer-center virtualization work if large queue smoke shows QTableWidget
+  rendering remains the next hot path.

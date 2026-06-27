@@ -22,6 +22,7 @@ dev = [
 [project.scripts]
 filezall = "filezall_desktop.app:main"
 filezall-agent = "filezall_agent.server:main"
+filezall-performance-smoke = "filezall_desktop.performance_smoke:main"
 
 [tool.setuptools.packages.find]
 where = ["src", "agent"]

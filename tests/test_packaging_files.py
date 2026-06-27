@@ -14,6 +14,7 @@ def test_packaging_files_exist() -> None:
         "packaging/README.md",
         "docs/agent-deployment.md",
         "scripts/validate-linux-agent.ps1",
+        "scripts/performance-smoke.ps1",
         "src/filezall_desktop/assets/icons/filezall.svg",
         "src/filezall_desktop/assets/icons/filezall.ico",
         "src/filezall_desktop/assets/icons/filezall.icns",
@@ -82,5 +83,17 @@ def test_linux_agent_validation_script_covers_real_server_flow() -> None:
         "systemctl",
         "/health",
         "/resources",
+    ]:
+        assert required in script
+
+
+def test_performance_smoke_script_runs_desktop_smoke_module() -> None:
+    script = (ROOT / "scripts/performance-smoke.ps1").read_text(encoding="utf-8")
+
+    for required in [
+        "filezall_desktop.performance_smoke",
+        "FILEZALL_PERF_DIRECTORY_ROWS",
+        "FILEZALL_PERF_TRANSFER_ROWS",
+        "performance-smoke.json",
     ]:
         assert required in script
