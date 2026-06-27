@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from filezall_core.models import Direction
-from filezall_core.protocols import RemoteFileClient, walk_remote_directory
+from filezall_core.protocols import RemoteFileClient
 
 
 @dataclass(frozen=True)
@@ -60,7 +60,7 @@ def plan_remote_directory(
     direction: Direction,
 ) -> DirectoryTransferPlan:
     items = []
-    for entry in sorted(walk_remote_directory(client, root), key=lambda item: str(item.path)):
+    for entry in sorted(client.walk_directory(root), key=lambda item: str(item.path)):
         relative_path = PurePosixPath(entry.path.relative_to(root).as_posix())
         items.append(
             DirectoryTransferItemPlan(

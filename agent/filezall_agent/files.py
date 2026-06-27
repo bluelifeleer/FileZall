@@ -14,16 +14,15 @@ class AgentFileService:
         directory = self._config.resolve_path(path)
         entries = []
         for child in sorted(directory.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
-            stat = child.stat()
-            entries.append(
-                {
-                    "path": _display_path(self._config, child),
-                    "name": child.name,
-                    "is_dir": child.is_dir(),
-                    "size_bytes": 0 if child.is_dir() else stat.st_size,
-                    "modified_time": _modified_time(stat.st_mtime),
-                }
-            )
+            entries.append(_entry_payload(self._config, child))
+        return entries
+
+    def walk_directory(self, path: str) -> list[dict]:
+        directory = self._config.resolve_path(path)
+        entries = []
+        for child in sorted(directory.rglob("*"), key=lambda item: item.relative_to(directory).as_posix().lower()):
+            if child.is_file():
+                entries.append(_entry_payload(self._config, child))
         return entries
 
     def file_size(self, path: str) -> dict:
@@ -108,6 +107,17 @@ def _display_path(config: AgentConfig, path: Path) -> str:
     if config.root is None:
         return path.as_posix()
     return "/" + path.resolve().relative_to(config.root.resolve()).as_posix()
+
+
+def _entry_payload(config: AgentConfig, path: Path) -> dict:
+    stat = path.stat()
+    return {
+        "path": _display_path(config, path),
+        "name": path.name,
+        "is_dir": path.is_dir(),
+        "size_bytes": 0 if path.is_dir() else stat.st_size,
+        "modified_time": _modified_time(stat.st_mtime),
+    }
 
 
 def _modified_time(timestamp: float) -> str:

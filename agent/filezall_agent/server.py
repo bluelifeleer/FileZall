@@ -79,6 +79,8 @@ def _handle_get(
         _write_json(handler, resource_service.process_detail(int(path.rsplit("/", 1)[1])))
     elif path == "/files/list":
         _write_json(handler, {"entries": file_service.list_directory(_query_one(query, "path"))})
+    elif path == "/files/walk":
+        _write_json(handler, {"entries": file_service.walk_directory(_query_one(query, "path"))})
     elif path == "/files/size":
         _write_json(handler, file_service.file_size(_query_one(query, "path")))
     elif path == "/download-chunk":

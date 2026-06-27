@@ -31,6 +31,23 @@ def test_agent_file_service_lists_sizes_renames_and_verifies(tmp_path: Path) -> 
     assert service.verify("/home/deploy/renamed.txt", "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824") == {"ok": True}
 
 
+def test_agent_file_service_walks_directory_tree_in_one_call(tmp_path: Path) -> None:
+    service = AgentFileService(AgentConfig(root=tmp_path, token="secret"))
+    directory = tmp_path / "home" / "deploy" / "site"
+    assets = directory / "assets"
+    assets.mkdir(parents=True)
+    (directory / "index.html").write_bytes(b"hello")
+    (assets / "app.js").write_bytes(b"abcdef")
+
+    entries = service.walk_directory("/home/deploy/site")
+
+    assert [entry["path"] for entry in entries] == [
+        "/home/deploy/site/assets/app.js",
+        "/home/deploy/site/index.html",
+    ]
+    assert [entry["size_bytes"] for entry in entries] == [6, 5]
+
+
 def test_agent_file_service_deletes_and_creates_paths(tmp_path: Path) -> None:
     service = AgentFileService(AgentConfig(root=tmp_path, token="secret"))
     directory = tmp_path / "home" / "deploy"

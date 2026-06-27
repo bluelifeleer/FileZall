@@ -734,3 +734,57 @@ Expected: controller cache semantics and main-window refresh/navigation flows pa
   trips after cache freshness and invalidation behavior is locked down.
 - Extend smoke coverage to include cached versus forced remote directory navigation
   once a deterministic fake remote listing workload is available.
+
+## Immediate Task 17: Add Agent Batch Directory Walk
+
+**Files:**
+- Modify: `agent/filezall_agent/files.py`
+- Modify: `agent/filezall_agent/server.py`
+- Modify: `src/filezall_core/agent_file_client.py`
+- Modify: `src/filezall_core/directory_plan.py`
+- Modify: `tests/agent/test_agent_files.py`
+- Modify: `tests/agent/test_agent_http.py`
+- Modify: `tests/core/test_agent_file_client.py`
+- Modify: `tests/core/test_directory_plan.py`
+
+- [x] **Step 1: Write batch walk tests**
+
+Add service, HTTP, client, and directory-plan tests proving a nested remote
+directory can be walked through one Agent endpoint and that directory download
+planning uses `client.walk_directory()`.
+
+- [x] **Step 2: Add Agent file-service walk**
+
+Implement `AgentFileService.walk_directory()` to return file entries from a
+subtree in one service call while preserving the same entry payload format as
+`list_directory()`.
+
+- [x] **Step 3: Expose `/files/walk`**
+
+Add an authenticated GET route returning `{"entries": ...}` for the requested
+path so installed Agents can serve recursive file listings without one HTTP call
+per nested directory.
+
+- [x] **Step 4: Use batch walk in core client and planning**
+
+Update `AgentHttpFileClient.walk_directory()` to call `/files/walk`, and update
+`plan_remote_directory()` to call `client.walk_directory(root)` so optimized
+clients are honored.
+
+- [x] **Step 5: Run targeted verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\agent\test_agent_files.py::test_agent_file_service_walks_directory_tree_in_one_call tests\agent\test_agent_http.py::test_agent_http_server_serves_files_chunks_and_resources tests\core\test_agent_file_client.py::test_agent_file_client_walks_directory_with_single_agent_request tests\core\test_directory_plan.py::test_plan_remote_directory_uses_client_batch_walk -vv
+```
+
+Expected: Agent service, HTTP route, Agent client, and directory planning all
+use the new batch walk behavior.
+
+## Next Milestone Target
+
+- Add a deterministic performance-smoke scenario comparing cached navigation and
+  forced remote refresh.
+- Continue connection-state and transfer-runner performance work after the file
+  listing path has measurable coverage.

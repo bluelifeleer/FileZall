@@ -38,6 +38,17 @@ def test_agent_http_server_serves_files_chunks_and_resources(tmp_path: Path) -> 
             "size": 5,
         }
         assert _json(base_url, "/files/list?path=%2Fhome%2Fdeploy")["entries"][0]["name"] == "app.txt"
+        nested_dir = deploy_dir / "site" / "assets"
+        nested_dir.mkdir(parents=True)
+        (deploy_dir / "site" / "index.html").write_bytes(b"hello")
+        (nested_dir / "app.js").write_bytes(b"abcdef")
+        assert [
+            entry["path"]
+            for entry in _json(base_url, "/files/walk?path=%2Fhome%2Fdeploy%2Fsite")["entries"]
+        ] == [
+            "/home/deploy/site/assets/app.js",
+            "/home/deploy/site/index.html",
+        ]
 
         chunk_status = _json(
             base_url,

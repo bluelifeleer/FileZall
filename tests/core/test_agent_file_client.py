@@ -35,6 +35,27 @@ class FakeOpener:
                     ]
                 }
             )
+        if "/files/walk" in url:
+            return FakeResponse(
+                {
+                    "entries": [
+                        {
+                            "path": "/home/deploy/site/assets/app.js",
+                            "name": "app.js",
+                            "is_dir": False,
+                            "size_bytes": 6,
+                            "modified_time": None,
+                        },
+                        {
+                            "path": "/home/deploy/site/index.html",
+                            "name": "index.html",
+                            "is_dir": False,
+                            "size_bytes": 5,
+                            "modified_time": None,
+                        },
+                    ]
+                }
+            )
         if "/files/size" in url:
             return FakeResponse({"exists": True, "size": 6})
         if "/download-chunk" in url:
@@ -60,6 +81,23 @@ def test_agent_file_client_lists_and_reports_remote_size() -> None:
     assert entries[0].name == "app.log"
     assert entries[0].size_bytes == 42
     assert size == 6
+
+
+def test_agent_file_client_walks_directory_with_single_agent_request() -> None:
+    opener = FakeOpener()
+    client = AgentHttpFileClient("http://127.0.0.1:8765", token="secret", opener=opener)
+
+    entries = client.walk_directory(PurePosixPath("/home/deploy/site"))
+
+    assert [entry.path for entry in entries] == [
+        PurePosixPath("/home/deploy/site/assets/app.js"),
+        PurePosixPath("/home/deploy/site/index.html"),
+    ]
+    assert [
+        request.full_url
+        for request, _body, _timeout in opener.requests
+        if "/files/walk" in request.full_url
+    ] == ["http://127.0.0.1:8765/files/walk?path=%2Fhome%2Fdeploy%2Fsite"]
 
 
 def test_agent_file_client_uploads_and_downloads_ranges(tmp_path: Path) -> None:

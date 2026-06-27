@@ -52,3 +52,33 @@ def test_plan_remote_directory_walks_nested_entries() -> None:
     assert plan.items[0].source_path == root / "assets" / "app.js"
     assert plan.items[0].destination_path == Path("C:/downloads/site/assets/app.js")
     assert {item.direction for item in plan.items} == {Direction.DOWNLOAD}
+
+
+def test_plan_remote_directory_uses_client_batch_walk() -> None:
+    root = PurePosixPath("/home/deploy/site")
+
+    class BatchWalkClient(FakeRemoteClient):
+        def __init__(self) -> None:
+            super().__init__({}, home=PurePosixPath("/home/deploy"))
+            self.walk_calls = []
+            self.list_calls = []
+
+        def walk_directory(self, path: PurePosixPath) -> list[RemoteFileEntry]:
+            self.walk_calls.append(path)
+            return [
+                RemoteFileEntry(root / "index.html", "index.html", False, 5, None),
+            ]
+
+        def list_directory(self, path: PurePosixPath) -> list[RemoteFileEntry]:
+            self.list_calls.append(path)
+            raise AssertionError("plan_remote_directory should use walk_directory")
+
+    client = BatchWalkClient()
+
+    plan = plan_remote_directory(client, root, Path("C:/downloads/site"), direction=Direction.DOWNLOAD)
+
+    assert client.walk_calls == [root]
+    assert client.list_calls == []
+    assert [(item.relative_path, item.size_bytes) for item in plan.items] == [
+        (PurePosixPath("index.html"), 5),
+    ]

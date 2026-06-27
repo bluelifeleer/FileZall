@@ -8,7 +8,6 @@ from urllib import parse, request
 
 from filezall_core.agent_transfer import AgentTransferClient
 from filezall_core.models import RemoteFileEntry, SiteProfile
-from filezall_core.protocols import walk_remote_directory
 
 
 class AgentHttpFileClient:
@@ -42,21 +41,11 @@ class AgentHttpFileClient:
     def list_directory(self, path: PurePosixPath) -> list[RemoteFileEntry]:
         query = parse.urlencode({"path": str(path)})
         payload = self._get_json(f"/files/list?{query}")
-        return [
-            RemoteFileEntry(
-                path=PurePosixPath(str(row["path"])),
-                name=str(row["name"]),
-                is_dir=bool(row["is_dir"]),
-                size_bytes=int(row["size_bytes"]),
-                modified_time=datetime.fromisoformat(str(row["modified_time"]))
-                if row.get("modified_time")
-                else None,
-            )
-            for row in payload.get("entries", [])
-        ]
+        return _entries_from_payload(payload)
 
     def walk_directory(self, path: PurePosixPath) -> list[RemoteFileEntry]:
-        return walk_remote_directory(self, path)
+        query = parse.urlencode({"path": str(path)})
+        return _entries_from_payload(self._get_json(f"/files/walk?{query}"))
 
     def upload_file(self, local_path: Path, remote_path: PurePosixPath) -> None:
         self.upload_file_range(local_path, remote_path, offset=0)
@@ -151,3 +140,18 @@ class AgentHttpFileClient:
 
 def _transfer_id(remote_path: PurePosixPath) -> str:
     return parse.quote(str(remote_path), safe="")
+
+
+def _entries_from_payload(payload: dict) -> list[RemoteFileEntry]:
+    return [
+        RemoteFileEntry(
+            path=PurePosixPath(str(row["path"])),
+            name=str(row["name"]),
+            is_dir=bool(row["is_dir"]),
+            size_bytes=int(row["size_bytes"]),
+            modified_time=datetime.fromisoformat(str(row["modified_time"]))
+            if row.get("modified_time")
+            else None,
+        )
+        for row in payload.get("entries", [])
+    ]
