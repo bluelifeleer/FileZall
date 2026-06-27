@@ -832,3 +832,46 @@ script-level environment variables are wired.
 - Continue connection-state and transfer-runner performance work.
 - Add richer diagnostics around retry and reconnect workloads before tuning
   transfer concurrency defaults.
+
+## Immediate Task 19: Add Transfer Retry Diagnostics
+
+**Files:**
+- Modify: `src/filezall_core/queue.py`
+- Modify: `src/filezall_desktop/main_window.py`
+- Modify: `tests/core/test_queue.py`
+- Modify: `tests/desktop/test_main_window.py`
+
+- [x] **Step 1: Write queue diagnostic tests**
+
+Add a core queue test proving diagnostics report total items, status counts,
+active concurrency slots, retry backlog split into ready/waiting, next retry
+time, and recent failed/retrying reasons.
+
+- [x] **Step 2: Add queue diagnostic snapshot**
+
+Implement `TransferQueue.diagnostic_snapshot()` so future concurrency and retry
+tuning has a stable structured state surface instead of relying only on visible
+table rows.
+
+- [x] **Step 3: Enrich UI diagnostic package state**
+
+Extend the main-window diagnostic snapshot with transfer retry totals, waiting
+retry counts, next retry time, and recent failed/retrying reasons using the
+window transfer status clock for deterministic output.
+
+- [x] **Step 4: Run targeted verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\core\test_queue.py tests\desktop\test_main_window.py::test_main_window_diagnostic_package_includes_ui_state_snapshot tests\desktop\test_performance_smoke.py -vv
+```
+
+Expected: queue behavior still passes and diagnostic exports include retry and
+failure details.
+
+## Next Milestone Target
+
+- Add reconnect/timeout classification metrics around connection and heartbeat
+  failures.
+- Use the new retry diagnostics before changing transfer concurrency defaults.

@@ -1356,6 +1356,7 @@ def test_main_window_diagnostic_package_includes_ui_state_snapshot(qtbot, tmp_pa
         diagnostic_file_chooser=lambda _parent: str(diagnostic_path),
     )
     qtbot.addWidget(window)
+    window.transfer_status_clock = lambda: datetime(2026, 6, 27, 12, 0, tzinfo=UTC)
     window._resource_refresh_running = True
     window.append_log("Background operation failed [resource refresh]: timeout", category="error", level="error")
     window.set_transfer_items(
@@ -1386,6 +1387,21 @@ def test_main_window_diagnostic_package_includes_ui_state_snapshot(qtbot, tmp_pa
                 status=TransferStatus.FAILED,
                 failure_reason="network timeout",
             ),
+            TransferItem(
+                id="item-3",
+                task_id="task-3",
+                server_id="site-2",
+                direction=Direction.UPLOAD,
+                source_path=tmp_path / "retry.txt",
+                destination_path=PurePosixPath("/srv/retry.txt"),
+                temporary_path=PurePosixPath("/srv/.filezall.retry.txt.part"),
+                size_bytes=100,
+                protocol=Protocol.SFTP,
+                status=TransferStatus.RETRYING,
+                retry_count=2,
+                failure_reason="temporary network down",
+                next_retry_at=datetime(2026, 6, 27, 12, 0, 30, tzinfo=UTC),
+            ),
         ]
     )
 
@@ -1395,8 +1411,29 @@ def test_main_window_diagnostic_package_includes_ui_state_snapshot(qtbot, tmp_pa
         state = json.loads(archive.read("state/snapshot.json").decode("utf-8"))
 
     assert state["resource_refresh"]["running"] is True
-    assert state["transfer_queue"]["total"] == 2
-    assert state["transfer_queue"]["by_status"] == {"failed": 1, "running": 1}
+    assert state["transfer_queue"]["total"] == 3
+    assert state["transfer_queue"]["by_status"] == {"failed": 1, "retrying": 1, "running": 1}
+    assert state["transfer_queue"]["retrying"]["total"] == 1
+    assert state["transfer_queue"]["retrying"]["waiting"] == 1
+    assert state["transfer_queue"]["retrying"]["next_retry_at"] == "2026-06-27T12:00:30+00:00"
+    assert state["transfer_queue"]["failures"]["recent"] == [
+        {
+            "item_id": "item-2",
+            "task_id": "task-2",
+            "server_id": "site-1",
+            "status": "failed",
+            "retry_count": 0,
+            "reason": "network timeout",
+        },
+        {
+            "item_id": "item-3",
+            "task_id": "task-3",
+            "server_id": "site-2",
+            "status": "retrying",
+            "retry_count": 2,
+            "reason": "temporary network down",
+        },
+    ]
     assert state["logs"]["error_count"] == 1
     assert state["logs"]["recent_errors"][0]["message"] == "Background operation failed [resource refresh]: timeout"
 

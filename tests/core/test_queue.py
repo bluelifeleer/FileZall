@@ -306,6 +306,73 @@ def test_queue_records_retry_backoff_state_and_waits_until_due(tmp_path: Path) -
     assert completed.next_retry_at is None
 
 
+def test_queue_diagnostic_snapshot_reports_retry_backlog_failures_and_slots(tmp_path: Path) -> None:
+    now = datetime(2026, 6, 27, 12, 0, tzinfo=UTC)
+    queue, _client = _queue(
+        tmp_path,
+        settings=TransferSettings(max_concurrent=3, max_concurrent_per_server=1),
+    )
+    task = _upload_task(tmp_path)
+    pending = task.create_item("item-pending", PurePosixPath("pending.zip"), size_bytes=6)
+    retrying = task.create_item("item-retrying", PurePosixPath("retrying.zip"), size_bytes=6)
+    failed = task.create_item("item-failed", PurePosixPath("failed.zip"), size_bytes=6)
+    queue.add_task(task, [pending, retrying, failed])
+    queue.repository.update_item_state(
+        "item-retrying",
+        TransferStatus.RETRYING,
+        last_error="timeout",
+        failure_reason="timeout",
+        retry_count=2,
+        next_retry_at=now + timedelta(seconds=30),
+    )
+    queue.repository.update_item_state(
+        "item-failed",
+        TransferStatus.FAILED,
+        last_error="permission denied",
+        failure_reason="permission denied",
+        retry_count=3,
+    )
+    queue.reserve_slot("site-1")
+
+    snapshot = queue.diagnostic_snapshot(now=now)
+
+    assert snapshot["total"] == 3
+    assert snapshot["by_status"] == {"failed": 1, "pending": 1, "retrying": 1}
+    assert snapshot["slots"] == {
+        "running": 1,
+        "max_concurrent": 3,
+        "max_concurrent_per_server": 1,
+        "by_server": {"site-1": 1},
+    }
+    assert snapshot["retrying"] == {
+        "total": 1,
+        "ready": 0,
+        "waiting": 1,
+        "next_retry_at": "2026-06-27T12:00:30+00:00",
+    }
+    assert snapshot["failures"]["total"] == 1
+    assert snapshot["failures"]["recent"] == [
+        {
+            "item_id": "item-failed",
+            "task_id": "task-1",
+            "server_id": "site-1",
+            "status": "failed",
+            "retry_count": 3,
+            "reason": "permission denied",
+        },
+        {
+            "item_id": "item-retrying",
+            "task_id": "task-1",
+            "server_id": "site-1",
+            "status": "retrying",
+            "retry_count": 2,
+            "reason": "timeout",
+        }
+    ]
+
+    queue.release_slot("site-1")
+
+
 class StepClock:
     def __init__(self, value: datetime) -> None:
         self.value = value

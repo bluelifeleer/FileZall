@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
@@ -176,6 +176,47 @@ class TransferQueue:
     def recover_pending(self) -> list[TransferItem]:
         return self.repository.list_recoverable_items()
 
+    def diagnostic_snapshot(self, now: datetime | None = None) -> dict:
+        now = now or self._clock()
+        items = self.repository.list_all_items()
+        retrying = [item for item in items if item.status is TransferStatus.RETRYING]
+        waiting_retrying = [
+            item for item in retrying if item.next_retry_at is not None and item.next_retry_at > now
+        ]
+        ready_retrying = [
+            item for item in retrying if item.next_retry_at is None or item.next_retry_at <= now
+        ]
+        failures = [
+            item
+            for item in items
+            if item.status in {TransferStatus.FAILED, TransferStatus.RETRYING}
+            and (item.failure_reason or item.last_error)
+        ]
+        next_retry_at = min(
+            (item.next_retry_at for item in waiting_retrying if item.next_retry_at is not None),
+            default=None,
+        )
+        return {
+            "total": len(items),
+            "by_status": dict(sorted(Counter(item.status.value for item in items).items())),
+            "slots": {
+                "running": self._running_count,
+                "max_concurrent": self.settings.max_concurrent,
+                "max_concurrent_per_server": self.settings.max_concurrent_per_server,
+                "by_server": dict(sorted(self._running_count_by_server.items())),
+            },
+            "retrying": {
+                "total": len(retrying),
+                "ready": len(ready_retrying),
+                "waiting": len(waiting_retrying),
+                "next_retry_at": next_retry_at.isoformat() if next_retry_at else None,
+            },
+            "failures": {
+                "total": len([item for item in items if item.status is TransferStatus.FAILED]),
+                "recent": [_diagnostic_failure(item) for item in failures[-10:]],
+            },
+        }
+
     def _ready_items(self) -> list[TransferItem]:
         now = self._clock()
         pending = self.repository.list_all_items(status=TransferStatus.PENDING)
@@ -185,3 +226,14 @@ class TransferQueue:
             if item.next_retry_at is None or item.next_retry_at <= now
         ]
         return [*pending, *retrying]
+
+
+def _diagnostic_failure(item: TransferItem) -> dict:
+    return {
+        "item_id": item.id,
+        "task_id": item.task_id,
+        "server_id": item.server_id,
+        "status": item.status.value,
+        "retry_count": item.retry_count,
+        "reason": item.failure_reason or item.last_error or "",
+    }

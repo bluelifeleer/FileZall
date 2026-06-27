@@ -1346,6 +1346,10 @@ class MainWindow(QMainWindow):
         records = self.log_service.records()
         errors = [record for record in records if record.level == "error" or record.category == "error"]
         status_counts = Counter(item.status.value for item in transfer_items)
+        retry_diagnostics = _transfer_retry_diagnostics(
+            transfer_items,
+            now=self.transfer_status_clock(),
+        )
         return {
             "resource_refresh": {
                 "running": self._resource_refresh_running,
@@ -1361,6 +1365,8 @@ class MainWindow(QMainWindow):
                 "pending_render": self._pending_transfer_items is not None,
                 "rendered_rows": len(self._rendered_transfer_items),
                 "summary": self.transfer_summary_label.text(),
+                "retrying": retry_diagnostics["retrying"],
+                "failures": retry_diagnostics["failures"],
             },
             "logs": {
                 "total_records": len(records),
@@ -2647,6 +2653,49 @@ def _diagnostic_log_record(record) -> dict[str, str]:
         "category": record.category,
         "level": record.level,
         "message": record.message,
+    }
+
+
+def _transfer_retry_diagnostics(items: list[TransferItem], now: datetime) -> dict:
+    retrying = [item for item in items if item.status is TransferStatus.RETRYING]
+    waiting_retrying = [
+        item for item in retrying if item.next_retry_at is not None and item.next_retry_at > now
+    ]
+    ready_retrying = [
+        item for item in retrying if item.next_retry_at is None or item.next_retry_at <= now
+    ]
+    failures = [
+        item
+        for item in items
+        if item.status in {TransferStatus.FAILED, TransferStatus.RETRYING}
+        and (item.failure_reason or item.last_error)
+    ]
+    next_retry_at = min(
+        (item.next_retry_at for item in waiting_retrying if item.next_retry_at is not None),
+        default=None,
+    )
+    return {
+        "retrying": {
+            "total": len(retrying),
+            "ready": len(ready_retrying),
+            "waiting": len(waiting_retrying),
+            "next_retry_at": next_retry_at.isoformat() if next_retry_at else None,
+        },
+        "failures": {
+            "total": len([item for item in items if item.status is TransferStatus.FAILED]),
+            "recent": [_diagnostic_transfer_failure(item) for item in failures[-10:]],
+        },
+    }
+
+
+def _diagnostic_transfer_failure(item: TransferItem) -> dict[str, str | int]:
+    return {
+        "item_id": item.id,
+        "task_id": item.task_id,
+        "server_id": item.server_id,
+        "status": item.status.value,
+        "retry_count": item.retry_count,
+        "reason": item.failure_reason or item.last_error or "",
     }
 
 
