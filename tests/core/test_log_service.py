@@ -14,6 +14,7 @@ def test_transfer_log_service_appends_and_exports_entries(tmp_path) -> None:
         "Uploaded app.txt",
     ]
     exported = output.read_text(encoding="utf-8")
+    assert "UTC+00:00 [transfer] [info] Connected to Production" in exported
     assert "Connected to Production" in exported
     assert "Uploaded app.txt" in exported
 

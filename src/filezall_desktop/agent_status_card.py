@@ -12,6 +12,7 @@ class AgentStatusCard(QWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self.show_danger_actions = True
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
         self.title_label = QLabel("Agent", self)
@@ -49,7 +50,11 @@ class AgentStatusCard(QWidget):
         self.version_label.setText(f"v{model.version}" if model.version else "")
         self.message_label.setText(model.message)
         self._configure_button(self.primary_button, model.primary_action, _primary_role(model.state))
-        self._configure_button(self.danger_button, model.danger_action, "danger")
+        self._configure_button(
+            self.danger_button,
+            model.danger_action if self.show_danger_actions else None,
+            "danger",
+        )
 
     def clear_operation_steps(self) -> None:
         while self.steps_layout.count():

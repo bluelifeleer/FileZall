@@ -145,11 +145,29 @@ class RemoteDirectoryWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class TransferOperationWorker(QObject):
+    succeeded = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, label: str, action: Callable[[], None]) -> None:
+        super().__init__()
+        self._label = label
+        self._action = action
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            self._action()
+            self.succeeded.emit(self._label)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class SettingsDialog(QDialog):
     def __init__(self, window: "MainWindow") -> None:
         super().__init__(window)
         self._window = window
-        self.setWindowTitle("Settings")
+        self.setWindowTitle(window._text("settings.title"))
         layout = QVBoxLayout(self)
         form = QFormLayout()
 
@@ -190,12 +208,18 @@ class SettingsDialog(QDialog):
         limit = window.transfer_settings.bytes_per_second_limit or 0
         self.limit_spin.setValue(int(limit / 1024) if limit else 0)
 
-        form.addRow("Theme", self.theme_selector)
-        form.addRow("Language", self.language_selector)
-        form.addRow("List density", self.density_selector)
-        form.addRow("Transfer concurrency", self.concurrency_spin)
-        form.addRow("Per-server concurrency", self.per_server_concurrency_spin)
-        form.addRow("Transfer limit KB/s", self.limit_spin)
+        self.theme_label = QLabel(self)
+        self.language_label = QLabel(self)
+        self.density_label = QLabel(self)
+        self.concurrency_label = QLabel(self)
+        self.per_server_concurrency_label = QLabel(self)
+        self.limit_label = QLabel(self)
+        form.addRow(self.theme_label, self.theme_selector)
+        form.addRow(self.language_label, self.language_selector)
+        form.addRow(self.density_label, self.density_selector)
+        form.addRow(self.concurrency_label, self.concurrency_spin)
+        form.addRow(self.per_server_concurrency_label, self.per_server_concurrency_spin)
+        form.addRow(self.limit_label, self.limit_spin)
         layout.addLayout(form)
 
         self.button_box = QDialogButtonBox(
@@ -209,17 +233,38 @@ class SettingsDialog(QDialog):
         self.button_box.rejected.connect(self.reject)
         self.apply_button.clicked.connect(self.apply_settings)
         layout.addWidget(self.button_box)
+        self.retranslate()
 
     def apply_settings(self) -> None:
         self._window._apply_theme(str(self.theme_selector.currentData()))
         self._window._apply_language(str(self.language_selector.currentData()))
         self._window._apply_file_list_density(str(self.density_selector.currentData()))
-        self._window.transfer_concurrency_spin.setValue(self.concurrency_spin.value())
-        self._window.transfer_per_server_concurrency_spin.setValue(
-            self.per_server_concurrency_spin.value()
+        self._window.apply_transfer_settings(
+            TransferSettings(
+                max_concurrent=self.concurrency_spin.value(),
+                max_concurrent_per_server=self.per_server_concurrency_spin.value(),
+                bytes_per_second_limit=(
+                    self.limit_spin.value() * 1024 if self.limit_spin.value() > 0 else None
+                ),
+            )
         )
-        self._window.transfer_limit_spin.setValue(self.limit_spin.value())
-        self._window._handle_transfer_settings_changed()
+        self.retranslate()
+
+    def retranslate(self) -> None:
+        self.setWindowTitle(self._window._text("settings.title"))
+        self.theme_label.setText(self._window._text("settings.theme"))
+        self.language_label.setText(self._window._text("settings.language"))
+        self.density_label.setText(self._window._text("settings.density"))
+        self.concurrency_label.setText(self._window._text("settings.concurrency"))
+        self.per_server_concurrency_label.setText(self._window._text("settings.per_server"))
+        self.limit_label.setText(self._window._text("settings.limit_kbps"))
+        for density_name in ("compact", "standard", "comfortable"):
+            index = self.density_selector.findData(density_name)
+            if index >= 0:
+                self.density_selector.setItemText(
+                    index,
+                    self._window._text(f"density.{density_name}"),
+                )
 
     def _accept(self) -> None:
         self.apply_settings()
@@ -432,6 +477,10 @@ class ResourceUsageChart(QWidget):
 
 
 class MainWindow(QMainWindow):
+    transfer_items_requested = Signal(object)
+    status_requested = Signal(str)
+    log_requested = Signal(object)
+
     def __init__(
         self,
         controller=None,
@@ -494,6 +543,7 @@ class MainWindow(QMainWindow):
         self._remote_directory_workers = []
         self._active_remote_directory_load = None
         self._remote_directory_loading = False
+        self._transfer_workers = []
         self.file_list_density = "standard"
         self.current_theme = SYSTEM_THEME
         self.current_language = SYSTEM_LANGUAGE
@@ -513,6 +563,12 @@ class MainWindow(QMainWindow):
         self.transfer_retry_countdown_timer = QTimer(self)
         self.transfer_retry_countdown_timer.setInterval(1_000)
         self.transfer_retry_countdown_timer.timeout.connect(self._refresh_transfer_retry_countdowns)
+        self.transfer_items_requested.connect(
+            self._set_transfer_items_on_ui,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self.status_requested.connect(self._show_status_on_ui, Qt.ConnectionType.QueuedConnection)
+        self.log_requested.connect(self._append_log_on_ui, Qt.ConnectionType.QueuedConnection)
         self.setWindowTitle("FileZall")
         self.setWindowIcon(app_icon())
         self.resize(1280, 800)
@@ -891,6 +947,8 @@ class MainWindow(QMainWindow):
         self.commercial_action.setText(self._text("help.commercial"))
         if self.getting_started_dialog is not None:
             self.getting_started_dialog.set_texts(self._getting_started_texts())
+        if self.settings_dialog is not None:
+            self.settings_dialog.retranslate()
 
         self.connection_bar.site_label.setText(self._text("connection.site"))
         self.connection_bar.host_edit.setPlaceholderText(self._text("connection.host"))
@@ -965,6 +1023,7 @@ class MainWindow(QMainWindow):
             self.retry_transfer_button.setText(self._text("transfer.retry"))
             self.resource_refresh_button.setText(self._text("resource.refresh"))
             self.process_detail_button.setText(self._text("resource.show_process"))
+            self.process_detail_clear_button.setText(self._text("process.clear"))
             self.resource_install_agent_button.setText(self._text("resource.install_agent"))
             self.resource_uninstall_agent_button.setText(self._text("resource.uninstall_agent"))
             self.resource_monitor_label.setText(self._text("resource.monitor"))
@@ -983,6 +1042,7 @@ class MainWindow(QMainWindow):
                     self._text("process.name"),
                     self._text("process.cpu"),
                     self._text("process.memory"),
+                    self._text("process.command"),
                 ]
             )
 
@@ -1065,12 +1125,15 @@ class MainWindow(QMainWindow):
         self.transfer_limit_spin.setRange(0, 1024 * 1024)
         self.transfer_limit_spin.setValue(0)
         transfer_actions.addWidget(self.transfer_center_label)
-        transfer_actions.addWidget(self.transfer_concurrency_label)
-        transfer_actions.addWidget(self.transfer_concurrency_spin)
-        transfer_actions.addWidget(self.transfer_per_server_concurrency_label)
-        transfer_actions.addWidget(self.transfer_per_server_concurrency_spin)
-        transfer_actions.addWidget(self.transfer_limit_label)
-        transfer_actions.addWidget(self.transfer_limit_spin)
+        for settings_widget in (
+            self.transfer_concurrency_label,
+            self.transfer_concurrency_spin,
+            self.transfer_per_server_concurrency_label,
+            self.transfer_per_server_concurrency_spin,
+            self.transfer_limit_label,
+            self.transfer_limit_spin,
+        ):
+            settings_widget.hide()
         transfer_actions.addStretch(1)
         transfer_actions.addWidget(self.pause_transfer_button)
         transfer_actions.addWidget(self.resume_transfer_button)
@@ -1098,6 +1161,7 @@ class MainWindow(QMainWindow):
         self.resource_uninstall_agent_button.hide()
         self.resource_monitor_label = QLabel("Resource Monitor", root)
         self.agent_status_card = AgentStatusCard(resource_widget)
+        self.agent_status_card.show_danger_actions = False
         resource_actions.addWidget(self.resource_monitor_label)
         resource_actions.addWidget(self.agent_status_label)
         resource_actions.addStretch(1)
@@ -1149,7 +1213,7 @@ class MainWindow(QMainWindow):
         self.process_table = HoverRowTableView(root)
         self.process_table.setModel(self.process_model)
         self.process_table.setItemDelegate(HoverRowDelegate(self.process_table))
-        self.process_table.setHorizontalHeaderLabels(["PID", "User", "Name", "CPU", "Memory"])
+        self.process_table.setHorizontalHeaderLabels(["PID", "User", "Name", "CPU", "Memory", "Command"])
         self.process_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.process_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.process_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -1165,10 +1229,12 @@ class MainWindow(QMainWindow):
         self.process_detail_stop_button = QPushButton("Stop Process", root)
         self.process_detail_restart_button = QPushButton("Restart Process", root)
         self.process_detail_copy_pid_button = QPushButton("Copy Process ID", root)
+        self.process_detail_clear_button = QPushButton("Clear", root)
         self.process_detail_actions = QWidget(root)
         process_detail_actions_layout = QHBoxLayout(self.process_detail_actions)
         process_detail_actions_layout.setContentsMargins(0, 0, 0, 0)
         process_detail_actions_layout.addWidget(self.process_detail_label, stretch=1)
+        process_detail_actions_layout.addWidget(self.process_detail_clear_button)
         process_detail_actions_layout.addWidget(self.process_detail_copy_pid_button)
         process_detail_actions_layout.addWidget(self.process_detail_restart_button)
         process_detail_actions_layout.addWidget(self.process_detail_stop_button)
@@ -1292,6 +1358,7 @@ class MainWindow(QMainWindow):
             self.resource_refresh_button: "neutral",
             self.process_detail_button: "neutral",
             self.process_detail_copy_pid_button: "neutral",
+            self.process_detail_clear_button: "neutral",
             self.process_detail_restart_button: "warning",
             self.process_detail_stop_button: "danger",
         }
@@ -1312,9 +1379,15 @@ class MainWindow(QMainWindow):
         self.remote_panel.set_entries(entries)
 
     def show_status(self, message: str) -> None:
-        self.statusBar().showMessage(message)
+        if QThread.currentThread() is not self.thread():
+            self.status_requested.emit(message)
+            return
+        self._show_status_on_ui(message)
 
     @Slot(str)
+    def _show_status_on_ui(self, message: str) -> None:
+        self.statusBar().showMessage(message)
+
     def append_log(
         self,
         message: str,
@@ -1322,6 +1395,14 @@ class MainWindow(QMainWindow):
         category: str | None = None,
         level: str | None = None,
     ) -> None:
+        if QThread.currentThread() is not self.thread():
+            self.log_requested.emit((message, category, level))
+            return
+        self._append_log_on_ui((message, category, level))
+
+    @Slot(object)
+    def _append_log_on_ui(self, payload) -> None:
+        message, category, level = payload
         resolved_category = category or _log_category_for_message(message)
         resolved_level = level or ("error" if resolved_category == "error" else "info")
         entry = self.log_service.append(
@@ -1423,7 +1504,7 @@ class MainWindow(QMainWindow):
         if "Agent" in message:
             self.set_agent_status(False)
             self.resource_install_agent_button.show()
-            self.resource_uninstall_agent_button.show()
+            self.resource_uninstall_agent_button.hide()
         else:
             self.agent_status_label.setText("")
             self.resource_install_agent_button.hide()
@@ -1477,7 +1558,7 @@ class MainWindow(QMainWindow):
             self.resource_install_agent_button.setText(self._text("resource.install_agent"))
             self.resource_install_agent_button.setProperty("buttonRole", "primary")
             self.resource_install_agent_button.show()
-            self.resource_uninstall_agent_button.show()
+            self.resource_uninstall_agent_button.hide()
 
     def set_agent_version(self, version: str | None) -> None:
         self._agent_version = version
@@ -1485,6 +1566,13 @@ class MainWindow(QMainWindow):
             self.set_agent_status(True, version=version)
 
     def set_transfer_items(self, items: list[TransferItem]) -> None:
+        if QThread.currentThread() is not self.thread():
+            self.transfer_items_requested.emit(list(items))
+            return
+        self._set_transfer_items_on_ui(items)
+
+    @Slot(object)
+    def _set_transfer_items_on_ui(self, items) -> None:
         items = list(items)
         self._optimistic_transfer_items = items
         self.transfer_summary_label.setText(_transfer_summary_text(items))
@@ -1594,6 +1682,7 @@ class MainWindow(QMainWindow):
                 if filter_text in str(process.pid).lower()
                 or filter_text in process.user.lower()
                 or filter_text in process.name.lower()
+                or filter_text in getattr(process, "command_line", "").lower()
             ]
         sort_mode = self.process_sort_selector.currentText()
         if sort_mode == "Memory":
@@ -1611,6 +1700,11 @@ class MainWindow(QMainWindow):
             f"status: {detail.status} | threads: {detail.thread_count} | {detail.command_line}"
         )
         self.process_detail_actions.show()
+
+    def clear_process_detail(self) -> None:
+        self._current_process_detail_pid = None
+        self.process_detail_label.setText("")
+        self.process_detail_actions.hide()
 
     def set_site_profiles(self, sites, secret_lookup=None) -> None:
         self.site_profiles = list(sites)
@@ -1686,6 +1780,7 @@ class MainWindow(QMainWindow):
         self.process_detail_stop_button.clicked.connect(self._handle_process_stop_clicked)
         self.process_detail_restart_button.clicked.connect(self._handle_process_restart_clicked)
         self.process_detail_copy_pid_button.clicked.connect(self._handle_process_copy_pid_clicked)
+        self.process_detail_clear_button.clicked.connect(self.clear_process_detail)
         self.disk_partition_selector.currentTextChanged.connect(self._refresh_resource_disk_text)
         self.process_sort_selector.currentTextChanged.connect(self._refresh_process_table)
         self.process_filter_edit.textChanged.connect(self._refresh_process_table)
@@ -1720,6 +1815,9 @@ class MainWindow(QMainWindow):
                 threads.append(thread)
         if self._active_agent_action is not None:
             _label, thread, _worker, _complete = self._active_agent_action
+            if isinstance(thread, QThread) and thread.isRunning():
+                threads.append(thread)
+        for thread, _worker in self._transfer_workers:
             if isinstance(thread, QThread) and thread.isRunning():
                 threads.append(thread)
         return threads
@@ -1839,11 +1937,19 @@ class MainWindow(QMainWindow):
             return
         self.set_remote_entries(result["entries"], result["remote_path"])
         self.set_monitoring_status(result["monitoring_status"])
+        if result.get("agent_version"):
+            self.set_agent_version(result.get("agent_version"))
         for status in result.get("agent_status_sequence", []):
-            self.set_agent_status(status)
+            self.set_agent_status(
+                status,
+                version=result.get("agent_version") if status is True else None,
+            )
         agent_status = result.get("agent_status")
         if agent_status is not None and not result.get("agent_status_sequence"):
-            self.set_agent_status(agent_status)
+            self.set_agent_status(
+                agent_status,
+                version=result.get("agent_version") if agent_status is True else None,
+            )
         for message in result.get("logs", []):
             self.append_log(message)
         snapshot = result.get("resource_snapshot")
@@ -2210,10 +2316,13 @@ class MainWindow(QMainWindow):
                 continue
             remote_path = self._remote_path_from_field() / local_name
             self._append_transfer_preview(local_path, remote_path, Direction.UPLOAD)
-            self.controller.upload_file(
-                local_path,
-                remote_path,
-                conflict_policy=policy,
+            self._start_transfer_operation(
+                f"upload {local_name}",
+                lambda local_path=local_path, remote_path=remote_path, policy=policy: self.controller.upload_file(
+                    local_path,
+                    remote_path,
+                    conflict_policy=policy,
+                ),
             )
 
     def _handle_download_clicked(self) -> None:
@@ -2225,11 +2334,62 @@ class MainWindow(QMainWindow):
             if policy is None:
                 continue
             self._append_transfer_preview(remote_path, local_path, Direction.DOWNLOAD)
-            self.controller.download_file(
-                remote_path,
-                local_path,
-                conflict_policy=policy,
+            self._start_transfer_operation(
+                f"download {remote_name}",
+                lambda remote_path=remote_path, local_path=local_path, policy=policy: self.controller.download_file(
+                    remote_path,
+                    local_path,
+                    conflict_policy=policy,
+                ),
             )
+
+    def _start_transfer_operation(self, label: str, action: Callable[[], None]) -> None:
+        thread = QThread(self)
+        worker = TransferOperationWorker(label, action)
+        worker.moveToThread(thread)
+        self._transfer_workers.append((thread, worker))
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(self._finish_transfer_operation, Qt.ConnectionType.QueuedConnection)
+        worker.failed.connect(self._fail_transfer_operation, Qt.ConnectionType.QueuedConnection)
+        worker.succeeded.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(
+            lambda thread=thread, worker=worker: self._discard_transfer_worker(thread, worker)
+        )
+        thread.finished.connect(worker.deleteLater)
+        thread.start()
+
+    @Slot(str)
+    def _finish_transfer_operation(self, label: str) -> None:
+        self.append_log(f"Transfer {label} finished", category="transfer")
+        self._cleanup_finished_transfer_workers()
+
+    @Slot(str)
+    def _fail_transfer_operation(self, error: str) -> None:
+        self.append_log(f"Transfer failed: {error}", category="error", level="error")
+        self.show_status(f"Transfer failed: {error}")
+        self._cleanup_finished_transfer_workers()
+
+    def _cleanup_finished_transfer_workers(self) -> None:
+        remaining = []
+        for thread, worker in self._transfer_workers:
+            try:
+                is_running = thread.isRunning()
+            except RuntimeError:
+                continue
+            if is_running:
+                remaining.append((thread, worker))
+                continue
+            thread.quit()
+            thread.wait(1000)
+        self._transfer_workers = remaining
+
+    def _discard_transfer_worker(self, thread: QThread, worker: TransferOperationWorker) -> None:
+        self._transfer_workers = [
+            (active_thread, active_worker)
+            for active_thread, active_worker in self._transfer_workers
+            if not (active_thread is thread and active_worker is worker)
+        ]
 
     def _append_transfer_preview(
         self,
@@ -2308,11 +2468,33 @@ class MainWindow(QMainWindow):
 
     def _handle_transfer_settings_changed(self) -> None:
         limit = self.transfer_limit_spin.value()
-        self.transfer_settings = TransferSettings(
-            max_concurrent=self.transfer_concurrency_spin.value(),
-            max_concurrent_per_server=self.transfer_per_server_concurrency_spin.value(),
-            bytes_per_second_limit=limit * 1024 if limit > 0 else None,
+        self.apply_transfer_settings(
+            TransferSettings(
+                max_concurrent=self.transfer_concurrency_spin.value(),
+                max_concurrent_per_server=self.transfer_per_server_concurrency_spin.value(),
+                bytes_per_second_limit=limit * 1024 if limit > 0 else None,
+            )
         )
+
+    def apply_transfer_settings(self, settings: TransferSettings) -> None:
+        self.transfer_settings = settings
+        self.transfer_concurrency_spin.blockSignals(True)
+        self.transfer_per_server_concurrency_spin.blockSignals(True)
+        self.transfer_limit_spin.blockSignals(True)
+        self.transfer_concurrency_spin.setValue(settings.max_concurrent)
+        self.transfer_per_server_concurrency_spin.setValue(
+            settings.max_concurrent_per_server or settings.max_concurrent
+        )
+        self.transfer_limit_spin.setValue(
+            int(settings.bytes_per_second_limit / 1024)
+            if settings.bytes_per_second_limit
+            else 0
+        )
+        self.transfer_concurrency_spin.blockSignals(False)
+        self.transfer_per_server_concurrency_spin.blockSignals(False)
+        self.transfer_limit_spin.blockSignals(False)
+        if hasattr(self.controller, "set_transfer_settings"):
+            self.controller.set_transfer_settings(settings)
 
     def _handle_remote_drop(self, local_paths) -> None:
         for local_path in [Path(path) for path in local_paths]:

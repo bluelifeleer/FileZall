@@ -229,6 +229,16 @@ class FailingProgressAgentController(FakeController):
         raise RuntimeError("sudo password required")
 
 
+class SlowTransferController(FakeController):
+    def __init__(self, delay_seconds: float = 0.2) -> None:
+        super().__init__()
+        self.delay_seconds = delay_seconds
+
+    def upload_file(self, local_path, remote_path, conflict_policy=None) -> None:
+        time.sleep(self.delay_seconds)
+        super().upload_file(local_path, remote_path, conflict_policy=conflict_policy)
+
+
 class FailingConnectController(FakeController):
     def connect(self, site, password=None, remember_secret: bool = True) -> None:
         super().connect(site, password, remember_secret)
@@ -322,6 +332,16 @@ class AsyncConnectController(FakeController):
             "status": "Connected to Production",
             "logs": ["Agent detection started", "Agent service not installed"],
         }
+
+
+class AgentVersionAsyncConnectController(AsyncConnectController):
+    def connect_for_window(self, site, password=None, remember_secret: bool = True):
+        result = super().connect_for_window(site, password=password, remember_secret=remember_secret)
+        result["agent_status"] = True
+        result["agent_status_sequence"] = [None, True]
+        result["agent_version"] = "0.1.0"
+        result["logs"] = ["Agent detection started", "Agent version 0.1.0"]
+        return result
 
 
 class ThreadRecordingWindow(MainWindow):
@@ -568,8 +588,12 @@ def test_settings_menu_opens_dialog_for_theme_language_and_transfer_settings(qtb
     assert window.settings_dialog.isVisible()
     assert window.settings_dialog.theme_selector.currentText() == "System"
     assert window.settings_dialog.language_selector.currentText() == "English"
-    assert window.transfer_concurrency_spin.value() == 4
-    assert window.transfer_per_server_concurrency_spin.value() == 2
+    assert window.transfer_concurrency_label.isHidden()
+    assert window.transfer_concurrency_spin.isHidden()
+    assert window.transfer_per_server_concurrency_label.isHidden()
+    assert window.transfer_per_server_concurrency_spin.isHidden()
+    assert window.transfer_limit_label.isHidden()
+    assert window.transfer_limit_spin.isHidden()
     assert window.settings_dialog.concurrency_spin.value() == 4
     assert window.settings_dialog.per_server_concurrency_spin.value() == 2
 
@@ -585,6 +609,8 @@ def test_settings_menu_opens_dialog_for_theme_language_and_transfer_settings(qtb
     assert window.transfer_settings.max_concurrent == 4
     assert window.transfer_settings.max_concurrent_per_server == 2
     assert window.transfer_settings.bytes_per_second_limit == 256 * 1024
+    assert window.settings_dialog.windowTitle() == "设置"
+    assert window.settings_dialog.language_label.text() == "语言"
 
 
 def test_file_panels_use_full_row_selection_for_actions(qtbot) -> None:
@@ -730,6 +756,7 @@ def test_file_panel_ctrl_a_and_drag_style_multiselect_batch_actions(qtbot, tmp_p
     window.local_panel.table.setRangeSelected(QTableWidgetSelectionRange(1, 0, 2, 3), True)
     window.local_panel.queue_action.trigger()
 
+    qtbot.waitUntil(lambda: len(controller.uploads) == 2, timeout=3000)
     assert controller.uploads == [
         (local_root / "a.txt", PurePosixPath("/home/deploy/a.txt")),
         (local_root / "b.txt", PurePosixPath("/home/deploy/b.txt")),
@@ -772,6 +799,7 @@ def test_context_transfer_actions_upload_and_download_selected_rows(qtbot, tmp_p
     window.remote_panel.table.selectRow(1)
     window.remote_panel.transfer_action.trigger()
 
+    qtbot.waitUntil(lambda: bool(controller.uploads and controller.downloads), timeout=3000)
     assert controller.uploads == [
         (local_root / "upload.txt", PurePosixPath("/home/deploy/upload.txt"))
     ]
@@ -1449,6 +1477,20 @@ def test_main_window_displays_agent_version_when_available(qtbot) -> None:
     window.set_agent_status(True, version="0.1.0")
 
     assert window.agent_status_label.text() == "Agent installed v0.1.0"
+
+
+def test_async_connect_displays_detected_agent_version(qtbot) -> None:
+    controller = AgentVersionAsyncConnectController()
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    window.connection_bar.host_edit.setText("example.com")
+    window.connection_bar.username_edit.setText("deploy")
+    window.connection_bar.secret_edit.setText("secret")
+
+    qtbot.mouseClick(window.connection_bar.connect_button, Qt.MouseButton.LeftButton)
+
+    qtbot.waitUntil(lambda: window.agent_status_label.text() == "Agent installed v0.1.0", timeout=3000)
+    assert window._agent_version == "0.1.0"
 
 
 def test_main_window_marks_outdated_agent_as_update_available(qtbot) -> None:
@@ -2184,7 +2226,7 @@ def test_main_window_updates_agent_status_card(qtbot) -> None:
     assert window.agent_status_card.version_label.text() == "v0.0.1"
     assert window.agent_status_card.primary_button.text() == "Update Agent"
     assert window.agent_status_card.primary_button.property("buttonRole") == "warning"
-    assert window.agent_status_card.danger_button.text() == "Uninstall Agent"
+    assert window.agent_status_card.danger_button.isHidden()
 
 
 def test_resource_agent_install_button_uses_confirmed_install_flow(qtbot) -> None:
@@ -2210,6 +2252,7 @@ def test_resource_agent_uninstall_button_uses_confirmed_flow_and_logs(qtbot) -> 
     )
     qtbot.addWidget(window)
     window.set_monitoring_status("Resource monitoring requires SSH or FileZall Agent.")
+    window.set_agent_status(True)
 
     assert not window.resource_uninstall_agent_button.isHidden()
 
@@ -2335,6 +2378,7 @@ def test_main_window_refresh_upload_and_download_buttons_call_controller(qtbot, 
     qtbot.mouseClick(window.local_panel.action_button, Qt.MouseButton.LeftButton)
     qtbot.mouseClick(window.remote_panel.action_button, Qt.MouseButton.LeftButton)
 
+    qtbot.waitUntil(lambda: bool(controller.uploads and controller.downloads), timeout=3000)
     assert controller.local_refreshes == [local_root]
     assert str(controller.remote_refreshes[0]) == "/home/deploy"
     assert controller.uploads == [(local_root / "app.txt", controller.remote_refreshes[0] / "app.txt")]
@@ -2382,9 +2426,39 @@ def test_upload_prompts_for_conflict_policy(qtbot, tmp_path) -> None:
     window.local_panel.table.selectRow(1)
     qtbot.mouseClick(window.local_panel.action_button, Qt.MouseButton.LeftButton)
 
+    qtbot.waitUntil(lambda: bool(controller.uploads), timeout=3000)
     assert decisions == ["app.txt"]
     assert controller.uploads == [(local_root / "app.txt", PurePosixPath("/home/deploy/app.txt"))]
     assert controller.upload_conflict_policies == [ConflictPolicy.RENAME]
+
+
+def test_upload_runs_in_background_after_transfer_preview(qtbot, tmp_path) -> None:
+    controller = SlowTransferController(delay_seconds=0.2)
+    window = MainWindow(controller=controller)
+    qtbot.addWidget(window)
+    local_root = tmp_path / "local"
+    local_root.mkdir()
+    (local_root / "app.txt").write_text("hello", encoding="utf-8")
+    window.local_panel.path_edit.setText(str(local_root))
+    window.remote_panel.path_edit.setText("/home/deploy")
+    window.local_panel.set_entries(
+        [
+            type(
+                "Entry",
+                (),
+                {"name": "app.txt", "is_dir": False, "size_bytes": 5, "modified_time": None},
+            )(),
+        ]
+    )
+    window.local_panel.table.selectRow(1)
+
+    started = time.monotonic()
+    qtbot.mouseClick(window.local_panel.action_button, Qt.MouseButton.LeftButton)
+
+    assert time.monotonic() - started < 0.1
+    assert window.transfer_table.rowCount() == 1
+    assert window.transfer_table.item(0, 2).text() == "app.txt"
+    qtbot.waitUntil(lambda: bool(controller.uploads), timeout=3000)
 
 
 def test_main_window_renders_transfer_rows_and_queue_action_buttons(qtbot, tmp_path) -> None:
@@ -2598,21 +2672,24 @@ def test_transfer_center_shows_metrics_columns(qtbot, tmp_path) -> None:
     assert window.transfer_table.item(0, 7).text() == "network down"
 
 
-def test_transfer_center_has_concurrency_and_limit_controls(qtbot) -> None:
+def test_transfer_center_keeps_concurrency_and_limit_controls_in_settings(qtbot) -> None:
     window = MainWindow(controller=FakeController())
     qtbot.addWidget(window)
     _use_english(window)
 
-    assert window.transfer_concurrency_label.text() == "Concurrency"
-    assert window.transfer_concurrency_spin.value() == 4
-    assert window.transfer_per_server_concurrency_label.text() == "Per server"
-    assert window.transfer_per_server_concurrency_spin.value() == 2
-    assert window.transfer_limit_label.text() == "Limit KB/s"
-    assert window.transfer_limit_spin.value() == 0
+    assert window.transfer_concurrency_label.isHidden()
+    assert window.transfer_concurrency_spin.isHidden()
+    assert window.transfer_per_server_concurrency_label.isHidden()
+    assert window.transfer_per_server_concurrency_spin.isHidden()
+    assert window.transfer_limit_label.isHidden()
+    assert window.transfer_limit_spin.isHidden()
 
-    window.transfer_concurrency_spin.setValue(4)
-    window.transfer_per_server_concurrency_spin.setValue(2)
-    window.transfer_limit_spin.setValue(512)
+    window.settings_action.trigger()
+    assert window.settings_dialog is not None
+    window.settings_dialog.concurrency_spin.setValue(4)
+    window.settings_dialog.per_server_concurrency_spin.setValue(2)
+    window.settings_dialog.limit_spin.setValue(512)
+    window.settings_dialog.apply_button.click()
 
     assert window.transfer_settings.max_concurrent == 4
     assert window.transfer_settings.max_concurrent_per_server == 2
@@ -2773,6 +2850,7 @@ def test_main_window_renders_resource_snapshot_and_process_detail(qtbot) -> None
                 name="python",
                 cpu_percent=1.5,
                 memory_percent=2.5,
+                command_line="python app.py --port 8000",
             )
         ],
     )
@@ -2800,10 +2878,16 @@ def test_main_window_renders_resource_snapshot_and_process_detail(qtbot) -> None
     assert window.disk_value_label.text() == "/: 24.0 GB / 80.0 GB"
     assert window.network_value_label.text() == "RX 1.5 KB/s, TX 2.0 MB/s"
     assert window.process_table.item(0, 0).text() == "123"
+    assert window.process_table.item(0, 5).text() == "python app.py --port 8000"
     assert controller.resource_refreshes == 1
     assert controller.process_details == [123]
     assert "python app.py" in window.process_detail_label.text()
     assert "threads: 8" in window.process_detail_label.text()
+    assert not window.process_detail_clear_button.isHidden()
+    window.process_detail_clear_button.click()
+    assert window.process_detail_label.text() == ""
+    assert window._current_process_detail_pid is None
+    assert window.process_detail_actions.isHidden()
 
 
 def test_process_table_uses_full_row_activity_and_double_click_loads_detail(qtbot) -> None:
@@ -2816,7 +2900,16 @@ def test_process_table_uses_full_row_activity_and_double_click_loads_detail(qtbo
             memory=MemoryStats(total_bytes=100, used_bytes=50, available_bytes=50),
             disks=[],
             network=NetworkStats(rx_bytes_per_sec=0, tx_bytes_per_sec=0),
-            processes=[ProcessSummary(pid=123, user="deploy", name="python", cpu_percent=1.5, memory_percent=2.5)],
+            processes=[
+                ProcessSummary(
+                    pid=123,
+                    user="deploy",
+                    name="python",
+                    cpu_percent=1.5,
+                    memory_percent=2.5,
+                    command_line="python app.py",
+                )
+            ],
         )
     )
 
@@ -2851,7 +2944,16 @@ def test_process_context_and_detail_actions_stop_restart_and_copy_pid(qtbot) -> 
             memory=MemoryStats(total_bytes=100, used_bytes=50, available_bytes=50),
             disks=[],
             network=NetworkStats(rx_bytes_per_sec=0, tx_bytes_per_sec=0),
-            processes=[ProcessSummary(pid=123, user="deploy", name="python", cpu_percent=1.5, memory_percent=2.5)],
+            processes=[
+                ProcessSummary(
+                    pid=123,
+                    user="deploy",
+                    name="python",
+                    cpu_percent=1.5,
+                    memory_percent=2.5,
+                    command_line="python app.py",
+                )
+            ],
         )
     )
     window.process_table.selectRow(0)

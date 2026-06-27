@@ -93,6 +93,7 @@ class FakeSession:
         self.fail_list = False
         self.disconnect_calls = 0
         self.directory_entries = {}
+        self.remote_sizes = {}
 
     def connect_and_list_default(self, password=None):
         self.password = password
@@ -111,6 +112,9 @@ class FakeSession:
 
     def download_file(self, remote_path: PurePosixPath, local_path: Path) -> None:
         self.downloads.append((remote_path, local_path))
+
+    def remote_size(self, remote_path: PurePosixPath) -> int | None:
+        return self.remote_sizes.get(remote_path)
 
     def rename(self, source_path: PurePosixPath, destination_path: PurePosixPath) -> None:
         self.renames.append((source_path, destination_path))
@@ -644,6 +648,49 @@ def test_controller_upload_file_adds_pending_item_and_updates_transfer_list(
     assert running.status is TransferStatus.RUNNING
     assert completed.status is TransferStatus.COMPLETED
     assert completed.bytes_transferred == 6
+
+
+def test_controller_download_file_adds_pending_item_and_updates_transfer_list(
+    tmp_path: Path,
+) -> None:
+    window = FakeWindow()
+    session = FakeSession()
+    queue = FakeQueue()
+    controller = MainWindowController(
+        window=window,
+        local_lister=lambda path: [],
+        session_factory=lambda site: session,
+        queue_service=queue,
+    )
+    site = SiteProfile(
+        id="site-1",
+        name="Production",
+        host="example.com",
+        port=22,
+        protocol=Protocol.SFTP,
+        username="deploy",
+        auth_mode=AuthMode.PASSWORD,
+        default_remote_path=PurePosixPath("/home/deploy"),
+    )
+
+    controller.connect(site, password="secret")
+    session.remote_sizes[PurePosixPath("/home/deploy/app.log")] = 9
+    controller.download_file(PurePosixPath("/home/deploy/app.log"), tmp_path / "app.log")
+
+    assert session.downloads == []
+    task = queue.saved_tasks[0]
+    pending = window.transfer_item_snapshots[0][0]
+    running = window.transfer_item_snapshots[1][0]
+    completed = window.transfer_item_snapshots[-1][0]
+    assert task.direction is Direction.DOWNLOAD
+    assert task.source_path == PurePosixPath("/home/deploy")
+    assert task.destination_path == tmp_path
+    assert pending.source_path == PurePosixPath("/home/deploy/app.log")
+    assert pending.destination_path == tmp_path / "app.log"
+    assert pending.size_bytes == 9
+    assert pending.status is TransferStatus.PENDING
+    assert running.status is TransferStatus.RUNNING
+    assert completed.status is TransferStatus.COMPLETED
 
 
 def test_controller_queues_recursive_directory_upload(tmp_path: Path) -> None:

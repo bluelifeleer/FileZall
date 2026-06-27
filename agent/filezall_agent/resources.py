@@ -5,6 +5,11 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+try:
+    import pwd
+except ImportError:  # pragma: no cover - Windows test environment.
+    pwd = None
+
 
 class AgentResourceService:
     def __init__(
@@ -32,10 +37,17 @@ class AgentResourceService:
     def processes(self) -> dict:
         if not self._proc_root.exists():
             return {"processes": []}
+        memory_total = self._memory().get("total_bytes", 0)
         rows = []
         for child in self._proc_root.iterdir():
             if child.name.isdigit():
-                rows.append(_summary_from_status(child.name, _read_text(child / "status")))
+                rows.append(
+                    _summary_from_process_dir(
+                        child.name,
+                        child,
+                        memory_total_bytes=memory_total,
+                    )
+                )
         return {"processes": sorted(rows, key=lambda row: row["pid"])}
 
     def process_detail(self, pid: int) -> dict:
@@ -53,10 +65,14 @@ class AgentResourceService:
                 "status": "unknown",
             }
         status = _read_text(process_dir / "status")
-        summary = _summary_from_status(str(pid), status)
+        summary = _summary_from_process_dir(
+            str(pid),
+            process_dir,
+            memory_total_bytes=self._memory().get("total_bytes", 0),
+            status=status,
+        )
         return {
             **summary,
-            "command_line": _read_text(process_dir / "cmdline").replace("\x00", " ").strip(),
             "start_time": "",
             "thread_count": _status_int(status, "Threads"),
             "status": _status_text(status, "State") or "unknown",
@@ -181,13 +197,25 @@ def _cpu_values(line: str) -> list[int]:
     return [int(value) for value in line.split()[1:]]
 
 
-def _summary_from_status(pid: str, status: str) -> dict:
+def _summary_from_process_dir(
+    pid: str,
+    process_dir: Path,
+    *,
+    memory_total_bytes: int,
+    status: str | None = None,
+) -> dict:
+    status = status if status is not None else _read_text(process_dir / "status")
+    rss_bytes = _status_int(status, "VmRSS") * 1024
+    memory_percent = 0.0
+    if memory_total_bytes > 0:
+        memory_percent = round(rss_bytes * 100 / memory_total_bytes, 1)
     return {
         "pid": int(pid),
-        "user": "",
+        "user": _status_user(status),
         "name": _status_text(status, "Name") or "",
         "cpu_percent": 0.0,
-        "memory_percent": 0.0,
+        "memory_percent": memory_percent,
+        "command_line": _command_line(process_dir / "cmdline"),
     }
 
 
@@ -204,6 +232,27 @@ def _status_int(status: str, key: str) -> int:
     if not value:
         return 0
     return int(value.split()[0])
+
+
+def _status_user(status: str) -> str:
+    value = _status_text(status, "Uid")
+    if not value:
+        return ""
+    uid_text = value.split()[0]
+    if pwd is None:
+        return uid_text
+    try:
+        return pwd.getpwuid(int(uid_text)).pw_name
+    except (KeyError, ValueError):
+        return uid_text
+
+
+def _command_line(path: Path) -> str:
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return ""
+    return " ".join(part.decode("utf-8", errors="replace") for part in raw.split(b"\x00") if part)
 
 
 def _read_text(path: Path) -> str:

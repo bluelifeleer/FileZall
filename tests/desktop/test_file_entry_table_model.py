@@ -31,9 +31,28 @@ def test_file_entry_table_model_handles_large_directory_without_widget_items(qtb
     assert model.data(model.index(10_000, 0), Qt.ItemDataRole.DisplayRole) == "file-9999.txt"
     assert model.data(model.index(10_000, 1), Qt.ItemDataRole.DisplayRole) == "9999"
     assert model.data(model.index(10_000, 2), Qt.ItemDataRole.DisplayRole) == "File"
-    assert model.data(model.index(10_000, 3), Qt.ItemDataRole.DisplayRole) == "2026-06-27T00:00:00+00:00"
+    assert model.data(model.index(10_000, 3), Qt.ItemDataRole.DisplayRole) == "2026-06-27 00:00:00 UTC+00:00"
     assert model.data(model.index(10_000, 0), ICON_KEY_ROLE) == "file-text"
     assert model.data(model.index(10_000, 1), ICON_KEY_ROLE) is None
+
+
+def test_file_entry_table_model_adds_timezone_for_naive_modified_times(qtbot) -> None:
+    model = FileEntryTableModel()
+    model.set_entries(
+        [
+            LocalFileEntry(
+                path=Path("C:/data/app.log"),
+                name="app.log",
+                is_dir=False,
+                size_bytes=1,
+                modified_time=datetime(2026, 6, 27, 8, 30, 15),
+            )
+        ]
+    )
+
+    value = model.data(model.index(1, 3), Qt.ItemDataRole.DisplayRole)
+
+    assert value.startswith("2026-06-27 08:30:15 UTC")
 
 
 def test_file_panel_keeps_virtual_entry_model_in_sync_for_large_directories(qtbot) -> None:

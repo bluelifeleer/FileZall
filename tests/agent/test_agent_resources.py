@@ -112,6 +112,29 @@ def test_agent_resource_service_reports_network_rates_between_samples(tmp_path: 
     assert snapshot["network"] == {"rx_bytes_per_sec": 1000, "tx_bytes_per_sec": 2500}
 
 
+def test_agent_resource_service_processes_include_user_memory_and_command(tmp_path: Path) -> None:
+    proc_root = tmp_path / "proc"
+    process_dir = proc_root / "123"
+    process_dir.mkdir(parents=True)
+    (proc_root / "meminfo").write_text("MemTotal: 1000 kB\nMemAvailable: 500 kB\n", encoding="utf-8")
+    (process_dir / "status").write_text(
+        "Name:\tpython\nUid:\t0\t0\t0\t0\nVmRSS:\t100 kB\nThreads:\t4\nState:\tS (sleeping)\n",
+        encoding="utf-8",
+    )
+    (process_dir / "cmdline").write_bytes(b"python\x00app.py\x00--port\x008000\x00")
+    service = AgentResourceService(proc_root=proc_root)
+
+    summary = service.processes()["processes"][0]
+    detail = service.process_detail(123)
+
+    assert summary["user"] in {"root", "0"}
+    assert summary["name"] == "python"
+    assert summary["memory_percent"] == 10.0
+    assert summary["command_line"] == "python app.py --port 8000"
+    assert detail["thread_count"] == 4
+    assert detail["command_line"] == "python app.py --port 8000"
+
+
 def _net_dev(*, rx: int, tx: int) -> str:
     return f"""
 Inter-|   Receive                                                |  Transmit

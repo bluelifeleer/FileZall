@@ -229,6 +229,13 @@ class MainWindowController:
         local_path: Path,
         conflict_policy: ConflictPolicy = ConflictPolicy.OVERWRITE,
     ) -> None:
+        if self._queue_service is not None and self._connected_site is not None:
+            self._queue_download_file(
+                remote_path,
+                local_path,
+                conflict_policy=conflict_policy,
+            )
+            return
         self._require_session().download_file(remote_path, local_path)
         self._invalidate_remote_directory_cache_for(remote_path.parent)
         self._window.show_status(f"Downloaded {remote_path.name}")
@@ -343,6 +350,52 @@ class MainWindowController:
         self._window.show_status(f"Uploaded {local_path.name}")
         self._log(f"Uploaded {local_path} to {remote_path}")
 
+    def _queue_download_file(
+        self,
+        remote_path: PurePosixPath,
+        local_path: Path,
+        conflict_policy: ConflictPolicy,
+    ) -> None:
+        site = self._require_connected_site()
+        task = TransferTask(
+            id=f"task-{uuid4()}",
+            server_id=site.id,
+            direction=Direction.DOWNLOAD,
+            source_path=remote_path.parent,
+            destination_path=local_path.parent,
+            protocol=site.protocol,
+            conflict_policy=conflict_policy,
+        )
+        session = self._require_session()
+        client = getattr(session, "client", None)
+        remote_size = 0
+        if client is not None and hasattr(client, "remote_size"):
+            remote_size = client.remote_size(remote_path) or 0
+        item = task.create_item(
+            item_id=f"item-{uuid4()}",
+            relative_path=PurePosixPath(remote_path.name),
+            size_bytes=remote_size,
+        )
+        queue = self._require_queue()
+        queue.add_task(task, [item])
+        self._publish_transfer_items(site.id)
+        self._window.show_status(f"Queued download {remote_path.name}")
+        self._log(f"Queued download {remote_path} -> {local_path}")
+        if client is None:
+            queue.run_next(
+                site.id,
+                progress_callback=lambda _item: self._publish_transfer_items(site.id),
+            )
+        else:
+            queue.run_next(
+                site.id,
+                client=client,
+                progress_callback=lambda _item: self._publish_transfer_items(site.id),
+            )
+        self._publish_transfer_items(site.id)
+        self._window.show_status(f"Downloaded {remote_path.name}")
+        self._log(f"Downloaded {remote_path} to {local_path}")
+
     def _publish_transfer_items(self, server_id: str | None = None) -> None:
         if not hasattr(self._window, "set_transfer_items"):
             return
@@ -352,6 +405,10 @@ class MainWindowController:
         self._window.set_transfer_items(
             self._queue_service.list_items(server_id=server_id),
         )
+
+    def set_transfer_settings(self, settings) -> None:
+        if self._queue_service is not None and hasattr(self._queue_service, "settings"):
+            self._queue_service.settings = settings
 
     def create_directory(self, path: Path | PurePosixPath, remote: bool) -> None:
         if remote:

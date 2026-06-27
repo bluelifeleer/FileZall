@@ -97,6 +97,7 @@ def _process_summary_from_json(payload: dict[str, Any]) -> ProcessSummary:
         name=str(payload["name"]),
         cpu_percent=float(payload["cpu_percent"]),
         memory_percent=float(payload["memory_percent"]),
+        command_line=str(payload.get("command_line") or ""),
     )
 
 

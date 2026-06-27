@@ -36,6 +36,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from filezall_core.time_format import format_display_time
+
 
 class ConnectionBar(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -563,7 +565,7 @@ class ProcessTableModel(QAbstractTableModel):
         headers: list[str] | None = None,
     ) -> None:
         super().__init__(parent)
-        self._headers = headers or ["PID", "User", "Name", "CPU", "Memory"]
+        self._headers = headers or ["PID", "User", "Name", "CPU", "Memory", "Command"]
         self._processes = []
 
     def set_headers(self, headers: list[str]) -> None:
@@ -584,7 +586,7 @@ class ProcessTableModel(QAbstractTableModel):
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
         if parent.isValid():
             return 0
-        return 5
+        return 6
 
     def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
@@ -604,6 +606,8 @@ class ProcessTableModel(QAbstractTableModel):
                 return f"{process.cpu_percent:.1f}%"
             if column == 4:
                 return f"{process.memory_percent:.1f}%"
+            if column == 5:
+                return getattr(process, "command_line", "")
         if role == Qt.ItemDataRole.UserRole:
             return process.pid
         return None
@@ -900,7 +904,7 @@ class FilePanel(QWidget):
 
 
 def _format_time(value: datetime | None) -> str:
-    return value.isoformat(timespec="seconds") if value else ""
+    return format_display_time(value)
 
 
 _ROW_KIND_ROLE = Qt.ItemDataRole.UserRole + 1

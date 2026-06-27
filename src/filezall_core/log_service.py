@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from filezall_core.redaction import redact_sensitive
+from filezall_core.time_format import format_display_time
 
 
 @dataclass(frozen=True)
@@ -20,7 +21,7 @@ class LogRecord:
 
     def format(self) -> str:
         return (
-            f"{self.timestamp.isoformat(timespec='seconds')} "
+            f"{format_display_time(self.timestamp)} "
             f"[{self.category}] [{self.level}] {self.message}"
         )
 
