@@ -2346,6 +2346,15 @@ def test_main_window_renders_transfer_rows_and_queue_action_buttons(qtbot, tmp_p
     assert controller.retried == ["task-1"]
 
 
+def test_transfer_table_uses_model_view_for_large_queue_rendering(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    assert isinstance(window.transfer_table, QTableView)
+    assert not isinstance(window.transfer_table, QTableWidget)
+    assert window.transfer_table.model() is window.transfer_model
+
+
 def test_direct_upload_and_download_show_immediate_transfer_progress_rows(qtbot, tmp_path) -> None:
     controller = FakeController()
     window = MainWindow(controller=controller)

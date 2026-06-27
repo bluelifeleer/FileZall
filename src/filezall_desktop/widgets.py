@@ -14,7 +14,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QAction, QBrush, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -193,6 +193,10 @@ class VirtualTableItem:
     def icon(self) -> QIcon:
         value = self._model.data(self._index, Qt.ItemDataRole.DecorationRole)
         return value if isinstance(value, QIcon) else QIcon()
+
+    def background(self) -> QBrush:
+        value = self._model.data(self._index, Qt.ItemDataRole.BackgroundRole)
+        return value if isinstance(value, QBrush) else QBrush()
 
 
 class HoverRowTableView(QTableView):

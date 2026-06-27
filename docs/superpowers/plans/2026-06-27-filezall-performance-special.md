@@ -593,3 +593,47 @@ Expected: tests pass and the generated report contains `baseline.comparison`.
   `QTableWidget` to `QTableView + model`.
 - Add repeated resource-refresh and long-log-stream smoke scenarios if UI stalls are
   observed outside file and transfer tables.
+
+## Immediate Task 14: Transfer Center Model/View Virtualization
+
+**Files:**
+- Modify: `src/filezall_desktop/main_window.py`
+- Modify: `src/filezall_desktop/widgets.py`
+- Modify: `tests/desktop/test_main_window.py`
+
+- [x] **Step 1: Write failing transfer table migration test**
+
+Add a desktop test requiring the transfer center table to use a model-backed
+`QTableView` instead of `QTableWidget`, while preserving the public compatibility
+methods used by existing desktop tests.
+
+- [x] **Step 2: Add transfer table model**
+
+Create `TransferTableModel` for server, direction, file, progress, speed, remaining,
+retry count, failure reason, and status columns. Preserve the task-id `UserRole` used
+by pause/resume/cancel/retry actions.
+
+- [x] **Step 3: Preserve retry countdown and status colors**
+
+Move retry countdown rendering into model data and refresh only the status column on
+timer ticks. Add virtual-item background compatibility so existing status color checks
+continue to work.
+
+- [x] **Step 4: Run targeted verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py -k "transfer_table or transfer_center or transfer_retry or direct_upload" -vv
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_performance_smoke.py -vv
+```
+
+Expected: transfer rendering, action buttons, retry countdown, status color, and
+performance smoke tests pass with the model/view table.
+
+## Next Milestone Target
+
+- Add repeated resource-refresh and long-log-stream smoke scenarios to widen
+  performance coverage beyond file and transfer tables.
+- Start remote directory caching and explicit invalidation if real-server navigation
+  still feels slow after UI-side table virtualization.

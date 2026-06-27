@@ -5,8 +5,20 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QActionGroup, QColor, QKeySequence, QPainter, QPen, QShortcut
+from PySide6.QtCore import (
+    QAbstractTableModel,
+    QEvent,
+    QModelIndex,
+    QObject,
+    QPoint,
+    QRect,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
+    Slot,
+)
+from PySide6.QtGui import QActionGroup, QBrush, QColor, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -28,8 +40,6 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QStatusBar,
-    QTableWidget,
-    QTableWidgetItem,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -1001,10 +1011,20 @@ class MainWindow(QMainWindow):
 
         transfer_widget = QWidget(self.main_splitter)
         transfer_layout = QVBoxLayout(transfer_widget)
-        self.transfer_table = QTableWidget(0, 9, transfer_widget)
+        self.transfer_model = TransferTableModel(
+            transfer_widget,
+            clock=lambda: self.transfer_status_clock(),
+        )
+        self.transfer_table = HoverRowTableView(transfer_widget)
+        self.transfer_table.setModel(self.transfer_model)
         self.transfer_table.setHorizontalHeaderLabels(
             _transfer_headers()
         )
+        self.transfer_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.transfer_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.transfer_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.transfer_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.transfer_table.horizontalHeader().setStretchLastSection(True)
         self.log_viewer = LogViewer(
             transfer_widget,
             export_logs_callback=self._export_logs,
@@ -1462,24 +1482,7 @@ class MainWindow(QMainWindow):
 
     def _render_transfer_items(self, items: list[TransferItem]) -> None:
         self._rendered_transfer_items = list(items)
-        self.transfer_table.setRowCount(len(items))
-        for row, item in enumerate(items):
-            server_cell = QTableWidgetItem(item.server_id)
-            server_cell.setData(Qt.ItemDataRole.UserRole, item.task_id)
-            self.transfer_table.setItem(row, 0, server_cell)
-            self.transfer_table.setItem(row, 1, QTableWidgetItem(item.direction.value))
-            self.transfer_table.setItem(row, 2, QTableWidgetItem(_path_name(item.destination_path)))
-            self.transfer_table.setItem(row, 3, QTableWidgetItem(_progress_text(item)))
-            self.transfer_table.setItem(row, 4, QTableWidgetItem(_speed_text(item)))
-            self.transfer_table.setItem(row, 5, QTableWidgetItem(_remaining_text(item)))
-            self.transfer_table.setItem(row, 6, QTableWidgetItem(str(item.retry_count)))
-            self.transfer_table.setItem(row, 7, QTableWidgetItem(item.failure_reason or item.last_error or ""))
-            self.transfer_table.setItem(
-                row,
-                8,
-                QTableWidgetItem(_transfer_status_text(item, now=self.transfer_status_clock())),
-            )
-            _apply_transfer_row_style(self.transfer_table, row, item.status)
+        self.transfer_model.set_items(items)
         self._sync_transfer_retry_countdown_timer()
 
     def _refresh_transfer_retry_countdowns(self) -> None:
@@ -1487,10 +1490,7 @@ class MainWindow(QMainWindow):
             self.transfer_retry_countdown_timer.stop()
             return
         now = self.transfer_status_clock()
-        for row, item in enumerate(self._rendered_transfer_items):
-            status_item = self.transfer_table.item(row, 8)
-            if status_item is not None:
-                status_item.setText(_transfer_status_text(item, now=now))
+        self.transfer_model.refresh_statuses()
         self._sync_transfer_retry_countdown_timer(now=now)
 
     def _sync_transfer_retry_countdown_timer(self, now: datetime | None = None) -> None:
@@ -2678,11 +2678,107 @@ def _transfer_render_key(item: TransferItem) -> tuple[str, str]:
     return (item.task_id, item.id)
 
 
-def _apply_transfer_row_style(
-    table: QTableWidget,
-    row: int,
-    status: TransferStatus,
-) -> None:
+class TransferTableModel(QAbstractTableModel):
+    def __init__(
+        self,
+        parent=None,
+        *,
+        headers: list[str] | None = None,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._headers = headers or _transfer_headers()
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self._items: list[TransferItem] = []
+
+    def set_headers(self, headers: list[str]) -> None:
+        self.beginResetModel()
+        self._headers = headers
+        self.endResetModel()
+
+    def set_items(self, items: list[TransferItem]) -> None:
+        self.beginResetModel()
+        self._items = list(items)
+        self.endResetModel()
+
+    def refresh_statuses(self) -> None:
+        if not self._items:
+            return
+        first = self.index(0, 8)
+        last = self.index(len(self._items) - 1, 8)
+        self.dataChanged.emit(first, last, [Qt.ItemDataRole.DisplayRole])
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        if parent.isValid():
+            return 0
+        return len(self._items)
+
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        if parent.isValid():
+            return 0
+        return 9
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        item = self._item_at(index.row())
+        if item is None:
+            return None
+        if role == Qt.ItemDataRole.DisplayRole:
+            return self._display_text(item, index.column())
+        if role == Qt.ItemDataRole.UserRole:
+            return item.task_id
+        if role == Qt.ItemDataRole.BackgroundRole:
+            return QBrush(_transfer_status_color(item.status))
+        return None
+
+    def headerData(
+        self,
+        section: int,
+        orientation: Qt.Orientation,
+        role: int = Qt.ItemDataRole.DisplayRole,
+    ):
+        if (
+            orientation == Qt.Orientation.Horizontal
+            and role == Qt.ItemDataRole.DisplayRole
+            and 0 <= section < len(self._headers)
+        ):
+            return self._headers[section]
+        return super().headerData(section, orientation, role)
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        if not index.isValid():
+            return Qt.ItemFlag.NoItemFlags
+        return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+
+    def _display_text(self, item: TransferItem, column: int) -> str:
+        if column == 0:
+            return item.server_id
+        if column == 1:
+            return item.direction.value
+        if column == 2:
+            return _path_name(item.destination_path)
+        if column == 3:
+            return _progress_text(item)
+        if column == 4:
+            return _speed_text(item)
+        if column == 5:
+            return _remaining_text(item)
+        if column == 6:
+            return str(item.retry_count)
+        if column == 7:
+            return item.failure_reason or item.last_error or ""
+        if column == 8:
+            return _transfer_status_text(item, now=self._clock())
+        return ""
+
+    def _item_at(self, row: int) -> TransferItem | None:
+        if 0 <= row < len(self._items):
+            return self._items[row]
+        return None
+
+
+def _transfer_status_color(status: TransferStatus) -> QColor:
     colors = {
         TransferStatus.PENDING: QColor("#334155"),
         TransferStatus.RUNNING: QColor("#1d4ed8"),
@@ -2692,13 +2788,7 @@ def _apply_transfer_row_style(
         TransferStatus.COMPLETED: QColor("#166534"),
         TransferStatus.CANCELED: QColor("#475569"),
     }
-    color = colors.get(status)
-    if color is None:
-        return
-    for column in range(table.columnCount()):
-        item = table.item(row, column)
-        if item is not None:
-            item.setBackground(color)
+    return colors.get(status, QColor("#334155"))
 
 
 def _transfer_summary_text(items: list[TransferItem]) -> str:
