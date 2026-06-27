@@ -55,3 +55,4 @@ def test_transfer_tables_include_metadata_columns(tmp_path: Path) -> None:
     assert "created_time" in task_columns
     assert "modified_time" in item_columns
     assert "checksum" in item_columns
+    assert "next_retry_at" in item_columns

@@ -98,6 +98,7 @@ class TransferItem:
     bytes_per_second: float = 0.0
     remaining_seconds: float | None = None
     failure_reason: str | None = None
+    next_retry_at: datetime | None = None
 
     def with_progress(self, bytes_transferred: int) -> TransferItem:
         next_status = (

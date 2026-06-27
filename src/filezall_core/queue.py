@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 from filezall_core.models import TransferItem, TransferStatus, TransferTask
 from filezall_core.protocols import RemoteFileClient
@@ -18,6 +19,7 @@ class TransferQueue:
         client_factory: Callable[[str], RemoteFileClient],
         settings: TransferSettings | None = None,
         max_attempts: int = 3,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.repository = repository
         self._runner = runner
@@ -26,6 +28,7 @@ class TransferQueue:
         self._running_count = 0
         self._running_count_by_server: dict[str, int] = defaultdict(int)
         self._max_attempts = max_attempts
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     def add_task(self, task: TransferTask, items: list[TransferItem]) -> None:
         self.repository.save_task(task, items)
@@ -63,6 +66,7 @@ class TransferQueue:
                     TransferStatus.PENDING,
                     last_error=None,
                     failure_reason=None,
+                    next_retry_at=None,
                     retry_count=item.retry_count + 1,
                 )
 
@@ -95,7 +99,7 @@ class TransferQueue:
         client: RemoteFileClient | None = None,
         progress_callback: Callable[[TransferItem], None] | None = None,
     ) -> TransferItem | None:
-        for item in self.repository.list_all_items(status=TransferStatus.PENDING):
+        for item in self._ready_items():
             if item.server_id == server_id:
                 if not self.reserve_slot(server_id):
                     return None
@@ -116,34 +120,47 @@ class TransferQueue:
         transfer_client: RemoteFileClient,
         progress_callback: Callable[[TransferItem], None] | None = None,
     ) -> TransferItem:
-        current = item
-        for attempt in range(1, self._max_attempts + 1):
-            try:
-                return self._runner.run_item(
-                    current,
-                    transfer_client,
-                    progress_callback=progress_callback,
-                )
-            except Exception as exc:
-                reason = str(exc)
-                status = (
-                    TransferStatus.FAILED
-                    if attempt >= self._max_attempts
-                    else TransferStatus.RETRYING
-                )
-                self.repository.update_item_state(
-                    current.id,
-                    status,
-                    last_error=reason,
-                    retry_count=attempt,
-                    failure_reason=reason,
-                )
-                current = self.repository.get_item(current.id) or current
-                if progress_callback is not None:
-                    progress_callback(current)
-                if status is TransferStatus.FAILED:
-                    return current
-        return current
+        try:
+            return self._runner.run_item(
+                item,
+                transfer_client,
+                progress_callback=progress_callback,
+            )
+        except Exception as exc:
+            reason = str(exc)
+            retry_count = item.retry_count + 1
+            status = (
+                TransferStatus.FAILED
+                if retry_count >= self._max_attempts
+                else TransferStatus.RETRYING
+            )
+            next_retry_at = (
+                None
+                if status is TransferStatus.FAILED
+                else self._clock() + timedelta(seconds=2**retry_count)
+            )
+            self.repository.update_item_state(
+                item.id,
+                status,
+                last_error=reason,
+                retry_count=retry_count,
+                failure_reason=reason,
+                next_retry_at=next_retry_at,
+            )
+            current = self.repository.get_item(item.id) or item
+            if progress_callback is not None:
+                progress_callback(current)
+            return current
 
     def recover_pending(self) -> list[TransferItem]:
         return self.repository.list_recoverable_items()
+
+    def _ready_items(self) -> list[TransferItem]:
+        now = self._clock()
+        pending = self.repository.list_all_items(status=TransferStatus.PENDING)
+        retrying = [
+            item
+            for item in self.repository.list_all_items(status=TransferStatus.RETRYING)
+            if item.next_retry_at is None or item.next_retry_at <= now
+        ]
+        return [*pending, *retrying]

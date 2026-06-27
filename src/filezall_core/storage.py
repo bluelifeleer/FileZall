@@ -76,6 +76,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             bytes_per_second real not null default 0,
             remaining_seconds real,
             failure_reason text,
+            next_retry_at text,
             protocol text not null,
             created_at text not null default current_timestamp,
             updated_at text not null default current_timestamp
@@ -93,6 +94,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     _ensure_column(connection, "transfer_items", "bytes_per_second", "real not null default 0")
     _ensure_column(connection, "transfer_items", "remaining_seconds", "real")
     _ensure_column(connection, "transfer_items", "failure_reason", "text")
+    _ensure_column(connection, "transfer_items", "next_retry_at", "text")
 
 
 def _record_schema_version(connection: sqlite3.Connection) -> None:

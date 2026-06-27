@@ -50,10 +50,10 @@ class TransferRepository:
                     id, task_id, server_id, direction, source_path, destination_path,
                     temporary_path, size_bytes, modified_time, checksum,
                     bytes_transferred, status, retry_count, last_error,
-                    started_at, bytes_per_second, remaining_seconds, failure_reason, protocol,
-                    updated_at
+                    started_at, bytes_per_second, remaining_seconds, failure_reason,
+                    next_retry_at, protocol, updated_at
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
                 on conflict(id) do update set
                     task_id = excluded.task_id,
                     server_id = excluded.server_id,
@@ -72,6 +72,7 @@ class TransferRepository:
                     bytes_per_second = excluded.bytes_per_second,
                     remaining_seconds = excluded.remaining_seconds,
                     failure_reason = excluded.failure_reason,
+                    next_retry_at = excluded.next_retry_at,
                     protocol = excluded.protocol,
                     updated_at = current_timestamp
                 """,
@@ -142,6 +143,7 @@ class TransferRepository:
         bytes_per_second: float | None = None,
         remaining_seconds: float | None = None,
         failure_reason: str | None = None,
+        next_retry_at: datetime | None = None,
     ) -> None:
         with sqlite3.connect(self._database_path) as connection:
             connection.execute(
@@ -154,6 +156,7 @@ class TransferRepository:
                     bytes_per_second = coalesce(?, bytes_per_second),
                     remaining_seconds = ?,
                     failure_reason = ?,
+                    next_retry_at = ?,
                     updated_at = coalesce(?, current_timestamp)
                 where id = ?
                 """,
@@ -165,6 +168,7 @@ class TransferRepository:
                     bytes_per_second,
                     remaining_seconds,
                     failure_reason,
+                    next_retry_at.isoformat() if next_retry_at else None,
                     updated_at.isoformat() if updated_at else None,
                     item_id,
                 ),
@@ -178,6 +182,7 @@ class TransferRepository:
         last_error: str | None | object = _UNCHANGED,
         retry_count: int | None = None,
         failure_reason: str | None | object = _UNCHANGED,
+        next_retry_at: datetime | None | object = _UNCHANGED,
     ) -> None:
         item = self.get_item(item_id)
         if item is None:
@@ -186,6 +191,7 @@ class TransferRepository:
         next_failure_reason = (
             item.failure_reason if failure_reason is _UNCHANGED else failure_reason
         )
+        next_retry_at_value = item.next_retry_at if next_retry_at is _UNCHANGED else next_retry_at
         next_retry_count = item.retry_count if retry_count is None else retry_count
         with sqlite3.connect(self._database_path) as connection:
             connection.execute(
@@ -195,10 +201,18 @@ class TransferRepository:
                     last_error = ?,
                     retry_count = ?,
                     failure_reason = ?,
+                    next_retry_at = ?,
                     updated_at = current_timestamp
                 where id = ?
                 """,
-                (status.value, next_error, next_retry_count, next_failure_reason, item_id),
+                (
+                    status.value,
+                    next_error,
+                    next_retry_count,
+                    next_failure_reason,
+                    next_retry_at_value.isoformat() if next_retry_at_value else None,
+                    item_id,
+                ),
             )
             connection.commit()
 
@@ -208,7 +222,8 @@ class TransferRepository:
             select id, task_id, server_id, direction, source_path, destination_path,
                    temporary_path, size_bytes, modified_time, checksum,
                    bytes_transferred, status, retry_count, last_error, protocol,
-                   started_at, updated_at, bytes_per_second, remaining_seconds, failure_reason
+                   started_at, updated_at, bytes_per_second, remaining_seconds,
+                   failure_reason, next_retry_at
             from transfer_items
             {where_clause}
         """
@@ -248,6 +263,7 @@ class TransferRepository:
             item.bytes_per_second,
             item.remaining_seconds,
             item.failure_reason,
+            item.next_retry_at.isoformat() if item.next_retry_at else None,
             item.protocol.value,
         )
 
@@ -290,6 +306,7 @@ class TransferRepository:
             bytes_per_second=float(row[17] or 0),
             remaining_seconds=float(row[18]) if row[18] is not None else None,
             failure_reason=str(row[19]) if row[19] else None,
+            next_retry_at=datetime.fromisoformat(str(row[20])) if row[20] else None,
         )
 
 

@@ -1419,7 +1419,7 @@ class MainWindow(QMainWindow):
             self.transfer_table.setItem(row, 5, QTableWidgetItem(_remaining_text(item)))
             self.transfer_table.setItem(row, 6, QTableWidgetItem(str(item.retry_count)))
             self.transfer_table.setItem(row, 7, QTableWidgetItem(item.failure_reason or item.last_error or ""))
-            self.transfer_table.setItem(row, 8, QTableWidgetItem(_status_text(item.status)))
+            self.transfer_table.setItem(row, 8, QTableWidgetItem(_transfer_status_text(item)))
             _apply_transfer_row_style(self.transfer_table, row, item.status)
 
     def set_resource_snapshot(self, snapshot: ResourceSnapshot) -> None:
@@ -2568,6 +2568,12 @@ def _remaining_text(item: TransferItem) -> str:
 
 def _status_text(status: TransferStatus) -> str:
     return status.value.replace("_", " ").title()
+
+
+def _transfer_status_text(item: TransferItem) -> str:
+    if item.status is TransferStatus.RETRYING and item.next_retry_at is not None:
+        return f"Retrying at {item.next_retry_at.isoformat(timespec='seconds')}"
+    return _status_text(item.status)
 
 
 def _is_terminal_transfer_status(status: TransferStatus) -> bool:

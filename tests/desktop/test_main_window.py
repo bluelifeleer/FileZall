@@ -2498,6 +2498,30 @@ def test_transfer_center_renders_retry_and_failure_reason(qtbot, tmp_path) -> No
     assert window.transfer_table.item(0, 8).background().color().isValid()
 
 
+def test_transfer_center_shows_next_retry_time(qtbot, tmp_path) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+    item = TransferItem(
+        id="item-1",
+        task_id="task-1",
+        server_id="site-1",
+        direction=Direction.UPLOAD,
+        source_path=tmp_path / "app.zip",
+        destination_path=PurePosixPath("/home/deploy/app.zip"),
+        temporary_path=PurePosixPath("/home/deploy/.filezall.app.zip.part"),
+        size_bytes=100,
+        protocol=Protocol.SFTP,
+        status=TransferStatus.RETRYING,
+        retry_count=1,
+        failure_reason="network down",
+        next_retry_at=datetime(2026, 6, 27, 12, 0, 2, tzinfo=UTC),
+    )
+
+    window.set_transfer_items([item])
+
+    assert window.transfer_table.item(0, 8).text() == "Retrying at 2026-06-27T12:00:02+00:00"
+
+
 def test_dragging_local_files_to_remote_queues_upload(qtbot, tmp_path) -> None:
     controller = FakeController()
     window = MainWindow(controller=controller)

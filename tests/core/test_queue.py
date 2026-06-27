@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
 
 from filezall_core.models import ConflictPolicy, Direction, Protocol, TransferStatus, TransferTask
@@ -181,19 +182,31 @@ def test_queue_limits_concurrency_per_server_without_blocking_other_servers(
     queue.release_slot("site-1")
 
 
-def test_queue_records_retry_state_and_failure_reason(tmp_path: Path) -> None:
+def test_queue_records_retry_backoff_state_and_waits_until_due(tmp_path: Path) -> None:
     database = tmp_path / "filezall.sqlite3"
     initialize_database(database)
     repository = TransferRepository(database)
+    now = datetime(2026, 6, 27, 12, 0, tzinfo=UTC)
+    clock = StepClock(now)
 
-    class FailingClient(FakeRemoteClient):
+    class FailsOnceClient(FakeRemoteClient):
+        def __init__(self) -> None:
+            super().__init__(entries={}, home=PurePosixPath("/home/deploy"))
+            self.failures_remaining = 1
+
         def upload_file_range(self, *args, **kwargs) -> None:
-            raise RuntimeError("network down")
+            if self.failures_remaining:
+                self.failures_remaining -= 1
+                raise RuntimeError("network down")
+            super().upload_file_range(*args, **kwargs)
+
+    client = FailsOnceClient()
 
     queue = TransferQueue(
         repository=repository,
         runner=TransferRunner(repository),
-        client_factory=lambda _server_id: FailingClient(entries={}, home=PurePosixPath("/home/deploy")),
+        client_factory=lambda _server_id: client,
+        clock=clock,
     )
     task = _upload_task(tmp_path)
     local_file = tmp_path / "app.zip"
@@ -204,10 +217,31 @@ def test_queue_records_retry_state_and_failure_reason(tmp_path: Path) -> None:
     result = queue.run_next("site-1")
 
     assert result is not None
-    assert result.status is TransferStatus.FAILED
-    assert result.retry_count == 3
+    assert result.status is TransferStatus.RETRYING
+    assert result.retry_count == 1
     assert result.failure_reason == "network down"
     assert result.last_error == "network down"
+    assert result.next_retry_at == now + timedelta(seconds=2)
+
+    assert queue.run_next("site-1") is None
+
+    clock.advance(seconds=2)
+    completed = queue.run_next("site-1")
+
+    assert completed is not None
+    assert completed.status is TransferStatus.COMPLETED
+    assert completed.next_retry_at is None
+
+
+class StepClock:
+    def __init__(self, value: datetime) -> None:
+        self.value = value
+
+    def __call__(self) -> datetime:
+        return self.value
+
+    def advance(self, *, seconds: int) -> None:
+        self.value += timedelta(seconds=seconds)
 
 
 def _queue(

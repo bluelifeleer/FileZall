@@ -290,3 +290,52 @@ Expected: all tests pass except the environment-gated live SFTP skip.
 
 - Add retry backoff metadata so retrying transfers expose next-attempt timing instead of immediately looping without user-visible timing.
 - Tighten pause/resume/cancel state transitions for in-flight items if the transfer runner becomes asynchronous.
+
+## Immediate Task 7: Retry Backoff Timing
+
+**Files:**
+- Modify: `src/filezall_core/models.py`
+- Modify: `src/filezall_core/storage.py`
+- Modify: `src/filezall_core/transfer_repository.py`
+- Modify: `src/filezall_core/queue.py`
+- Modify: `src/filezall_desktop/main_window.py`
+- Modify: `tests/core/test_queue.py`
+- Modify: `tests/core/test_storage.py`
+- Modify: `tests/desktop/test_main_window.py`
+
+- [x] **Step 1: Write failing retry backoff test**
+
+Add a queue test with a controlled clock and a client that fails once. Verify the first failure becomes `RETRYING`, stores `next_retry_at`, does not immediately run before that time, and succeeds once the clock reaches the retry time.
+
+- [x] **Step 2: Persist retry timing**
+
+Add `TransferItem.next_retry_at`, create/migrate the `transfer_items.next_retry_at` column, and include it in repository save/select/update mapping.
+
+- [x] **Step 3: Change retry execution semantics**
+
+Replace immediate in-call retry loops with one attempt per scheduler call. Failed attempts below `max_attempts` move to `RETRYING` with exponential backoff timing. Due retrying items become eligible for `run_next()`.
+
+- [x] **Step 4: Clear retry timing on progress and manual retry**
+
+Running/completed progress writes clear `next_retry_at`. Manual retry resets the status to pending and clears retry timing.
+
+- [x] **Step 5: Show retry timing in UI**
+
+When a transfer row is `RETRYING` and has `next_retry_at`, show `Retrying at <timestamp>` in the status column while preserving the existing retry/failure styling.
+
+- [x] **Step 6: Run verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\core\test_queue.py -k retry_backoff
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py -k "next_retry_time or retry_and_failure"
+.\.venv\Scripts\python.exe -m pytest
+```
+
+Expected: all tests pass except the environment-gated live SFTP skip.
+
+## Next Milestone Target
+
+- Tighten pause/resume/cancel state transitions for in-flight items and ensure future asynchronous runners can interrupt or settle them predictably.
+- Consider surfacing retry countdown as a relative timer in the UI after the next transfer-center refresh pass.
