@@ -963,3 +963,44 @@ the sample count.
   diagnostic baselines now captured in smoke reports.
 - Add a bounded reconnect-state machine only after timeout/retry behavior is
   covered by measurable scenarios.
+
+## Immediate Task 22: Tune Default Transfer Concurrency
+
+**Files:**
+- Modify: `src/filezall_core/transfer_settings.py`
+- Modify: `tests/core/test_transfer_settings.py`
+- Modify: `tests/desktop/test_main_window.py`
+
+- [x] **Step 1: Write default settings tests**
+
+Add coverage that the default transfer settings use four total concurrent
+transfers and two concurrent transfers per server, with no default speed limit.
+
+- [x] **Step 2: Update UI default expectations**
+
+Verify the transfer center and Settings dialog show the tuned defaults before
+any user override is applied.
+
+- [x] **Step 3: Apply conservative throughput defaults**
+
+Change `TransferSettings` defaults from total `2` and implicit per-server `2`
+to total `4` and per-server `2`, improving throughput while limiting pressure
+on a single server.
+
+- [x] **Step 4: Run targeted verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\core\test_queue.py tests\core\test_transfer_settings.py tests\desktop\test_main_window.py -k "settings_menu or transfer_settings or concurrency or transfer_center" -vv
+```
+
+Expected: queue concurrency behavior and transfer-center controls pass with the
+new defaults.
+
+## Next Milestone Target
+
+- Add a bounded reconnect-state machine only after timeout/retry behavior is
+  covered by measurable scenarios.
+- Continue transfer-runner tuning for pause/resume consistency and rate-limit
+  enforcement.

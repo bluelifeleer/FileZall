@@ -568,6 +568,10 @@ def test_settings_menu_opens_dialog_for_theme_language_and_transfer_settings(qtb
     assert window.settings_dialog.isVisible()
     assert window.settings_dialog.theme_selector.currentText() == "System"
     assert window.settings_dialog.language_selector.currentText() == "English"
+    assert window.transfer_concurrency_spin.value() == 4
+    assert window.transfer_per_server_concurrency_spin.value() == 2
+    assert window.settings_dialog.concurrency_spin.value() == 4
+    assert window.settings_dialog.per_server_concurrency_spin.value() == 2
 
     window.settings_dialog.theme_selector.setCurrentText("Dark")
     window.settings_dialog.language_selector.setCurrentText("简体中文")
@@ -2592,7 +2596,7 @@ def test_transfer_center_has_concurrency_and_limit_controls(qtbot) -> None:
     _use_english(window)
 
     assert window.transfer_concurrency_label.text() == "Concurrency"
-    assert window.transfer_concurrency_spin.value() == 2
+    assert window.transfer_concurrency_spin.value() == 4
     assert window.transfer_per_server_concurrency_label.text() == "Per server"
     assert window.transfer_per_server_concurrency_spin.value() == 2
     assert window.transfer_limit_label.text() == "Limit KB/s"
