@@ -11,6 +11,7 @@ def test_performance_smoke_reports_large_directory_and_transfer_queue(qtbot) -> 
         log_rows=7,
         remote_rows=4,
         remote_samples=3,
+        heartbeat_samples=4,
     )
 
     assert report["status"] == "passed"
@@ -32,9 +33,14 @@ def test_performance_smoke_reports_large_directory_and_transfer_queue(qtbot) -> 
     assert report["scenarios"]["remote_directory_forced_refresh"]["samples"] == 3
     assert report["scenarios"]["remote_directory_forced_refresh"]["elapsed_ms"] >= 0
     assert report["scenarios"]["remote_directory_forced_refresh"]["passed"] is True
+    assert report["scenarios"]["heartbeat_failure_diagnostics"]["samples"] == 4
+    assert report["scenarios"]["heartbeat_failure_diagnostics"]["elapsed_ms"] >= 0
+    assert report["scenarios"]["heartbeat_failure_diagnostics"]["passed"] is True
     assert report["diagnostic_state"]["transfer_queue"]["total"] == 6
-    assert report["diagnostic_state"]["logs"]["total_records"] == 7
+    assert report["diagnostic_state"]["logs"]["total_records"] == 8
     assert report["diagnostic_state"]["resource_refresh"]["chart_samples"] == 5
+    assert report["diagnostic_state"]["connection"]["heartbeat_failures"] == 4
+    assert report["diagnostic_state"]["connection"]["last_heartbeat_error"] == "Heartbeat failed: disconnected"
     assert report["remote_directory"]["rows"] == 4
     assert report["remote_directory"]["samples"] == 3
     assert report["remote_directory"]["cached_list_calls"] == 0
@@ -79,6 +85,7 @@ def test_performance_smoke_cli_writes_baseline_comparison(qtbot, tmp_path) -> No
                     "long_log_stream": {"elapsed_ms": 1000.0},
                     "remote_directory_cache": {"elapsed_ms": 1000.0},
                     "remote_directory_forced_refresh": {"elapsed_ms": 1000.0},
+                    "heartbeat_failure_diagnostics": {"elapsed_ms": 1000.0},
                 }
             }
         ),
@@ -99,6 +106,8 @@ def test_performance_smoke_cli_writes_baseline_comparison(qtbot, tmp_path) -> No
             "2",
             "--remote-samples",
             "2",
+            "--heartbeat-samples",
+            "2",
             "--baseline",
             str(baseline_path),
             "--output",
@@ -116,4 +125,5 @@ def test_performance_smoke_cli_writes_baseline_comparison(qtbot, tmp_path) -> No
         "long_log_stream",
         "remote_directory_cache",
         "remote_directory_forced_refresh",
+        "heartbeat_failure_diagnostics",
     }

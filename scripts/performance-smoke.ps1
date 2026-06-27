@@ -12,6 +12,7 @@ $ResourceSamples = if ($env:FILEZALL_PERF_RESOURCE_SAMPLES) { $env:FILEZALL_PERF
 $LogRows = if ($env:FILEZALL_PERF_LOG_ROWS) { $env:FILEZALL_PERF_LOG_ROWS } else { "5000" }
 $RemoteRows = if ($env:FILEZALL_PERF_REMOTE_ROWS) { $env:FILEZALL_PERF_REMOTE_ROWS } else { "2000" }
 $RemoteSamples = if ($env:FILEZALL_PERF_REMOTE_SAMPLES) { $env:FILEZALL_PERF_REMOTE_SAMPLES } else { "50" }
+$HeartbeatSamples = if ($env:FILEZALL_PERF_HEARTBEAT_SAMPLES) { $env:FILEZALL_PERF_HEARTBEAT_SAMPLES } else { "50" }
 $Output = if ($env:FILEZALL_PERF_OUTPUT) { $env:FILEZALL_PERF_OUTPUT } else { Join-Path $RepoRoot "performance-smoke.json" }
 $Baseline = $env:FILEZALL_PERF_BASELINE
 
@@ -22,6 +23,7 @@ Write-Host "Resource samples: $ResourceSamples"
 Write-Host "Log rows: $LogRows"
 Write-Host "Remote rows: $RemoteRows"
 Write-Host "Remote samples: $RemoteSamples"
+Write-Host "Heartbeat samples: $HeartbeatSamples"
 Write-Host "Output: $Output"
 if ($Baseline) {
     Write-Host "Baseline: $Baseline"
@@ -35,6 +37,7 @@ $Args = @(
     "--log-rows", $LogRows,
     "--remote-rows", $RemoteRows,
     "--remote-samples", $RemoteSamples,
+    "--heartbeat-samples", $HeartbeatSamples,
     "--output", $Output
 )
 if ($Baseline) {

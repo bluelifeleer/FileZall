@@ -920,3 +920,46 @@ state includes structured connection/heartbeat failure details.
 - Use retry and connection diagnostics to tune transfer concurrency defaults.
 - Add timeout/reconnect stress scenarios to performance smoke before changing
   runtime defaults.
+
+## Immediate Task 21: Add Heartbeat Failure Performance Smoke
+
+**Files:**
+- Modify: `src/filezall_desktop/performance_smoke.py`
+- Modify: `scripts/performance-smoke.ps1`
+- Modify: `tests/desktop/test_performance_smoke.py`
+- Modify: `tests/test_packaging_files.py`
+
+- [x] **Step 1: Extend smoke expectations**
+
+Require the performance report to include
+`heartbeat_failure_diagnostics`, verify the connection diagnostic state records
+all heartbeat failures, and preserve the existing de-duplicated log behavior.
+
+- [x] **Step 2: Add heartbeat failure workload**
+
+Add a fake smoke controller with queued heartbeat results and measure repeated
+`MainWindow._handle_heartbeat_tick()` failure handling through the real status
+light, log, and diagnostic paths.
+
+- [x] **Step 3: Expose script controls**
+
+Add `--heartbeat-samples` and `--heartbeat-budget-ms` to the Python CLI, plus
+`FILEZALL_PERF_HEARTBEAT_SAMPLES` to the PowerShell smoke script.
+
+- [x] **Step 4: Run targeted verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_performance_smoke.py tests\test_packaging_files.py::test_performance_smoke_script_runs_desktop_smoke_module -vv
+```
+
+Expected: heartbeat failure diagnostics are measured and script wiring exposes
+the sample count.
+
+## Next Milestone Target
+
+- Tune transfer concurrency defaults using the retry, connection, and heartbeat
+  diagnostic baselines now captured in smoke reports.
+- Add a bounded reconnect-state machine only after timeout/retry behavior is
+  covered by measurable scenarios.

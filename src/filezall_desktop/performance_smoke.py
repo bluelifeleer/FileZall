@@ -30,8 +30,14 @@ _APP: QApplication | None = None
 
 
 class _SmokeController:
+    def __init__(self) -> None:
+        self.heartbeat_results: list[bool] = []
+
     def load_saved_sites(self) -> None:
         return None
+
+    def heartbeat(self) -> bool:
+        return self.heartbeat_results.pop(0) if self.heartbeat_results else True
 
 
 class _RemoteSmokeSession:
@@ -56,15 +62,18 @@ def run_performance_smoke(
     log_rows: int = 5_000,
     remote_rows: int = 2_000,
     remote_samples: int = 50,
+    heartbeat_samples: int = 50,
     directory_budget_ms: float = 1_500,
     transfer_budget_ms: float = 2_500,
     resource_budget_ms: float = 1_500,
     log_budget_ms: float = 1_500,
     remote_cache_budget_ms: float = 500,
     remote_force_budget_ms: float = 1_500,
+    heartbeat_budget_ms: float = 500,
 ) -> dict:
     app = _ensure_app()
-    window = MainWindow(controller=_SmokeController())
+    smoke_controller = _SmokeController()
+    window = MainWindow(controller=smoke_controller)
     try:
         directory_entries = _local_entries(directory_rows)
         directory_result = measure_operation(
@@ -134,6 +143,12 @@ def run_performance_smoke(
             ],
         )
         forced_list_calls = remote_session.list_calls - forced_before
+        smoke_controller.heartbeat_results = [False] * heartbeat_samples
+        heartbeat_result = measure_operation(
+            "heartbeat_failure_diagnostics",
+            lambda: [window._handle_heartbeat_tick() for _index in range(heartbeat_samples)],
+        )
+        app.processEvents()
 
         directory_check = PerformanceBudget(
             name="large_directory",
@@ -159,6 +174,10 @@ def run_performance_smoke(
             name="remote_directory_forced_refresh",
             max_elapsed_ms=remote_force_budget_ms,
         ).check(remote_force_result)
+        heartbeat_check = PerformanceBudget(
+            name="heartbeat_failure_diagnostics",
+            max_elapsed_ms=heartbeat_budget_ms,
+        ).check(heartbeat_result)
         scenarios = {
             "large_directory": _scenario_report(directory_check, directory_rows),
             "large_transfer_queue": _scenario_report(transfer_check, transfer_rows),
@@ -168,6 +187,11 @@ def run_performance_smoke(
             "remote_directory_forced_refresh": _scenario_report(
                 remote_force_check,
                 remote_samples,
+                size_key="samples",
+            ),
+            "heartbeat_failure_diagnostics": _scenario_report(
+                heartbeat_check,
+                heartbeat_samples,
                 size_key="samples",
             ),
         }
@@ -196,12 +220,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--log-rows", type=int, default=5_000)
     parser.add_argument("--remote-rows", type=int, default=2_000)
     parser.add_argument("--remote-samples", type=int, default=50)
+    parser.add_argument("--heartbeat-samples", type=int, default=50)
     parser.add_argument("--directory-budget-ms", type=float, default=1_500)
     parser.add_argument("--transfer-budget-ms", type=float, default=2_500)
     parser.add_argument("--resource-budget-ms", type=float, default=1_500)
     parser.add_argument("--log-budget-ms", type=float, default=1_500)
     parser.add_argument("--remote-cache-budget-ms", type=float, default=500)
     parser.add_argument("--remote-force-budget-ms", type=float, default=1_500)
+    parser.add_argument("--heartbeat-budget-ms", type=float, default=500)
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--output", type=Path, default=Path("performance-smoke.json"))
     args = parser.parse_args(argv)
@@ -213,12 +239,14 @@ def main(argv: list[str] | None = None) -> int:
         log_rows=args.log_rows,
         remote_rows=args.remote_rows,
         remote_samples=args.remote_samples,
+        heartbeat_samples=args.heartbeat_samples,
         directory_budget_ms=args.directory_budget_ms,
         transfer_budget_ms=args.transfer_budget_ms,
         resource_budget_ms=args.resource_budget_ms,
         log_budget_ms=args.log_budget_ms,
         remote_cache_budget_ms=args.remote_cache_budget_ms,
         remote_force_budget_ms=args.remote_force_budget_ms,
+        heartbeat_budget_ms=args.heartbeat_budget_ms,
     )
     if args.baseline is not None:
         baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
