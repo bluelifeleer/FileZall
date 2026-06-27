@@ -9,6 +9,8 @@ def test_performance_smoke_reports_large_directory_and_transfer_queue(qtbot) -> 
         transfer_rows=6,
         resource_samples=5,
         log_rows=7,
+        remote_rows=4,
+        remote_samples=3,
     )
 
     assert report["status"] == "passed"
@@ -24,9 +26,19 @@ def test_performance_smoke_reports_large_directory_and_transfer_queue(qtbot) -> 
     assert report["scenarios"]["long_log_stream"]["rows"] == 7
     assert report["scenarios"]["long_log_stream"]["elapsed_ms"] >= 0
     assert report["scenarios"]["long_log_stream"]["passed"] is True
+    assert report["scenarios"]["remote_directory_cache"]["samples"] == 3
+    assert report["scenarios"]["remote_directory_cache"]["elapsed_ms"] >= 0
+    assert report["scenarios"]["remote_directory_cache"]["passed"] is True
+    assert report["scenarios"]["remote_directory_forced_refresh"]["samples"] == 3
+    assert report["scenarios"]["remote_directory_forced_refresh"]["elapsed_ms"] >= 0
+    assert report["scenarios"]["remote_directory_forced_refresh"]["passed"] is True
     assert report["diagnostic_state"]["transfer_queue"]["total"] == 6
     assert report["diagnostic_state"]["logs"]["total_records"] == 7
     assert report["diagnostic_state"]["resource_refresh"]["chart_samples"] == 5
+    assert report["remote_directory"]["rows"] == 4
+    assert report["remote_directory"]["samples"] == 3
+    assert report["remote_directory"]["cached_list_calls"] == 0
+    assert report["remote_directory"]["forced_list_calls"] == 3
 
 
 def test_performance_smoke_compares_report_to_baseline() -> None:
@@ -65,6 +77,8 @@ def test_performance_smoke_cli_writes_baseline_comparison(qtbot, tmp_path) -> No
                     "large_transfer_queue": {"elapsed_ms": 1000.0},
                     "repeated_resource_refresh": {"elapsed_ms": 1000.0},
                     "long_log_stream": {"elapsed_ms": 1000.0},
+                    "remote_directory_cache": {"elapsed_ms": 1000.0},
+                    "remote_directory_forced_refresh": {"elapsed_ms": 1000.0},
                 }
             }
         ),
@@ -81,6 +95,10 @@ def test_performance_smoke_cli_writes_baseline_comparison(qtbot, tmp_path) -> No
             "2",
             "--log-rows",
             "2",
+            "--remote-rows",
+            "2",
+            "--remote-samples",
+            "2",
             "--baseline",
             str(baseline_path),
             "--output",
@@ -96,4 +114,6 @@ def test_performance_smoke_cli_writes_baseline_comparison(qtbot, tmp_path) -> No
         "large_transfer_queue",
         "repeated_resource_refresh",
         "long_log_stream",
+        "remote_directory_cache",
+        "remote_directory_forced_refresh",
     }

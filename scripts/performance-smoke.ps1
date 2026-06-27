@@ -10,6 +10,8 @@ $DirectoryRows = if ($env:FILEZALL_PERF_DIRECTORY_ROWS) { $env:FILEZALL_PERF_DIR
 $TransferRows = if ($env:FILEZALL_PERF_TRANSFER_ROWS) { $env:FILEZALL_PERF_TRANSFER_ROWS } else { "2000" }
 $ResourceSamples = if ($env:FILEZALL_PERF_RESOURCE_SAMPLES) { $env:FILEZALL_PERF_RESOURCE_SAMPLES } else { "120" }
 $LogRows = if ($env:FILEZALL_PERF_LOG_ROWS) { $env:FILEZALL_PERF_LOG_ROWS } else { "5000" }
+$RemoteRows = if ($env:FILEZALL_PERF_REMOTE_ROWS) { $env:FILEZALL_PERF_REMOTE_ROWS } else { "2000" }
+$RemoteSamples = if ($env:FILEZALL_PERF_REMOTE_SAMPLES) { $env:FILEZALL_PERF_REMOTE_SAMPLES } else { "50" }
 $Output = if ($env:FILEZALL_PERF_OUTPUT) { $env:FILEZALL_PERF_OUTPUT } else { Join-Path $RepoRoot "performance-smoke.json" }
 $Baseline = $env:FILEZALL_PERF_BASELINE
 
@@ -18,6 +20,8 @@ Write-Host "Directory rows: $DirectoryRows"
 Write-Host "Transfer rows: $TransferRows"
 Write-Host "Resource samples: $ResourceSamples"
 Write-Host "Log rows: $LogRows"
+Write-Host "Remote rows: $RemoteRows"
+Write-Host "Remote samples: $RemoteSamples"
 Write-Host "Output: $Output"
 if ($Baseline) {
     Write-Host "Baseline: $Baseline"
@@ -29,6 +33,8 @@ $Args = @(
     "--transfer-rows", $TransferRows,
     "--resource-samples", $ResourceSamples,
     "--log-rows", $LogRows,
+    "--remote-rows", $RemoteRows,
+    "--remote-samples", $RemoteSamples,
     "--output", $Output
 )
 if ($Baseline) {

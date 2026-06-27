@@ -788,3 +788,47 @@ use the new batch walk behavior.
   forced remote refresh.
 - Continue connection-state and transfer-runner performance work after the file
   listing path has measurable coverage.
+
+## Immediate Task 18: Measure Cached and Forced Remote Directory Navigation
+
+**Files:**
+- Modify: `src/filezall_desktop/performance_smoke.py`
+- Modify: `scripts/performance-smoke.ps1`
+- Modify: `tests/desktop/test_performance_smoke.py`
+- Modify: `tests/test_packaging_files.py`
+
+- [x] **Step 1: Extend smoke contract tests**
+
+Require performance reports to include `remote_directory_cache` and
+`remote_directory_forced_refresh`, plus diagnostic counters proving cached loads
+avoid remote list calls while forced refreshes still hit the session.
+
+- [x] **Step 2: Add deterministic remote session workload**
+
+Add a fake remote session with configurable row and sample counts, connect it
+through `MainWindowController`, and measure cached versus forced
+`load_remote_directory()` calls.
+
+- [x] **Step 3: Expose CLI and script controls**
+
+Add `--remote-rows`, `--remote-samples`, `--remote-cache-budget-ms`, and
+`--remote-force-budget-ms` to the Python CLI. Add
+`FILEZALL_PERF_REMOTE_ROWS` and `FILEZALL_PERF_REMOTE_SAMPLES` to the Windows
+smoke script.
+
+- [x] **Step 4: Run targeted verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_performance_smoke.py tests\test_packaging_files.py::test_performance_smoke_script_runs_desktop_smoke_module -vv
+```
+
+Expected: smoke reports include remote cache and forced-refresh scenarios, and
+script-level environment variables are wired.
+
+## Next Milestone Target
+
+- Continue connection-state and transfer-runner performance work.
+- Add richer diagnostics around retry and reconnect workloads before tuning
+  transfer concurrency defaults.

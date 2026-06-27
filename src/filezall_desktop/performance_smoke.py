@@ -10,9 +10,19 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from filezall_core.models import Direction, LocalFileEntry, Protocol, TransferItem, TransferStatus
+from filezall_core.models import (
+    AuthMode,
+    Direction,
+    LocalFileEntry,
+    Protocol,
+    RemoteFileEntry,
+    SiteProfile,
+    TransferItem,
+    TransferStatus,
+)
 from filezall_core.performance import PerformanceBudget, measure_operation
 from filezall_core.resource_models import CpuStats, DiskUsage, MemoryStats, NetworkStats, ProcessSummary, ResourceSnapshot
+from filezall_desktop.controller import MainWindowController
 from filezall_desktop.main_window import MainWindow
 
 
@@ -24,16 +34,34 @@ class _SmokeController:
         return None
 
 
+class _RemoteSmokeSession:
+    def __init__(self, path: PurePosixPath, entries: list[RemoteFileEntry]) -> None:
+        self.current_remote_path = path
+        self._entries = entries
+        self.list_calls = 0
+
+    def connect_and_list_default(self, password: str | None = None) -> list[RemoteFileEntry]:
+        return list(self._entries)
+
+    def list_directory(self, path: PurePosixPath) -> list[RemoteFileEntry]:
+        self.list_calls += 1
+        return list(self._entries)
+
+
 def run_performance_smoke(
     *,
     directory_rows: int = 5_000,
     transfer_rows: int = 2_000,
     resource_samples: int = 120,
     log_rows: int = 5_000,
+    remote_rows: int = 2_000,
+    remote_samples: int = 50,
     directory_budget_ms: float = 1_500,
     transfer_budget_ms: float = 2_500,
     resource_budget_ms: float = 1_500,
     log_budget_ms: float = 1_500,
+    remote_cache_budget_ms: float = 500,
+    remote_force_budget_ms: float = 1_500,
 ) -> dict:
     app = _ensure_app()
     window = MainWindow(controller=_SmokeController())
@@ -65,6 +93,48 @@ def run_performance_smoke(
         )
         app.processEvents()
 
+        remote_entries = _remote_entries(remote_rows, PurePosixPath("/srv/filezall-smoke"))
+        remote_session = _RemoteSmokeSession(PurePosixPath("/srv/filezall-smoke"), remote_entries)
+        remote_controller = MainWindowController(
+            window=_SmokeController(),
+            local_lister=lambda _path: [],
+            session_factory=lambda _site: remote_session,
+        )
+        remote_controller.connect_for_window(
+            SiteProfile(
+                id="smoke-remote",
+                name="Smoke Remote",
+                host="127.0.0.1",
+                port=22,
+                protocol=Protocol.SFTP,
+                username="smoke",
+                auth_mode=AuthMode.PASSWORD,
+                default_remote_path=PurePosixPath("/srv/filezall-smoke"),
+            ),
+            password="secret",
+        )
+        cached_before = remote_session.list_calls
+        remote_cache_result = measure_operation(
+            "remote_directory_cache",
+            lambda: [
+                remote_controller.load_remote_directory(PurePosixPath("/srv/filezall-smoke"))
+                for _index in range(remote_samples)
+            ],
+        )
+        cached_list_calls = remote_session.list_calls - cached_before
+        forced_before = remote_session.list_calls
+        remote_force_result = measure_operation(
+            "remote_directory_forced_refresh",
+            lambda: [
+                remote_controller.load_remote_directory(
+                    PurePosixPath("/srv/filezall-smoke"),
+                    force_refresh=True,
+                )
+                for _index in range(remote_samples)
+            ],
+        )
+        forced_list_calls = remote_session.list_calls - forced_before
+
         directory_check = PerformanceBudget(
             name="large_directory",
             max_elapsed_ms=directory_budget_ms,
@@ -81,17 +151,37 @@ def run_performance_smoke(
             name="long_log_stream",
             max_elapsed_ms=log_budget_ms,
         ).check(log_result)
+        remote_cache_check = PerformanceBudget(
+            name="remote_directory_cache",
+            max_elapsed_ms=remote_cache_budget_ms,
+        ).check(remote_cache_result)
+        remote_force_check = PerformanceBudget(
+            name="remote_directory_forced_refresh",
+            max_elapsed_ms=remote_force_budget_ms,
+        ).check(remote_force_result)
         scenarios = {
             "large_directory": _scenario_report(directory_check, directory_rows),
             "large_transfer_queue": _scenario_report(transfer_check, transfer_rows),
             "repeated_resource_refresh": _scenario_report(resource_check, resource_samples, size_key="samples"),
             "long_log_stream": _scenario_report(log_check, log_rows),
+            "remote_directory_cache": _scenario_report(remote_cache_check, remote_samples, size_key="samples"),
+            "remote_directory_forced_refresh": _scenario_report(
+                remote_force_check,
+                remote_samples,
+                size_key="samples",
+            ),
         }
         return {
             "status": "passed" if all(item["passed"] for item in scenarios.values()) else "failed",
             "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "scenarios": scenarios,
             "diagnostic_state": window._diagnostic_state_snapshot(),
+            "remote_directory": {
+                "rows": remote_rows,
+                "samples": remote_samples,
+                "cached_list_calls": cached_list_calls,
+                "forced_list_calls": forced_list_calls,
+            },
         }
     finally:
         window.close()
@@ -104,10 +194,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--transfer-rows", type=int, default=2_000)
     parser.add_argument("--resource-samples", type=int, default=120)
     parser.add_argument("--log-rows", type=int, default=5_000)
+    parser.add_argument("--remote-rows", type=int, default=2_000)
+    parser.add_argument("--remote-samples", type=int, default=50)
     parser.add_argument("--directory-budget-ms", type=float, default=1_500)
     parser.add_argument("--transfer-budget-ms", type=float, default=2_500)
     parser.add_argument("--resource-budget-ms", type=float, default=1_500)
     parser.add_argument("--log-budget-ms", type=float, default=1_500)
+    parser.add_argument("--remote-cache-budget-ms", type=float, default=500)
+    parser.add_argument("--remote-force-budget-ms", type=float, default=1_500)
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--output", type=Path, default=Path("performance-smoke.json"))
     args = parser.parse_args(argv)
@@ -117,10 +211,14 @@ def main(argv: list[str] | None = None) -> int:
         transfer_rows=args.transfer_rows,
         resource_samples=args.resource_samples,
         log_rows=args.log_rows,
+        remote_rows=args.remote_rows,
+        remote_samples=args.remote_samples,
         directory_budget_ms=args.directory_budget_ms,
         transfer_budget_ms=args.transfer_budget_ms,
         resource_budget_ms=args.resource_budget_ms,
         log_budget_ms=args.log_budget_ms,
+        remote_cache_budget_ms=args.remote_cache_budget_ms,
+        remote_force_budget_ms=args.remote_force_budget_ms,
     )
     if args.baseline is not None:
         baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
@@ -214,6 +312,20 @@ def _transfer_items(count: int) -> list[TransferItem]:
             )
         )
     return items
+
+
+def _remote_entries(count: int, root: PurePosixPath) -> list[RemoteFileEntry]:
+    now = datetime.now(UTC)
+    return [
+        RemoteFileEntry(
+            path=root / f"remote-{index}.log",
+            name=f"remote-{index}.log",
+            is_dir=False,
+            size_bytes=1_000 + index,
+            modified_time=now,
+        )
+        for index in range(count)
+    ]
 
 
 def _resource_snapshots(count: int) -> list[ResourceSnapshot]:
