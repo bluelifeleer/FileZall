@@ -134,13 +134,13 @@ Expected: pass.
 **Files:**
 - All files changed by Tasks 1-4.
 
-- [ ] **Step 1: Run full tests**
+- [x] **Step 1: Run full tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest`
 
 Expected: pass, with live SFTP skipped when environment variables are absent.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 Run:
 
