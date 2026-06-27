@@ -256,6 +256,11 @@ class HoverRowTableView(QTableView):
             text = "" if value is None else str(value)
         return VirtualTableHeaderItem(text)
 
+    def setHorizontalHeaderLabels(self, labels: list[str]) -> None:
+        model = self.model()
+        if hasattr(model, "set_headers"):
+            model.set_headers(labels)
+
     def setCurrentCell(self, row: int, column: int) -> None:
         model = self.model()
         if not model:
@@ -543,6 +548,84 @@ class FileEntryTableModel(QAbstractTableModel):
             return _entry_icon_key(entry.name, entry.is_dir, "entry")
         if role == Qt.ItemDataRole.DecorationRole and column == 0:
             return _entry_icon(entry.name, entry.is_dir, "entry")
+        return None
+
+
+class ProcessTableModel(QAbstractTableModel):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        headers: list[str] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._headers = headers or ["PID", "User", "Name", "CPU", "Memory"]
+        self._processes = []
+
+    def set_headers(self, headers: list[str]) -> None:
+        self.beginResetModel()
+        self._headers = headers
+        self.endResetModel()
+
+    def set_processes(self, processes) -> None:
+        self.beginResetModel()
+        self._processes = list(processes)
+        self.endResetModel()
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        if parent.isValid():
+            return 0
+        return len(self._processes)
+
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        if parent.isValid():
+            return 0
+        return 5
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        process = self._process_at(index.row())
+        if process is None:
+            return None
+        column = index.column()
+        if role == Qt.ItemDataRole.DisplayRole:
+            if column == 0:
+                return str(process.pid)
+            if column == 1:
+                return process.user
+            if column == 2:
+                return process.name
+            if column == 3:
+                return f"{process.cpu_percent:.1f}%"
+            if column == 4:
+                return f"{process.memory_percent:.1f}%"
+        if role == Qt.ItemDataRole.UserRole:
+            return process.pid
+        return None
+
+    def headerData(
+        self,
+        section: int,
+        orientation: Qt.Orientation,
+        role: int = Qt.ItemDataRole.DisplayRole,
+    ):
+        if (
+            orientation == Qt.Orientation.Horizontal
+            and role == Qt.ItemDataRole.DisplayRole
+            and 0 <= section < len(self._headers)
+        ):
+            return self._headers[section]
+        return super().headerData(section, orientation, role)
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        if not index.isValid():
+            return Qt.ItemFlag.NoItemFlags
+        return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+
+    def _process_at(self, row: int):
+        if 0 <= row < len(self._processes):
+            return self._processes[row]
         return None
 
 

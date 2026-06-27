@@ -419,3 +419,46 @@ Expected: all tests pass except the environment-gated live SFTP skip.
 
 - Evaluate process-list model/view virtualization if resource monitoring with many processes is still visibly heavy.
 - Add a diagnostics bundle if performance validation starts producing local-only crash or latency evidence.
+
+## Immediate Task 10: Process List Model/View Virtualization
+
+**Files:**
+- Modify: `src/filezall_desktop/widgets.py`
+- Modify: `src/filezall_desktop/main_window.py`
+- Modify: `tests/desktop/test_main_window.py`
+
+- [x] **Step 1: Write failing process table migration test**
+
+Add a desktop test that requires the resource-monitor process list to use a `QTableView`
+with an attached model instead of a `QTableWidget`, so large process snapshots do not
+create thousands of per-cell widgets/items.
+
+- [x] **Step 2: Add process table model**
+
+Add `ProcessTableModel` with PID, user, name, CPU, and memory columns. Preserve the
+existing `DisplayRole` text and PID `UserRole` contract used by process detail and
+context actions.
+
+- [x] **Step 3: Move process UI to HoverRowTableView**
+
+Replace the process `HoverRowTableWidget` with `HoverRowTableView`, keeping full-row
+hover/selection styling, single-row selection, double-click process detail, and
+right-click stop/restart/copy PID actions.
+
+- [x] **Step 4: Run targeted verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\desktop\test_main_window.py -k "process_table or process_context or resource_monitor_has_time_range or renders_resource_snapshot" -vv
+```
+
+Expected: process rendering, sort/filter, detail, and context actions pass with the
+model/view table.
+
+## Next Milestone Target
+
+- Add user-exportable diagnostics bundle coverage for GUI crashes, resource refresh
+  timing, queue state, and recent logs.
+- Continue measuring high-volume transfer and large-directory paths with evidence
+  before deeper asynchronous transfer-runner changes.

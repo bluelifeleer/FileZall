@@ -9,7 +9,15 @@ from filezall_desktop.widgets import ICON_KEY_ROLE
 from filezall_desktop.i18n import EN_LANGUAGE, ZH_CN_LANGUAGE, _TRANSLATIONS, t
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QThread
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QApplication, QAbstractItemView, QHeaderView, QSplitter, QTableWidgetSelectionRange
+from PySide6.QtWidgets import (
+    QApplication,
+    QAbstractItemView,
+    QHeaderView,
+    QSplitter,
+    QTableView,
+    QTableWidget,
+    QTableWidgetSelectionRange,
+)
 
 from filezall_core.models import (
     AuthMode,
@@ -2684,6 +2692,15 @@ def test_process_table_uses_full_row_activity_and_double_click_loads_detail(qtbo
     window.process_table.cellDoubleClicked.emit(0, 2)
 
     assert controller.process_details == [123]
+
+
+def test_process_table_uses_model_view_for_virtualized_rows(qtbot) -> None:
+    window = MainWindow(controller=FakeController())
+    qtbot.addWidget(window)
+
+    assert isinstance(window.process_table, QTableView)
+    assert not isinstance(window.process_table, QTableWidget)
+    assert window.process_table.model() is window.process_model
 
 
 def test_process_context_and_detail_actions_stop_restart_and_copy_pid(qtbot) -> None:

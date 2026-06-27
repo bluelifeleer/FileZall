@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
+    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -79,6 +80,7 @@ from filezall_desktop.widgets import (
     HoverRowDelegate,
     HoverRowTableView,
     HoverRowTableWidget,
+    ProcessTableModel,
 )
 
 
@@ -801,7 +803,7 @@ class MainWindow(QMainWindow):
             if panel is not None:
                 tables.append(panel.table)
         process_table = getattr(self, "process_table", None)
-        if isinstance(process_table, HoverRowTableWidget):
+        if isinstance(process_table, (HoverRowTableView, HoverRowTableWidget)):
             tables.append(process_table)
         return tables
 
@@ -1114,13 +1116,17 @@ class MainWindow(QMainWindow):
         resource_values.addWidget(self.network_label)
         resource_values.addWidget(self.network_value_label)
 
-        self.process_table = HoverRowTableWidget(0, 5, root)
+        self.process_model = ProcessTableModel(root)
+        self.process_table = HoverRowTableView(root)
+        self.process_table.setModel(self.process_model)
         self.process_table.setItemDelegate(HoverRowDelegate(self.process_table))
         self.process_table.setHorizontalHeaderLabels(["PID", "User", "Name", "CPU", "Memory"])
         self.process_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.process_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.process_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.process_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.process_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.process_table.horizontalHeader().setStretchLastSection(True)
         self.process_menu = QMenu(self.process_table)
         self.process_detail_action = self.process_menu.addAction("Process Detail")
         self.process_stop_action = self.process_menu.addAction("Stop Process")
@@ -1496,15 +1502,9 @@ class MainWindow(QMainWindow):
         if self._last_resource_snapshot is None:
             return
         processes = self._filtered_sorted_processes(self._last_resource_snapshot.processes)
-        self.process_table.setRowCount(len(processes))
-        for row, process in enumerate(processes):
-            pid_cell = QTableWidgetItem(str(process.pid))
-            pid_cell.setData(Qt.ItemDataRole.UserRole, process.pid)
-            self.process_table.setItem(row, 0, pid_cell)
-            self.process_table.setItem(row, 1, QTableWidgetItem(process.user))
-            self.process_table.setItem(row, 2, QTableWidgetItem(process.name))
-            self.process_table.setItem(row, 3, QTableWidgetItem(f"{process.cpu_percent:.1f}%"))
-            self.process_table.setItem(row, 4, QTableWidgetItem(f"{process.memory_percent:.1f}%"))
+        self.process_model.set_processes(processes)
+        self.process_table.clearSelection()
+        self.process_table.set_hovered_row(-1)
 
     def _filtered_sorted_processes(self, processes):
         filter_text = self.process_filter_edit.text().strip().lower()
