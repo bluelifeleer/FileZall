@@ -462,3 +462,44 @@ model/view table.
   timing, queue state, and recent logs.
 - Continue measuring high-volume transfer and large-directory paths with evidence
   before deeper asynchronous transfer-runner changes.
+
+## Immediate Task 11: Diagnostic State Snapshot
+
+**Files:**
+- Modify: `src/filezall_core/diagnostics.py`
+- Modify: `src/filezall_desktop/main_window.py`
+- Modify: `tests/core/test_diagnostics.py`
+- Modify: `tests/desktop/test_main_window.py`
+
+- [x] **Step 1: Write failing diagnostic state tests**
+
+Add a core diagnostics test requiring `state/snapshot.json` to be included and
+redacted, plus a desktop export test requiring resource-refresh status, queue counts,
+and recent error logs to be captured from the live UI.
+
+- [x] **Step 2: Add optional state provider to diagnostics builder**
+
+Let `DiagnosticPackageBuilder` accept a callable state provider and write its output to
+`state/snapshot.json`. Recursively redact sensitive keys and sensitive string values
+before writing the archive.
+
+- [x] **Step 3: Add MainWindow UI state snapshot**
+
+Export resource-refresh timer/running state, transfer queue status counts, recent logs,
+Agent state, and UI sizing/context hints when the user chooses Export Diagnostics.
+
+- [x] **Step 4: Run targeted verification**
+
+Run:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\core\test_diagnostics.py::test_diagnostic_package_includes_redacted_state_snapshot tests\desktop\test_main_window.py::test_main_window_diagnostic_package_includes_ui_state_snapshot -vv
+```
+
+Expected: both new diagnostic-state tests pass.
+
+## Next Milestone Target
+
+- Add a scripted performance smoke command that exercises large transfer queues and
+  large directory render paths without needing a live server.
+- Use the new diagnostic snapshot as the artifact for future slow-path reports.

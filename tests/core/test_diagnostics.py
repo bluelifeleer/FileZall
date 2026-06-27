@@ -77,3 +77,22 @@ def test_diagnostic_package_redacts_runtime_logs(tmp_path) -> None:
     assert "secret" not in runtime_log
     assert "Authorization: Bearer <redacted>" in runtime_log
     assert "password=<redacted>" in runtime_log
+
+
+def test_diagnostic_package_includes_redacted_state_snapshot(tmp_path) -> None:
+    package_path = tmp_path / "diagnostics.zip"
+
+    DiagnosticPackageBuilder(
+        log_service=TransferLogService(),
+        state_provider=lambda: {
+            "resource_refresh": {"running": True, "last_error": "password=secret"},
+            "agent": {"token": "live-token"},
+        },
+    ).build(package_path)
+
+    with zipfile.ZipFile(package_path) as archive:
+        state = json.loads(archive.read("state/snapshot.json").decode("utf-8"))
+
+    assert state["resource_refresh"]["running"] is True
+    assert state["resource_refresh"]["last_error"] == "password=<redacted>"
+    assert state["agent"]["token"] == "<redacted>"

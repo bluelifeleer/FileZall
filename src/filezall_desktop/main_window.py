@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -1316,8 +1317,51 @@ class MainWindow(QMainWindow):
         DiagnosticPackageBuilder(
             log_service=self.log_service,
             logs_dir=self._diagnostics_logs_dir,
+            state_provider=self._diagnostic_state_snapshot,
         ).build(Path(selected))
         self.show_status(f"Exported diagnostics to {selected}")
+
+    def _diagnostic_state_snapshot(self) -> dict:
+        transfer_items = list(self._optimistic_transfer_items)
+        records = self.log_service.records()
+        errors = [record for record in records if record.level == "error" or record.category == "error"]
+        status_counts = Counter(item.status.value for item in transfer_items)
+        return {
+            "resource_refresh": {
+                "running": self._resource_refresh_running,
+                "timer_active": self.resource_refresh_timer.isActive(),
+                "interval_ms": self.resource_refresh_timer.interval(),
+                "worker_count": len(self._resource_refresh_workers),
+                "snapshot_available": self._last_resource_snapshot is not None,
+                "chart_samples": len(self.resource_chart.history),
+            },
+            "transfer_queue": {
+                "total": len(transfer_items),
+                "by_status": dict(sorted(status_counts.items())),
+                "pending_render": self._pending_transfer_items is not None,
+                "rendered_rows": len(self._rendered_transfer_items),
+                "summary": self.transfer_summary_label.text(),
+            },
+            "logs": {
+                "total_records": len(records),
+                "error_count": len(errors),
+                "recent_errors": [_diagnostic_log_record(record) for record in errors[-10:]],
+                "recent_records": [_diagnostic_log_record(record) for record in records[-20:]],
+            },
+            "agent": {
+                "installed": self._agent_installed,
+                "version": self._agent_version,
+                "update_available": self._agent_update_available,
+            },
+            "ui": {
+                "theme": self.current_theme,
+                "language": self.current_language,
+                "file_list_density": self.file_list_density,
+                "local_rows": self.local_panel.table.rowCount(),
+                "remote_rows": self.remote_panel.table.rowCount(),
+                "process_rows": self.process_table.rowCount(),
+            },
+        }
 
     def set_monitoring_status(self, message: str) -> None:
         self.monitoring_status_label.setText(message)
@@ -2579,6 +2623,15 @@ def _transfer_headers() -> list[str]:
         "Failure",
         "Status",
     ]
+
+
+def _diagnostic_log_record(record) -> dict[str, str]:
+    return {
+        "timestamp": record.timestamp.isoformat(timespec="seconds"),
+        "category": record.category,
+        "level": record.level,
+        "message": record.message,
+    }
 
 
 def _speed_text(item: TransferItem) -> str:

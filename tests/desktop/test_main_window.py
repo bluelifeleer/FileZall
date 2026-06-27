@@ -1,3 +1,4 @@
+import json
 import time
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -1346,6 +1347,58 @@ def test_main_window_exports_diagnostic_package(qtbot, tmp_path) -> None:
     with zipfile.ZipFile(diagnostic_path) as archive:
         assert "Uploaded app.txt" in archive.read("logs/session.log").decode("utf-8")
         assert "runtime trace" in archive.read("logs/filezall-runtime.log").decode("utf-8")
+
+
+def test_main_window_diagnostic_package_includes_ui_state_snapshot(qtbot, tmp_path) -> None:
+    diagnostic_path = tmp_path / "diagnostics.zip"
+    window = MainWindow(
+        controller=FakeController(),
+        diagnostic_file_chooser=lambda _parent: str(diagnostic_path),
+    )
+    qtbot.addWidget(window)
+    window._resource_refresh_running = True
+    window.append_log("Background operation failed [resource refresh]: timeout", category="error", level="error")
+    window.set_transfer_items(
+        [
+            TransferItem(
+                id="item-1",
+                task_id="task-1",
+                server_id="site-1",
+                direction=Direction.UPLOAD,
+                source_path=tmp_path / "app.txt",
+                destination_path=PurePosixPath("/srv/app.txt"),
+                temporary_path=PurePosixPath("/srv/.filezall.app.txt.part"),
+                size_bytes=100,
+                protocol=Protocol.SFTP,
+                bytes_transferred=25,
+                status=TransferStatus.RUNNING,
+            ),
+            TransferItem(
+                id="item-2",
+                task_id="task-2",
+                server_id="site-1",
+                direction=Direction.DOWNLOAD,
+                source_path=PurePosixPath("/srv/error.txt"),
+                destination_path=tmp_path / "error.txt",
+                temporary_path=tmp_path / ".filezall.error.txt.part",
+                size_bytes=100,
+                protocol=Protocol.SFTP,
+                status=TransferStatus.FAILED,
+                failure_reason="network timeout",
+            ),
+        ]
+    )
+
+    window.export_diagnostics_action.trigger()
+
+    with zipfile.ZipFile(diagnostic_path) as archive:
+        state = json.loads(archive.read("state/snapshot.json").decode("utf-8"))
+
+    assert state["resource_refresh"]["running"] is True
+    assert state["transfer_queue"]["total"] == 2
+    assert state["transfer_queue"]["by_status"] == {"failed": 1, "running": 1}
+    assert state["logs"]["error_count"] == 1
+    assert state["logs"]["recent_errors"][0]["message"] == "Background operation failed [resource refresh]: timeout"
 
 
 def test_main_window_displays_agent_version_when_available(qtbot) -> None:
